@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Fantasy Map Simulator</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- ツールバー（toolbar.js が中身を生成） -->
+  <div id="toolbar" class="toolbar">
+    <div class="toolbar-title">神の力</div>
+    <div id="tool-buttons" class="tool-buttons"></div>
+    <div class="brush-control">
+      <label for="brush-size">ブラシ <span id="brush-size-label">3</span></label>
+      <input type="range" id="brush-size" min="1" max="40" value="3">
+    </div>
+    <button id="regen" class="regen-btn">新しい世界</button>
+    <div class="hint">移動: WASD / ホイールでズーム</div>
+  </div>
+
+  <div id="coords" class="coords"></div>
+
+  <!-- 依存順にロード（no-build: クラシック script のみ） -->
+  <script src="js/core/namespace.js"></script>
+  <script src="js/core/constants.js"></script>
+  <script src="js/core/utils.js"></script>
+  <script src="js/math/noise.js"></script>
+  <script src="js/world/tile.js"></script>
+  <script src="js/world/world.js"></script>
+  <script src="js/world/worldgen.js"></script>
+  <script src="js/render/camera.js"></script>
+  <script src="js/render/renderer.js"></script>
+  <script src="js/tools/brush.js"></script>
+  <script src="js/tools/godpowers.js"></script>
+  <script src="js/input/input.js"></script>
+  <script src="js/ui/toolbar.js"></script>
+  <script src="js/engine/engine.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
