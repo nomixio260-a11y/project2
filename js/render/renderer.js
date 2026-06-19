@@ -19,6 +19,11 @@
     // 拡大時にタイルがにじまないよう補間を無効化。
     this.ctx.imageSmoothingEnabled = false;
 
+    // CSSピクセル基準の表示サイズ（高DPI対応で device px と分離）。
+    this.cssW = canvas.width;
+    this.cssH = canvas.height;
+    this.dpr = 1;
+
     this.dirty = []; // 部分更新待ちのタイル {x,y}
     this.fullRedraw(); // 初回は全タイルをバッファへ
   }
@@ -81,8 +86,19 @@
   };
 
   Renderer.prototype.resize = function () {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
+    // 高DPI対応: 物理ピクセルで描画バッファを確保し、CSSピクセル基準に変換。
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
+    this.cssW = cssW;
+    this.cssH = cssH;
+    this.dpr = dpr;
+    this.canvas.width = Math.round(cssW * dpr);
+    this.canvas.height = Math.round(cssH * dpr);
+    this.canvas.style.width = cssW + "px";
+    this.canvas.style.height = cssH + "px";
+    // 以降の描画は CSSピクセル座標で行えるようスケール。
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.imageSmoothingEnabled = false;
   };
 
@@ -93,9 +109,9 @@
     const cfg = Game.config;
     const tile = cfg.tilePx;
 
-    // 背景（海より暗い余白）。
+    // 背景（海より暗い余白）。CSSピクセル基準。
     ctx.fillStyle = "#070b16";
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillRect(0, 0, this.cssW, this.cssH);
 
     // オフスクリーン全体を 1ブリットで配置。
     // src: タイル座標系（=オフスクリーンpx）、dst: スクリーンpx。

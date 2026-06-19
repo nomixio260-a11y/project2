@@ -13,7 +13,12 @@
     this.panning = false;
     this.lastMouse = { x: 0, y: 0 };
 
+    // タッチ用ジェスチャ状態。
+    this.touchPainting = false;
+    this.gesture = null; // 2本指: { midX, midY, dist }
+
     this._bind();
+    this._bindTouch();
   }
 
   Input.prototype.setWorld = function (world) {
@@ -102,6 +107,94 @@
       self.keys[e.key.toLowerCase()] = false;
       self.keys[e.key] = false;
     });
+  };
+
+  // ===== タッチ操作 =====
+  // 1本指: 現在のツールで描画 / 2本指: パン + ピンチズーム。
+  Input.prototype._bindTouch = function () {
+    const self = this;
+    const canvas = this.canvas;
+
+    function touchMid(t0, t1) {
+      return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+    }
+    function touchDist(t0, t1) {
+      const dx = t0.clientX - t1.clientX;
+      const dy = t0.clientY - t1.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    canvas.addEventListener(
+      "touchstart",
+      function (e) {
+        e.preventDefault();
+        if (e.touches.length === 1) {
+          // 1本指 → 描画開始。
+          self.gesture = null;
+          self.touchPainting = true;
+          const t = e.touches[0];
+          self._updateMouseTile(t.clientX, t.clientY);
+          self.applyAt(t.clientX, t.clientY);
+        } else if (e.touches.length === 2) {
+          // 2本指 → パン/ズーム。描画は中断。
+          self.touchPainting = false;
+          const t0 = e.touches[0];
+          const t1 = e.touches[1];
+          const mid = touchMid(t0, t1);
+          self.gesture = { midX: mid.x, midY: mid.y, dist: touchDist(t0, t1) };
+        }
+      },
+      { passive: false }
+    );
+
+    canvas.addEventListener(
+      "touchmove",
+      function (e) {
+        e.preventDefault();
+        if (e.touches.length === 1 && self.touchPainting) {
+          const t = e.touches[0];
+          self._updateMouseTile(t.clientX, t.clientY);
+          self.applyAt(t.clientX, t.clientY);
+        } else if (e.touches.length === 2 && self.gesture) {
+          const t0 = e.touches[0];
+          const t1 = e.touches[1];
+          const mid = touchMid(t0, t1);
+          const dist = touchDist(t0, t1);
+          // 中点の移動でパン。
+          self.camera.panByScreen(mid.x - self.gesture.midX, mid.y - self.gesture.midY);
+          // 指間距離の比でズーム（中点基点）。
+          if (self.gesture.dist > 0) {
+            self.camera.zoomAt(mid.x, mid.y, dist / self.gesture.dist);
+          }
+          self.gesture.midX = mid.x;
+          self.gesture.midY = mid.y;
+          self.gesture.dist = dist;
+        }
+      },
+      { passive: false }
+    );
+
+    function endTouch(e) {
+      if (e.touches.length === 0) {
+        self.touchPainting = false;
+        self.gesture = null;
+        Game.state.mouseTile.x = -1;
+        Game.state.mouseTile.y = -1;
+      } else if (e.touches.length === 1) {
+        // 2本指→1本指: 誤描画を避けるためジェスチャ終了のみ。
+        self.gesture = null;
+        self.touchPainting = false;
+      }
+    }
+    canvas.addEventListener("touchend", endTouch, { passive: false });
+    canvas.addEventListener("touchcancel", endTouch, { passive: false });
+  };
+
+  // ホバー中タイルを更新（プレビュー / 座標HUD用）。
+  Input.prototype._updateMouseTile = function (sx, sy) {
+    const t = this.camera.screenToTile(sx, sy);
+    Game.state.mouseTile.x = t.x;
+    Game.state.mouseTile.y = t.y;
   };
 
   // スクリーン座標 (sx,sy) に現在のツールをブラシ適用。

@@ -5,19 +5,17 @@
   function boot() {
     const cfg = Game.config;
     const canvas = document.getElementById("game");
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
 
     // ワールド生成。
     const world = new Game.World(cfg.mapWidth, cfg.mapHeight);
     Game.worldgen.generate(world, cfg.seed);
 
-    // カメラ・レンダラ・入力・エンジン。
-    const camera = new Game.Camera(canvas.width, canvas.height);
-    camera.fitToMap();
+    // カメラはCSSピクセル基準のビューサイズで動く。
+    const camera = new Game.Camera(window.innerWidth, window.innerHeight);
 
     const renderer = new Game.Renderer(canvas, world);
-    renderer.resize();
+    renderer.resize(); // 高DPI対応で実バッファを確保
+    camera.fitToMap();
 
     const brush = new Game.Brush(3);
     const input = new Game.Input(canvas, camera, world, renderer);
@@ -57,11 +55,13 @@
 
     Game.toolbar.init();
 
-    // リサイズ対応。
-    window.addEventListener("resize", function () {
+    // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。
+    function handleResize() {
       renderer.resize();
-      camera.resize(canvas.width, canvas.height);
-    });
+      camera.resize(renderer.cssW, renderer.cssH);
+    }
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("orientationchange", handleResize);
 
     engine.start();
   }

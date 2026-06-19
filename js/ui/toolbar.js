@@ -47,6 +47,15 @@
         Game.regenerate();
       });
 
+      // モバイル: ツールバー開閉トグル。
+      const toolbarEl = document.getElementById("toolbar");
+      const toggle = document.getElementById("toolbar-toggle");
+      if (toggle) {
+        toggle.addEventListener("click", function () {
+          toolbarEl.classList.toggle("collapsed");
+        });
+      }
+
       this.setActive(Game.state.activeToolId);
     },
 

@@ -4,21 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Fantasy Map Simulator</title>
+  <!-- favicon の自動リクエスト(404)を抑止する空アイコン。 -->
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <canvas id="game"></canvas>
 
+  <!-- モバイルでツールバーを開閉するトグル -->
+  <button id="toolbar-toggle" class="toolbar-toggle" aria-label="ツールバー開閉">☰</button>
+
   <!-- ツールバー（toolbar.js が中身を生成） -->
   <div id="toolbar" class="toolbar">
     <div class="toolbar-title">神の力</div>
     <div id="tool-buttons" class="tool-buttons"></div>
-    <div class="brush-control">
-      <label for="brush-size">ブラシ <span id="brush-size-label">3</span></label>
-      <input type="range" id="brush-size" min="1" max="40" value="3">
+    <div class="controls-row">
+      <div class="brush-control">
+        <label for="brush-size">ブラシ <span id="brush-size-label">3</span></label>
+        <input type="range" id="brush-size" min="1" max="40" value="3">
+      </div>
+      <button id="regen" class="regen-btn">新しい世界</button>
     </div>
-    <button id="regen" class="regen-btn">新しい世界</button>
-    <div class="hint">移動: WASD / ホイールでズーム</div>
+    <div class="hint">移動: WASD・矢印 / ホイールでズーム / 1〜8でツール</div>
   </div>
 
   <div id="coords" class="coords"></div>

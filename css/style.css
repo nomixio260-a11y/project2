@@ -22,6 +22,9 @@ html, body {
   left: 0;
   display: block;
   cursor: crosshair;
+  /* ブラウザ既定のスクロール/ズーム/長押しジェスチャを抑止（タッチ操作用）。 */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #game.panning {
@@ -156,4 +159,100 @@ html, body {
   color: #8fa0c4;
   z-index: 10;
   pointer-events: none;
+}
+
+/* ===== トグルボタン（モバイルでツールバー開閉） ===== */
+.toolbar-toggle {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 12;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(120, 150, 210, 0.28);
+  border-radius: 10px;
+  background: rgba(16, 22, 40, 0.9);
+  color: #e6ecf5;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+/* ===== レスポンシブ: 狭い画面 / タッチ端末 ===== */
+@media (max-width: 640px) {
+  .toolbar-toggle {
+    display: block;
+  }
+
+  .toolbar {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    transform: translateY(0);
+    transition: transform 0.25s ease;
+  }
+
+  .toolbar.collapsed {
+    transform: translateY(calc(100% - 0px));
+  }
+
+  .toolbar-title {
+    margin-bottom: 8px;
+  }
+
+  .tool-buttons {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+  }
+
+  .tool-btn {
+    padding: 9px 2px;
+    font-size: 11px;
+  }
+
+  .controls-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .brush-control {
+    flex: 1;
+    margin-top: 10px;
+  }
+
+  .regen-btn {
+    width: auto;
+    flex-shrink: 0;
+    margin-top: 10px;
+    padding: 9px 14px;
+    align-self: flex-end;
+  }
+
+  .hint {
+    display: none;
+  }
+
+  .coords {
+    bottom: auto;
+    top: 10px;
+    right: 12px;
+    left: auto;
+  }
+}
+
+/* 横持ちの極端に低い画面 */
+@media (max-height: 420px) and (max-width: 900px) {
+  .toolbar {
+    font-size: 11px;
+  }
+  .hint {
+    display: none;
+  }
 }
