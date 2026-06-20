@@ -1,0 +1,37 @@
+name: Deploy to GitHub Pages
+
+# 静的サイト（HTML/JS/CSS）を gh-pages ブランチへ公開する。
+# Pages の Source は「Deploy from a branch」→ gh-pages / (root) を使用。
+# ビルド工程は無し（バニラJS・依存ゼロ）。
+
+on:
+  push:
+    branches:
+      - main
+      - claude/fantasy-map-simulator-game-m6ve46
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 同時デプロイは1つに制限（実行中をキャンセルしない）。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          # リポジトリ全体を公開（index.html がルートにある）。
+          publish_dir: .
+          # Jekyll 処理を無効化（_ 始まりのファイルも配信）。
+          enable_jekyll: false

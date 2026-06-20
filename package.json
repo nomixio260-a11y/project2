@@ -1,0 +1,18 @@
+{
+  "name": "fantasy-map-simulator",
+  "version": "1.0.0",
+  "description": "WorldBox 風のファンタジーマップシミュレーター。ビルド不要のバニラJS + HTML5 Canvas製。",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/unit.test.js",
+    "test:unit": "node --test tests/unit.test.js",
+    "test:browser": "node --test tests/browser.test.js",
+    "test:all": "node --test tests/unit.test.js tests/browser.test.js",
+    "serve": "node tools/serve.js"
+  },
+  "keywords": ["game", "worldbox", "simulation", "canvas", "procedural"],
+  "license": "MIT",
+  "devDependencies": {
+    "puppeteer": "^25.1.0"
+  }
+}

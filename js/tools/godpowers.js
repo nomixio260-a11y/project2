@@ -1,0 +1,163 @@
+// 神の力（ブラシツール）の registry。
+// 各ツール: { id, label, hotkey, swatch(色), apply(world,x,y,falloff) }
+// apply は 1タイルへの効果。dirty マークは input 側が行う。
+(function (Game) {
+  "use strict";
+
+  const T = Game.TERRAIN;
+  const C = Game.TERRAIN_COLORS;
+  const classify = function (e, m, t) {
+    return Game.tile.classify(e, m, t);
+  };
+
+  // 地形を直接セットし、標高もその帯にスナップするヘルパ。
+  function paintTerrain(world, x, y, terrain) {
+    const i = world.idx(x, y);
+    world.terrain[i] = terrain;
+    world.elevation[i] = Game.tile.elevationForTerrain(terrain);
+  }
+
+  const tools = [
+    {
+      id: "raise",
+      label: "隆起",
+      hotkey: "1",
+      swatch: "#8a8a5a",
+      apply: function (world, x, y, falloff) {
+        const e = world.raise(x, y, 0.04 * falloff);
+        world.setTerrain(x, y, classify(e, world.getMoisture(x, y), world.getTemperature(x, y)));
+      },
+    },
+    {
+      id: "lower",
+      label: "沈下",
+      hotkey: "2",
+      swatch: "#2f6fb0",
+      apply: function (world, x, y, falloff) {
+        const e = world.raise(x, y, -0.04 * falloff);
+        world.setTerrain(x, y, classify(e, world.getMoisture(x, y), world.getTemperature(x, y)));
+      },
+    },
+    {
+      id: "water",
+      label: "水",
+      hotkey: "3",
+      swatch: C[T.SHALLOW_WATER],
+      apply: function (world, x, y) {
+        const th = Game.config.thresholds;
+        // 海面下へ沈める。中心ほど深く。
+        const i = world.idx(x, y);
+        world.elevation[i] = th.deepWater * 0.6;
+        world.terrain[i] = T.DEEP_WATER;
+      },
+    },
+    {
+      id: "sand",
+      label: "砂",
+      hotkey: "4",
+      swatch: C[T.SAND],
+      apply: function (world, x, y) {
+        paintTerrain(world, x, y, T.SAND);
+      },
+    },
+    {
+      id: "grass",
+      label: "草原",
+      hotkey: "5",
+      swatch: C[T.GRASS],
+      apply: function (world, x, y) {
+        paintTerrain(world, x, y, T.GRASS);
+      },
+    },
+    {
+      id: "forest",
+      label: "森",
+      hotkey: "6",
+      swatch: C[T.FOREST],
+      apply: function (world, x, y) {
+        paintTerrain(world, x, y, T.FOREST);
+        world.moisture[world.idx(x, y)] = 0.8;
+      },
+    },
+    {
+      id: "mountain",
+      label: "山",
+      hotkey: "7",
+      swatch: C[T.MOUNTAIN],
+      apply: function (world, x, y) {
+        paintTerrain(world, x, y, T.MOUNTAIN);
+      },
+    },
+    {
+      id: "ignite",
+      label: "着火",
+      hotkey: "8",
+      swatch: "#ff6a1f",
+      apply: function (world, x, y) {
+        const i = world.idx(x, y);
+        const t = world.terrain[i];
+        const fire = Game.state.fire;
+        if (fire && Game.tile.isFlammable(t)) {
+          fire.ignite(x, y); // 可燃地形は延焼する炎を着火
+        } else if (!Game.tile.isWater(t)) {
+          // 不燃地形は即焼け地化（水中は対象外）。
+          world.terrain[i] = T.SCORCHED;
+          world.moisture[i] = 0.05;
+        }
+      },
+    },
+    {
+      id: "herbivore",
+      label: "草食",
+      hotkey: "9",
+      group: "life",
+      swatch: "#f2e3b0",
+      apply: function (world, x, y, falloff) {
+        // 確率ゲートで間引き（陸地のみ）。
+        if (Math.random() > 0.12 * falloff) return;
+        const ent = Game.state.entities;
+        if (!ent) return;
+        if (!Game.tile.isLand(world.getTerrain(x, y))) return;
+        ent.spawn(Game.SPECIES.HERBIVORE, x + 0.5, y + 0.5, 0.7);
+      },
+    },
+    {
+      id: "predator",
+      label: "肉食",
+      hotkey: "0",
+      group: "life",
+      swatch: "#d83a3a",
+      apply: function (world, x, y, falloff) {
+        if (Math.random() > 0.08 * falloff) return;
+        const ent = Game.state.entities;
+        if (!ent) return;
+        if (!Game.tile.isLand(world.getTerrain(x, y))) return;
+        ent.spawn(Game.SPECIES.PREDATOR, x + 0.5, y + 0.5, 0.7);
+      },
+    },
+    {
+      id: "found",
+      label: "建国",
+      hotkey: "k",
+      group: "civ",
+      swatch: "#c062d0",
+      apply: function (world, x, y, falloff) {
+        // ブラシ中心付近でのみ建国（1ストロークで乱立させない）。
+        if (falloff < 0.92) return;
+        const civ = Game.state.civ;
+        if (civ) civ.foundAt(x, y);
+      },
+    },
+  ];
+
+  // id → ツールの索引。
+  const byId = {};
+  for (const t of tools) byId[t.id] = t;
+
+  Game.godpowers = {
+    list: tools,
+    get: function (id) {
+      return byId[id];
+    },
+  };
+})(window.Game);
