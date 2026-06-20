@@ -11,6 +11,12 @@
 <body>
   <canvas id="game"></canvas>
 
+  <!-- 上部ステータスバー（タイトル・季節時計） -->
+  <header id="topbar" class="topbar">
+    <span class="topbar-title">🗺 Fantasy Map Simulator</span>
+    <span id="clock" class="topbar-clock">🌸 春 1年 1日</span>
+  </header>
+
   <!-- モバイルでツールバーを開閉するトグル -->
   <button id="toolbar-toggle" class="toolbar-toggle" aria-label="ツールバー開閉">☰</button>
 
@@ -41,6 +47,9 @@
   <!-- ライブ統計 HUD（hud.js が中身を生成） -->
   <div id="hud" class="hud"></div>
 
+  <!-- ミニマップ（minimap.js が描画） -->
+  <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
+
   <div id="coords" class="coords"></div>
 
   <!-- 依存順にロード（no-build: クラシック script のみ） -->
@@ -59,8 +68,11 @@
   <script src="js/input/input.js"></script>
   <script src="js/ui/toolbar.js"></script>
   <script src="js/ui/hud.js"></script>
+  <script src="js/ui/minimap.js"></script>
   <script src="js/engine/engine.js"></script>
   <!-- シミュレーションシステム（engine の後、main の前） -->
+  <script src="js/systems/climate.js"></script>
+  <script src="js/systems/vegetation.js"></script>
   <script src="js/systems/creatures.js"></script>
   <script src="js/systems/fire.js"></script>
   <script src="js/systems/civ.js"></script>

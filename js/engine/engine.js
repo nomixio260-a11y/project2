@@ -75,6 +75,9 @@
     // 統計 HUD（内部で間引いて DOM 更新）。
     if (Game.hud) Game.hud.tick(dt);
 
+    // ミニマップ（内部で間引いて描画）。
+    if (Game.minimap) Game.minimap.draw(dt, this.camera);
+
     requestAnimationFrame(this._loop);
   };
 

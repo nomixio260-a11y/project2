@@ -8,8 +8,8 @@ window.Game = window.Game || {};
   // 既定設定。worldgen / renderer / camera から参照される。
   Game.config = {
     // マップサイズ（タイル数）
-    mapWidth: 512,
-    mapHeight: 512,
+    mapWidth: 640,
+    mapHeight: 640,
 
     // 1タイルのベースピクセル（zoom=1.0 のときの見かけ上のサイズ）
     tilePx: 8,
@@ -27,11 +27,25 @@ window.Game = window.Game || {};
       speed: 1, // 速度倍率（0.5/1/2/4）
       tickMs: 100, // 1ティック=シム内100ms（速度1で10tick/秒）
       maxSteps: 5, // 1フレームあたりの最大catch-upティック
-      maxEntities: 4000, // 生物の上限
-      maxFires: 6000, // 同時延焼タイルの上限
-      maxKingdoms: 64, // 王国数の上限
-      claimsPerTick: 40, // 1王国が1ティックに拡張するタイル数の上限
+      maxEntities: 9000, // 生物の上限
+      maxFires: 9000, // 同時延焼タイルの上限
+      maxKingdoms: 96, // 王国数の上限
+      claimsPerTick: 40, // 1王国が1ティックに拡張するタイル数の上限（人口で変調）
       conflictChance: 0.05, // 国境での領土反転の基本確率
+
+      // 気候・季節
+      ticksPerDay: 18, // 何ティックで1日進むか
+      daysPerSeason: 14, // 1季節の日数（4季=1年）
+
+      // 植生（vegetation）
+      vegBandRows: 96, // 1ティックで再成長処理する行数（ローリング走査）
+      vegGrowth: 0.11, // 容量へ近づく基本成長率/ティック
+      vegGrazeCost: 0.06, // 草食1回の採食で減る fertility
+
+      // 文明（人口）
+      popPerTile: 9, // 1タイルあたりの人口容量
+      popGrowth: 0.02, // 人口の対数成長率/ティック
+      popStart: 12, // 建国時の初期人口
     },
 
     // 生成パラメータ
@@ -74,6 +88,15 @@ window.Game = window.Game || {};
     },
   };
 
+  // 季節テーブル（climate システムが参照）。
+  // tempOffset: 体感気温の季節補正、growth: 植生の成長係数。
+  Game.SEASONS = [
+    { name: "春", emoji: "🌸", tempOffset: 0.02, growth: 1.05, fireMul: 1.0 },
+    { name: "夏", emoji: "☀️", tempOffset: 0.16, growth: 1.35, fireMul: 1.5 },
+    { name: "秋", emoji: "🍁", tempOffset: -0.01, growth: 0.7, fireMul: 1.1 },
+    { name: "冬", emoji: "❄️", tempOffset: -0.18, growth: 0.25, fireMul: 0.5 },
+  ];
+
   // 実行時の共有状態。main.js が中身を埋める。
   Game.state = {
     world: null,
@@ -83,5 +106,7 @@ window.Game = window.Game || {};
     activeToolId: "raise",
     brush: null,
     mouseTile: { x: -1, y: -1 },
+    // 気候の時計（climate システムが進める）。
+    clock: { tick: 0, day: 0, year: 1, seasonIndex: 0, season: null },
   };
 })(window.Game);

@@ -73,6 +73,8 @@ test("デスクトップ: エラー無く初期化され地形が生成される
     return {
       width: w.width,
       height: w.height,
+      cfgW: Game.config.mapWidth,
+      cfgH: Game.config.mapHeight,
       terrainTypes: seen.size,
       hasCamera: !!Game.state.camera,
       hasRenderer: !!Game.state.renderer,
@@ -80,8 +82,9 @@ test("デスクトップ: エラー無く初期化され地形が生成される
     };
   });
 
-  assert.equal(info.width, 512);
-  assert.equal(info.height, 512);
+  assert.equal(info.width, info.cfgW, "world 幅が config と一致");
+  assert.equal(info.height, info.cfgH, "world 高さが config と一致");
+  assert.ok(info.width >= 256, "マップが十分大きい");
   assert.ok(info.terrainTypes >= 4, "地形の種類が少ない: " + info.terrainTypes);
   assert.ok(info.hasCamera && info.hasRenderer);
   assert.ok(info.canvasW > 0, "canvas未初期化");
