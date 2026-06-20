@@ -371,6 +371,94 @@ test("Camera: visibleTileRange はマップ範囲内に収まる", () => {
   assert.ok(r.x1 >= r.x0 && r.y1 >= r.y0);
 });
 
+test("ClimateSystem: ティックで日・季節・年が進む", () => {
+  const Game = loadCore();
+  const clim = new Game.ClimateSystem();
+  const cfg = Game.config.sim;
+  // 1日 = ticksPerDay ティック。1季節 = daysPerSeason 日。
+  const ticksPerYear = cfg.ticksPerDay * cfg.daysPerSeason * 4;
+  for (let i = 0; i < ticksPerYear; i++) clim.tick();
+  const clk = Game.state.clock;
+  assert.equal(clk.year, 2, "1年経過で year=2");
+  assert.equal(clk.seasonIndex, 0, "1年後は春に戻る");
+  assert.ok(clk.season && clk.season.name === "春");
+});
+
+test("ClimateSystem: 季節が春→夏→秋→冬と巡る", () => {
+  const Game = loadCore();
+  const clim = new Game.ClimateSystem();
+  const perSeason = Game.config.sim.ticksPerDay * Game.config.sim.daysPerSeason;
+  const seen = [];
+  for (let s = 0; s < 4; s++) {
+    for (let i = 0; i < perSeason; i++) clim.tick();
+    seen.push(Game.state.clock.seasonIndex);
+  }
+  // 各季節末で index が 1,2,3,0 を踏む。
+  assert.deepEqual(seen, [1, 2, 3, 0]);
+});
+
+test("VegetationSystem: 焼け地が再成長して草原に回復する", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
+  const w = new Game.World(20, 20);
+  w.terrain.fill(Game.TERRAIN.SCORCHED);
+  w.moisture.fill(0.6);
+  w.temperature.fill(0.5);
+  const veg = new Game.VegetationSystem(w, { markDirty() {} });
+  veg.seed(w);
+  Game.state.clock.season = Game.SEASONS[1]; // 夏（成長旺盛）
+  // 十分な回数ティック（バンドが全面を何周もする）。
+  for (let t = 0; t < 200; t++) veg.tick(w);
+  let grass = 0;
+  for (let i = 0; i < w.terrain.length; i++) {
+    if (w.terrain[i] === Game.TERRAIN.GRASS || w.terrain[i] === Game.TERRAIN.FOREST) grass++;
+  }
+  assert.ok(grass > w.terrain.length * 0.5, "焼け地が回復していない: " + grass);
+});
+
+test("VegetationSystem: graze で fertility が減り、空なら 0 を返す", () => {
+  const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
+  const w = new Game.World(8, 8);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const veg = new Game.VegetationSystem(w, { markDirty() {} });
+  veg.seed(w);
+  const i = 3 * 8 + 3;
+  const before = w.fertility[i];
+  const eaten = veg.graze(i);
+  assert.ok(eaten > 0, "採食量が正");
+  assert.ok(w.fertility[i] < before, "fertility が減る");
+  // 枯らし切ると 0 を返す。
+  for (let k = 0; k < 50; k++) veg.graze(i);
+  assert.equal(veg.graze(i), 0, "枯渇時は 0");
+});
+
+test("CivSystem: 人口が成長し、stats を集計できる", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const id = civ.foundAt(20, 20);
+  const k = civ.kingdoms[id];
+  assert.ok(k.name && k.name.length > 0, "王国名が付く");
+  assert.equal(k.cities.length, 1, "首都が1つ");
+  assert.ok(k.cities[0].capital, "首都フラグ");
+  const pop0 = k.population;
+  for (let t = 0; t < 60; t++) civ.tick(w);
+  assert.ok(k.population > pop0, "人口が成長していない");
+  const s = civ.stats();
+  assert.equal(s.kingdoms, 1);
+  assert.ok(s.population >= Math.round(k.population) - 1, "総人口集計");
+});
+
+test("godpowers: 災害・生態ツールが登録されている", () => {
+  const Game = loadCore();
+  for (const id of ["earthquake", "meteor", "flood", "plague", "fertilize"]) {
+    assert.ok(Game.godpowers.get(id), "ツール未登録: " + id);
+  }
+  // disaster グループに分類されている。
+  assert.equal(Game.godpowers.get("meteor").group, "disaster");
+  assert.equal(Game.godpowers.get("fertilize").group, "life");
+});
+
 test("Hud.sample: 個体数・王国・延焼を集計する", () => {
   const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
   const S = Game.SPECIES;

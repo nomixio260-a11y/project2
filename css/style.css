@@ -1,3 +1,18 @@
+/* ===== Fantasy Map Simulator — UI テーマ ===== */
+:root {
+  --bg: #0a0e1a;
+  --panel: rgba(18, 24, 42, 0.82);
+  --panel-solid: #121828;
+  --border: rgba(125, 158, 222, 0.22);
+  --border-strong: rgba(150, 180, 240, 0.4);
+  --text: #e8eefb;
+  --text-dim: #8a9ac0;
+  --text-faint: #6c7c9e;
+  --accent: #5b8def;
+  --accent-2: #7c6cf0;
+  --shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -8,10 +23,10 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #0b1020;
+  background: var(--bg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN",
     "Yu Gothic", Meiryo, sans-serif;
-  color: #e6ecf5;
+  color: var(--text);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -22,7 +37,6 @@ html, body {
   left: 0;
   display: block;
   cursor: crosshair;
-  /* ブラウザ既定のスクロール/ズーム/長押しジェスチャを抑止（タッチ操作用）。 */
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -31,31 +45,99 @@ html, body {
   cursor: grabbing;
 }
 
+/* ===== 上部ステータスバー ===== */
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: linear-gradient(180deg, rgba(10, 14, 26, 0.92), rgba(10, 14, 26, 0.55));
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  z-index: 15;
+  pointer-events: none;
+}
+
+.topbar-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #cdd9f4;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.topbar-clock {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #eaf0fb;
+  background: rgba(30, 40, 66, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 14px;
+}
+
 /* ===== ツールバー ===== */
 .toolbar {
   position: fixed;
-  top: 12px;
+  top: 54px;
   left: 12px;
-  width: 184px;
+  width: 192px;
+  max-height: calc(100vh - 70px);
+  overflow-y: auto;
   padding: 12px;
-  background: rgba(16, 22, 40, 0.86);
-  border: 1px solid rgba(120, 150, 210, 0.28);
-  border-radius: 12px;
-  backdrop-filter: blur(6px);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
   z-index: 10;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 150, 210, 0.4) transparent;
+}
+
+.toolbar::-webkit-scrollbar {
+  width: 7px;
+}
+.toolbar::-webkit-scrollbar-thumb {
+  background: rgba(120, 150, 210, 0.4);
+  border-radius: 4px;
 }
 
 .toolbar-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   color: #aebfe0;
   margin-bottom: 10px;
   text-transform: uppercase;
 }
 
 .tool-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  margin: 8px 2px 2px;
+}
+
+.tool-group-label:first-child {
+  margin-top: 0;
+}
+
+.tool-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 6px;
@@ -65,19 +147,20 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   padding: 8px 4px;
-  background: rgba(40, 50, 78, 0.7);
-  border: 1px solid rgba(120, 150, 210, 0.18);
-  border-radius: 8px;
+  background: rgba(42, 53, 84, 0.66);
+  border: 1px solid var(--border);
+  border-radius: 9px;
   color: #dfe6f3;
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, transform 0.05s;
+  transition: background 0.12s, border-color 0.12s, transform 0.05s, box-shadow 0.12s;
 }
 
 .tool-btn:hover {
-  background: rgba(58, 72, 110, 0.9);
+  background: rgba(60, 76, 116, 0.92);
+  border-color: var(--border-strong);
 }
 
 .tool-btn:active {
@@ -85,50 +168,48 @@ html, body {
 }
 
 .tool-btn.active {
-  background: rgba(78, 130, 220, 0.92);
+  background: linear-gradient(180deg, rgba(91, 141, 239, 0.95), rgba(74, 110, 210, 0.95));
   border-color: #9cc1ff;
   color: #fff;
+  box-shadow: 0 0 0 1px rgba(156, 193, 255, 0.5), 0 4px 14px rgba(60, 110, 230, 0.4);
 }
 
 .tool-btn .swatch {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-}
-
-.tool-btn .key {
-  position: absolute;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.25);
 }
 
 .brush-control {
-  margin-top: 12px;
+  margin-top: 14px;
   font-size: 12px;
   color: #c4d0e8;
 }
 
 .brush-control label {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
 }
 
 .brush-control input[type="range"] {
   width: 100%;
-  accent-color: #5b8def;
+  accent-color: var(--accent);
 }
 
 .regen-btn {
   margin-top: 12px;
   width: 100%;
-  padding: 9px;
-  background: linear-gradient(180deg, #5b8def, #3f6fd0);
+  padding: 10px;
+  background: linear-gradient(180deg, var(--accent), #3f6fd0);
   border: none;
-  border-radius: 8px;
+  border-radius: 9px;
   color: #fff;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: filter 0.12s;
+  transition: filter 0.12s, transform 0.05s;
 }
 
 .regen-btn:hover {
@@ -136,7 +217,7 @@ html, body {
 }
 
 .regen-btn:active {
-  filter: brightness(0.95);
+  transform: translateY(1px);
 }
 
 /* シミュレーション制御 */
@@ -184,20 +265,25 @@ html, body {
   color: #aebbd6;
   font-size: 11px;
   cursor: pointer;
+  transition: background 0.12s;
+}
+
+.speed-btn:hover {
+  background: #2c3a59;
 }
 
 .speed-btn.active {
-  background: #5b8def;
+  background: var(--accent);
   border-color: transparent;
   color: #fff;
   font-weight: 700;
 }
 
 .hint {
-  margin-top: 10px;
+  margin-top: 12px;
   font-size: 10.5px;
-  line-height: 1.5;
-  color: #7e8cab;
+  line-height: 1.6;
+  color: var(--text-faint);
 }
 
 /* ===== 座標表示 ===== */
@@ -205,12 +291,13 @@ html, body {
   position: fixed;
   bottom: 10px;
   left: 12px;
-  padding: 4px 10px;
-  background: rgba(16, 22, 40, 0.7);
-  border-radius: 6px;
+  padding: 5px 11px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: #8fa0c4;
+  color: #9fb0d4;
   z-index: 10;
   pointer-events: none;
 }
@@ -218,50 +305,74 @@ html, body {
 /* ===== ライブ統計 HUD（右上） ===== */
 .hud {
   position: fixed;
-  top: 10px;
+  top: 54px;
   right: 12px;
-  min-width: 104px;
-  padding: 8px 10px;
-  background: rgba(16, 22, 40, 0.7);
-  border: 1px solid rgba(120, 150, 210, 0.18);
-  border-radius: 8px;
-  font-size: 11px;
+  width: 168px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: #c2d0ec;
   z-index: 10;
   pointer-events: none;
-  user-select: none;
+}
+
+.hud-spark {
+  width: 100%;
+  height: 34px;
+  display: block;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: rgba(8, 14, 26, 0.6);
 }
 
 .hud-row {
   display: flex;
   justify-content: space-between;
   gap: 14px;
-  line-height: 1.55;
+  line-height: 1.62;
 }
 
 .hud-label {
-  color: #8295bb;
+  color: var(--text-dim);
 }
 
 .hud-value {
-  font-weight: 600;
+  font-weight: 700;
   color: #eaf0fb;
+}
+
+/* ===== ミニマップ（右下） ===== */
+.minimap {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  background: #0a0e1a;
+  z-index: 10;
+  cursor: pointer;
+  image-rendering: pixelated;
 }
 
 /* ===== トグルボタン（モバイルでツールバー開閉） ===== */
 .toolbar-toggle {
   display: none;
   position: fixed;
-  top: 12px;
+  top: 50px;
   left: 12px;
-  z-index: 12;
+  z-index: 16;
   width: 44px;
   height: 44px;
-  border: 1px solid rgba(120, 150, 210, 0.28);
-  border-radius: 10px;
-  background: rgba(16, 22, 40, 0.9);
-  color: #e6ecf5;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(16, 22, 40, 0.92);
+  color: var(--text);
   font-size: 20px;
   cursor: pointer;
 }
@@ -277,24 +388,25 @@ html, body {
     bottom: 0;
     left: 0;
     width: 100%;
-    border-radius: 16px 16px 0 0;
+    max-height: 62vh;
+    border-radius: 18px 18px 0 0;
     border-left: none;
     border-right: none;
     border-bottom: none;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
     transform: translateY(0);
     transition: transform 0.25s ease;
   }
 
   .toolbar.collapsed {
-    transform: translateY(calc(100% - 0px));
+    transform: translateY(100%);
   }
 
   .toolbar-title {
     margin-bottom: 8px;
   }
 
-  .tool-buttons {
+  .tool-grid {
     grid-template-columns: repeat(4, 1fr);
     gap: 5px;
   }
@@ -327,21 +439,36 @@ html, body {
     display: none;
   }
 
-  /* HUD は右上のまま。coords は左上へ逃がして重なりを防ぐ。 */
+  /* HUD は小型化、coords は左上へ。 */
+  .hud {
+    top: 50px;
+    width: 140px;
+    padding: 8px 10px;
+  }
+
   .coords {
     bottom: auto;
-    top: 10px;
+    top: 50px;
     left: 12px;
     right: auto;
+  }
+
+  /* ミニマップは小さめにして HUD の下へ。 */
+  .minimap {
+    bottom: auto;
+    top: 178px;
+    right: 12px;
+    width: 116px !important;
+    height: 116px !important;
   }
 }
 
 /* 横持ちの極端に低い画面 */
-@media (max-height: 420px) and (max-width: 900px) {
-  .toolbar {
-    font-size: 11px;
-  }
+@media (max-height: 460px) and (max-width: 900px) {
   .hint {
+    display: none;
+  }
+  .minimap {
     display: none;
   }
 }

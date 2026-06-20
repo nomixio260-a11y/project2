@@ -28,6 +28,17 @@
     return k ? k.color : null;
   };
 
+  // 王国名の生成（音節を連結したファンタジー風）。
+  const NAME_A = ["Ar", "Bel", "Cor", "Dra", "El", "Fen", "Gor", "Hal", "Ish", "Kor", "Lor", "Mor", "Nor", "Or", "Per", "Quel", "Rho", "Syl", "Tor", "Ul", "Var", "Wyn", "Xan", "Yor", "Zar"];
+  const NAME_B = ["a", "e", "i", "o", "u", "ae", "ia", "or", "en", "an"];
+  const NAME_C = ["dor", "gard", "heim", "land", "mar", "nia", "ria", "thal", "vale", "wick", "stead", "moor", "fell", "reach"];
+  function makeName(rand) {
+    const a = NAME_A[(rand() * NAME_A.length) | 0];
+    const b = NAME_B[(rand() * NAME_B.length) | 0];
+    const c = NAME_C[(rand() * NAME_C.length) | 0];
+    return a + b + c;
+  }
+
   // HSL 風に id から鮮やかな色を生成。
   function makeColor(rand) {
     const h = rand() * 360;
@@ -60,10 +71,14 @@
     const id = this.kingdoms.length;
     const k = {
       id: id,
+      name: makeName(this.rand),
       color: makeColor(this.rand),
       capitalX: x,
       capitalY: y,
       tileCount: 1,
+      population: Game.config.sim.popStart,
+      cities: [{ x: x, y: y, capital: true }],
+      nextCityAt: 300, // この領土数で次の都市を建てる
       frontier: [i],
       fhead: 0, // 処理済みフロンティアの先頭位置
       alive: true,
@@ -74,22 +89,54 @@
     return id;
   };
 
+  // 領土が閾値に達するたびに新都市を建設する（最大6都市）。
+  CivSystem.prototype._maybeFoundCity = function (k, x, y) {
+    if (k.tileCount < k.nextCityAt || k.cities.length >= 6) return;
+    k.cities.push({ x: x, y: y, capital: false });
+    k.nextCityAt += 350;
+  };
+
+  // HUD 用の集計（生存王国数・総人口・都市数）。
+  CivSystem.prototype.stats = function () {
+    let kingdoms = 0;
+    let population = 0;
+    let cities = 0;
+    for (let id = 1; id < this.kingdoms.length; id++) {
+      const k = this.kingdoms[id];
+      if (!k || !k.alive) continue;
+      kingdoms++;
+      population += k.population;
+      cities += k.cities.length;
+    }
+    return { kingdoms: kingdoms, population: Math.round(population), cities: cities };
+  };
+
   CivSystem.prototype.tick = function (world) {
     const kingdoms = this.kingdoms;
     const owner = world.owner;
     const W = world.width;
     const H = world.height;
     const rand = this.rand;
-    const claimsPerTick = Game.config.sim.claimsPerTick;
-    const conflictChance = Game.config.sim.conflictChance;
+    const cfg = Game.config.sim;
+    const claimsPerTick = cfg.claimsPerTick;
+    const conflictChance = cfg.conflictChance;
 
     for (let id = 1; id < kingdoms.length; id++) {
       const k = kingdoms[id];
       if (!k || !k.alive) continue;
+
+      // 人口の対数成長（容量＝領土数×popPerTile）。領土が縮めば人口も減衰。
+      const cap = k.tileCount * cfg.popPerTile;
+      k.population += cfg.popGrowth * k.population * (1 - k.population / (cap + 1));
+      if (k.population < 1) k.population = 1;
+
+      // 拡張予算は人口規模で変調（大国ほど速く広がる）。
+      const budget = Math.min(claimsPerTick, 2 + ((k.population / 25) | 0));
+
       let claims = 0;
       const frontier = k.frontier;
 
-      while (claims < claimsPerTick && k.fhead < frontier.length) {
+      while (claims < budget && k.fhead < frontier.length) {
         const fi = frontier[k.fhead];
         const x = fi % W;
         const y = (fi / W) | 0;
@@ -115,24 +162,26 @@
             k.tileCount++;
             frontier.push(ni);
             if (this.renderer) this.renderer.markTerritoryDirty(ni % W, (ni / W) | 0);
+            this._maybeFoundCity(k, ni % W, (ni / W) | 0);
             claims++;
             stillFrontier = true;
-            if (claims >= claimsPerTick) break;
+            if (claims >= budget) break;
           } else {
             // 他国の領土 → 人口比に応じて確率的に奪う。
             const other = kingdoms[o];
             if (other && other.alive) {
-              const ratio = k.tileCount / (k.tileCount + other.tileCount);
+              const ratio = k.population / (k.population + other.population + 1);
               if (rand() < conflictChance * ratio) {
                 owner[ni] = id;
                 k.tileCount++;
                 other.tileCount--;
+                other.population *= 0.985; // 領土喪失で人口減
                 frontier.push(ni);
                 if (this.renderer) this.renderer.markTerritoryDirty(ni % W, (ni / W) | 0);
                 claims++;
                 stillFrontier = true;
                 if (other.tileCount <= 0) other.alive = false;
-                if (claims >= claimsPerTick) break;
+                if (claims >= budget) break;
               } else {
                 stillFrontier = true; // 隣に敵がいる限りフロンティア
               }
@@ -142,7 +191,7 @@
 
         if (!stillFrontier) {
           k.fhead++; // このタイルはもう拡張先が無い
-        } else if (claims >= claimsPerTick) {
+        } else if (claims >= budget) {
           break; // 上限。続きは次ティック。
         } else {
           k.fhead++; // 拡張済み。次のフロンティアへ。

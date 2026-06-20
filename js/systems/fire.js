@@ -110,8 +110,14 @@
   FireSystem.prototype._maybeSpread = function (ni, next, rand) {
     if (this.burn[ni] !== 0) return;
     const terr = this.world.terrain[ni];
-    const p = spreadProb(terr);
+    let p = spreadProb(terr);
     if (p === 0) return;
+    // 季節で延焼しやすさを変調（夏は燃え広がりやすく冬は鎮まる）。
+    const season = Game.state.clock && Game.state.clock.season;
+    if (season) p *= season.fireMul;
+    // 乾燥（低 fertility）ほどよく燃える。
+    const f = this.world.fertility;
+    if (f) p *= 0.7 + 0.6 * (1 - f[ni]);
     if (rand() < p) this._igniteInto(ni, next);
   };
 

@@ -21,6 +21,15 @@
     const input = new Game.Input(canvas, camera, world, renderer);
     const engine = new Game.Engine(renderer, camera, input);
 
+    // 気候・季節（最初に tick して clock を更新）。
+    const climate = new Game.ClimateSystem();
+    engine.systems.push(climate);
+
+    // 植生・生態系（fertility を初期化してから配線）。
+    const vegetation = new Game.VegetationSystem(world, renderer);
+    vegetation.seed(world);
+    engine.systems.push(vegetation);
+
     // 生物ストア + シミュレーションシステム。
     const entities = new Game.Entities(cfg.sim.maxEntities);
     renderer.setEntities(entities);
@@ -47,6 +56,8 @@
     Game.state.creatures = creatures;
     Game.state.fire = fire;
     Game.state.civ = civ;
+    Game.state.climate = climate;
+    Game.state.vegetation = vegetation;
     Game.state.activeToolId = "raise";
 
     // UI からも呼べる公開 API。
@@ -85,15 +96,20 @@
       input.setWorld(w);
       // シミュレーション状態をリセット。
       entities.clear();
+      climate.reset();
+      vegetation.setWorld(w);
+      vegetation.seed(w);
       creatures.setWorld(w);
       fire.setWorld(w);
       civ.setWorld(w);
       civ.clear();
       camera.fitToMap();
+      if (Game.minimap) Game.minimap._fit();
     };
 
     Game.toolbar.init();
     if (Game.hud) Game.hud.init();
+    if (Game.minimap) Game.minimap.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。
     function handleResize() {

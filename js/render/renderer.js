@@ -190,6 +190,9 @@
     // 炎オーバーレイ（地形の上、生物の下）。
     this.drawFire(camera);
 
+    // 都市マーカー（領土の上）。
+    this.drawCities(camera);
+
     // 生物オーバーレイ。
     this.drawEntities(camera);
 
@@ -216,11 +219,59 @@
       if (x < range.x0 || x > range.x1 || y < range.y0 || y > range.y1) continue;
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
-      ctx.fillStyle = e.type[i] === SP.PREDATOR ? "#d83a3a" : "#f2e3b0";
+      // 遺伝子(体格)で半径を変える。
+      const gene = e.gene[i] || 1;
+      ctx.fillStyle = e.type[i] === SP.PREDATOR ? "#e0473a" : "#f2e3b0";
       ctx.beginPath();
-      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.arc(sx, sy, r * gene, 0, Math.PI * 2);
       ctx.fill();
     }
+  };
+
+  // 王国の都市マーカーを描画（首都は大きめ）。
+  Renderer.prototype.drawCities = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 1.5) return; // 縮小時は省略
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const kingdoms = civ.kingdoms;
+
+    ctx.save();
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive || !k.cities) continue;
+      const col = k.color;
+      const fill = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
+      for (let c = 0; c < k.cities.length; c++) {
+        const city = k.cities[c];
+        if (city.x < range.x0 || city.x > range.x1 || city.y < range.y0 || city.y > range.y1) continue;
+        const sx = camera.worldToScreenX((city.x + 0.5) * tile);
+        const sy = camera.worldToScreenY((city.y + 0.5) * tile);
+        const rad = city.capital ? Math.max(3, scale * 0.6) : Math.max(2, scale * 0.4);
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad + 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(255,255,255,0.85)";
+        ctx.stroke();
+        if (city.capital) {
+          // 首都は中心に白点。
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(1, rad * 0.35), 0, Math.PI * 2);
+          ctx.fillStyle = "#fff";
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
   };
 
   // 燃焼中タイルを可視範囲だけ揺らぐグローで描画。
