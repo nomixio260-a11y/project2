@@ -29,6 +29,9 @@ window.Game = window.Game || {};
       maxSteps: 5, // 1フレームあたりの最大catch-upティック
       maxEntities: 4000, // 生物の上限
       maxFires: 6000, // 同時延焼タイルの上限
+      maxKingdoms: 64, // 王国数の上限
+      claimsPerTick: 40, // 1王国が1ティックに拡張するタイル数の上限
+      conflictChance: 0.05, // 国境での領土反転の基本確率
     },
 
     // 生成パラメータ

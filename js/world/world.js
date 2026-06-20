@@ -11,6 +11,7 @@
     this.moisture = new Float32Array(n); // 0..1
     this.temperature = new Float32Array(n); // 0..1（緯度・標高ベース、バイオーム分類用）
     this.terrain = new Uint8Array(n); // TERRAIN enum
+    this.owner = new Uint16Array(n); // 文明の領有（0=無所属, それ以外=王国ID）
   }
 
   World.prototype.idx = function (x, y) {
@@ -39,6 +40,14 @@
 
   World.prototype.getMoisture = function (x, y) {
     return this.moisture[y * this.width + x];
+  };
+
+  World.prototype.getOwner = function (x, y) {
+    return this.owner[y * this.width + x];
+  };
+
+  World.prototype.setOwner = function (x, y, id) {
+    this.owner[y * this.width + x] = id;
   };
 
   World.prototype.getTemperature = function (x, y) {

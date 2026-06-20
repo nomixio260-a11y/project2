@@ -135,6 +135,19 @@
         ent.spawn(Game.SPECIES.PREDATOR, x + 0.5, y + 0.5, 0.7);
       },
     },
+    {
+      id: "found",
+      label: "建国",
+      hotkey: "k",
+      group: "civ",
+      swatch: "#c062d0",
+      apply: function (world, x, y, falloff) {
+        // ブラシ中心付近でのみ建国（1ストロークで乱立させない）。
+        if (falloff < 0.92) return;
+        const civ = Game.state.civ;
+        if (civ) civ.foundAt(x, y);
+      },
+    },
   ];
 
   // id → ツールの索引。

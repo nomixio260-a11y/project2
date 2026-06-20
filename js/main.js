@@ -32,6 +32,10 @@
     renderer.setFire(fire);
     engine.systems.push(fire);
 
+    // 文明システム。
+    const civ = new Game.CivSystem(world, renderer);
+    engine.systems.push(civ);
+
     // 共有状態へ格納。
     Game.state.world = world;
     Game.state.camera = camera;
@@ -42,6 +46,7 @@
     Game.state.entities = entities;
     Game.state.creatures = creatures;
     Game.state.fire = fire;
+    Game.state.civ = civ;
     Game.state.activeToolId = "raise";
 
     // UI からも呼べる公開 API。
@@ -82,6 +87,8 @@
       entities.clear();
       creatures.setWorld(w);
       fire.setWorld(w);
+      civ.setWorld(w);
+      civ.clear();
       camera.fitToMap();
     };
 

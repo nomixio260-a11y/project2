@@ -24,6 +24,13 @@
     this.cssH = canvas.height;
     this.dpr = 1;
 
+    // 領土オーバーレイ用オフスクリーン（透明背景、所有タイルだけ着色）。
+    this.territoryCanvas = document.createElement("canvas");
+    this.territoryCanvas.width = world.width;
+    this.territoryCanvas.height = world.height;
+    this.territoryCtx = this.territoryCanvas.getContext("2d");
+    this.territoryDirty = [];
+
     this.dirty = []; // 部分更新待ちのタイル {x,y}
     this.entities = null; // 生物ストア（setEntities で接続）
     this.fire = null; // 炎システム（setFire で接続）
@@ -49,7 +56,45 @@
       this.imageData = this.terrainCtx.createImageData(world.width, world.height);
     }
     this.dirty.length = 0;
+    // 領土オフスクリーンもサイズ追従しクリア。
+    if (this.territoryCanvas.width !== world.width || this.territoryCanvas.height !== world.height) {
+      this.territoryCanvas.width = world.width;
+      this.territoryCanvas.height = world.height;
+    } else {
+      this.territoryCtx.clearRect(0, 0, world.width, world.height);
+    }
+    this.territoryDirty.length = 0;
     this.fullRedraw();
+  };
+
+  // 領土タイルの差分更新を積む。
+  Renderer.prototype.markTerritoryDirty = function (x, y) {
+    this.territoryDirty.push(x, y);
+  };
+
+  // 領土の dirty を territoryCanvas へ反映（所有者色 or クリア）。
+  Renderer.prototype.flushTerritoryDirty = function () {
+    if (this.territoryDirty.length === 0) return;
+    const world = this.world;
+    const civ = Game.state.civ;
+    const tctx = this.territoryCtx;
+    for (let k = 0; k < this.territoryDirty.length; k += 2) {
+      const x = this.territoryDirty[k];
+      const y = this.territoryDirty[k + 1];
+      const id = world.owner[y * world.width + x];
+      if (id === 0 || !civ) {
+        tctx.clearRect(x, y, 1, 1);
+      } else {
+        const c = civ.colorOf(id);
+        if (c) {
+          tctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+          tctx.fillRect(x, y, 1, 1);
+        } else {
+          tctx.clearRect(x, y, 1, 1);
+        }
+      }
+    }
+    this.territoryDirty.length = 0;
   };
 
   // world.terrain 全体を ImageData に書き出してオフスクリーンへ。
@@ -117,6 +162,7 @@
   // 毎フレーム描画。
   Renderer.prototype.draw = function (camera) {
     this.flushDirty();
+    this.flushTerritoryDirty();
     const ctx = this.ctx;
     const cfg = Game.config;
     const tile = cfg.tilePx;
@@ -135,6 +181,11 @@
 
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.terrainCanvas, dx, dy, dw, dh);
+
+    // 領土オーバーレイ（地形の上、半透明で着色）。
+    ctx.globalAlpha = 0.4;
+    ctx.drawImage(this.territoryCanvas, dx, dy, dw, dh);
+    ctx.globalAlpha = 1;
 
     // 炎オーバーレイ（地形の上、生物の下）。
     this.drawFire(camera);

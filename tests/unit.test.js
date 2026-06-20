@@ -265,6 +265,61 @@ test("FireSystem: active 集合が maxFires を超えない", () => {
   }
 });
 
+test("CivSystem: 建国して領土が拡張する（陸地のみ）", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  // 一部を海にして拡張が陸地に限られることを確認。
+  for (let y = 0; y < 30; y++) w.setTerrain(15, y, Game.TERRAIN.DEEP_WATER);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+
+  // 水には建国できない。
+  assert.equal(civ.foundAt(15, 5), -1, "水に建国してはいけない");
+  // 陸地に建国。
+  const id = civ.foundAt(5, 5);
+  assert.ok(id > 0, "建国できていない");
+  assert.equal(w.getOwner(5, 5), id);
+
+  for (let t = 0; t < 40; t++) civ.tick(w);
+  const k = civ.kingdoms[id];
+  assert.ok(k.tileCount > 1, "領土が拡張していない");
+  // 海(x=15列)は決して領有されない。
+  for (let y = 0; y < 30; y++) {
+    assert.equal(w.getOwner(15, y), 0, "海を領有してしまった");
+  }
+});
+
+test("CivSystem: 王国数は maxKingdoms を超えない", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  Game.config.sim.maxKingdoms = 5;
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  let founded = 0;
+  for (let i = 0; i < 20; i++) {
+    if (civ.foundAt(i, 0) > 0) founded++;
+  }
+  assert.ok(founded <= 5, "maxKingdoms超過: " + founded);
+  assert.equal(civ.kingdoms.length - 1, founded);
+});
+
+test("CivSystem: 隣接する二国が国境で接触する", () => {
+  const Game = loadCore({ mapWidth: 24, mapHeight: 12 });
+  const w = new Game.World(24, 12);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const a = civ.foundAt(3, 6);
+  const b = civ.foundAt(20, 6);
+  for (let t = 0; t < 80; t++) civ.tick(w);
+  // 両国とも拡張し、合計領有数がマップを概ね埋める。
+  const ka = civ.kingdoms[a];
+  const kb = civ.kingdoms[b];
+  assert.ok(ka.tileCount > 10 && kb.tileCount > 10, "両国が十分拡張していない");
+  let owned = 0;
+  for (let i = 0; i < w.owner.length; i++) if (w.owner[i] !== 0) owned++;
+  assert.ok(owned > w.owner.length * 0.5, "領土が広がっていない: " + owned);
+});
+
 test("Camera: screenToWorld と worldToScreen は逆変換", () => {
   const Game = loadCore();
   const cam = new Game.Camera(800, 600);
