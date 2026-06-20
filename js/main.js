@@ -93,6 +93,7 @@
     };
 
     Game.toolbar.init();
+    if (Game.hud) Game.hud.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。
     function handleResize() {

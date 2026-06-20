@@ -72,6 +72,9 @@
     // 座標 HUD 更新。
     this._updateCoords();
 
+    // 統計 HUD（内部で間引いて DOM 更新）。
+    if (Game.hud) Game.hud.tick(dt);
+
     requestAnimationFrame(this._loop);
   };
 
@@ -82,9 +85,16 @@
     const world = Game.state.world;
     if (mt.x >= 0 && world.inBounds(mt.x, mt.y)) {
       const name = Game.TERRAIN_NAMES[world.getTerrain(mt.x, mt.y)];
-      el.textContent =
+      let txt =
         "(" + mt.x + ", " + mt.y + ")  " + name +
         "  標高 " + world.getElevation(mt.x, mt.y).toFixed(2);
+      // 領有王国があれば併記。
+      const civ = Game.state.civ;
+      if (civ && world.owner) {
+        const id = world.owner[mt.y * world.width + mt.x];
+        if (id > 0) txt += "  王国#" + id;
+      }
+      el.textContent = txt;
     } else {
       el.textContent = "";
     }

@@ -215,6 +215,40 @@ html, body {
   pointer-events: none;
 }
 
+/* ===== ライブ統計 HUD（右上） ===== */
+.hud {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  min-width: 104px;
+  padding: 8px 10px;
+  background: rgba(16, 22, 40, 0.7);
+  border: 1px solid rgba(120, 150, 210, 0.18);
+  border-radius: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #c2d0ec;
+  z-index: 10;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  line-height: 1.55;
+}
+
+.hud-label {
+  color: #8295bb;
+}
+
+.hud-value {
+  font-weight: 600;
+  color: #eaf0fb;
+}
+
 /* ===== トグルボタン（モバイルでツールバー開閉） ===== */
 .toolbar-toggle {
   display: none;
@@ -293,11 +327,12 @@ html, body {
     display: none;
   }
 
+  /* HUD は右上のまま。coords は左上へ逃がして重なりを防ぐ。 */
   .coords {
     bottom: auto;
     top: 10px;
-    right: 12px;
-    left: auto;
+    left: 12px;
+    right: auto;
   }
 }
 
