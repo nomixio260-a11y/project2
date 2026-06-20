@@ -89,7 +89,8 @@
 
       const meta2 = document.createElement("div");
       meta2.className = "nation-meta";
-      meta2.textContent = (n.era || "") + " ・ " + (n.religion || "");
+      meta2.textContent = (n.era || "") + " ・ " + (n.religion || "") +
+        " ・ " + (n.trait || "") + (n.unrest >= 70 ? " ⚠不穏" : "");
 
       info.appendChild(name);
       info.appendChild(meta);
@@ -97,8 +98,9 @@
 
       row.appendChild(sw);
       row.appendChild(info);
-      row.title = n.name + "\n統治者: " + n.ruler + "（" + n.gov + "）" +
+      row.title = n.name + "\n統治者: " + n.ruler + "（" + n.gov + " / " + n.trait + "）" +
         "\n時代: " + n.era + " / 宗教: " + n.religion + " / 技術: " + n.tech +
+        "\n富: " + n.wealth + " / 不満: " + n.unrest +
         (n.wars.length ? "\n交戦: " + n.wars.join(", ") : "") +
         (n.allies.length ? "\n同盟: " + n.allies.join(", ") : "");
       (function (cap) {

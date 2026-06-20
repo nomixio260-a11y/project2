@@ -52,7 +52,7 @@ window.Game = window.Game || {};
       cloudCount: 5, // 同時に流れる雲の数
       rainMoisture: 0.06, // 降雨で上がる湿度/ティック
       rainFertility: 0.05, // 降雨で上がる植生/ティック
-      lightningChance: 0.0009, // 雲ごとの落雷確率/ティック（乾燥地のみ発火）
+      lightningChance: 0.0006, // 雲ごとの落雷確率/ティック（乾燥地のみ発火）
     },
 
     // 生成パラメータ

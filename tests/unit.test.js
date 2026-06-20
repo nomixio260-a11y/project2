@@ -393,6 +393,34 @@ test("CivSystem: 技術が進歩し時代が進む / 宗教・時代が getNatio
   assert.equal(n.religion, k.religion, "宗教が一致しない");
 });
 
+test("CivSystem: 指導者の性格・富・交易・反乱", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
+  const w = new Game.World(60, 60);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(15, 30);
+  const B = civ.foundAt(45, 30);
+  const ka = civ.kingdoms[A];
+  assert.ok(ka.trait && ka.trait.name, "指導者の性格が無い");
+  assert.equal(ka.wealth, 0, "初期の富は0");
+  // 領土を与えて外交評価 → 富が蓄積する。
+  ka.tileCount = 200; civ.kingdoms[B].tileCount = 200;
+  civ._contact(A, B); // 交易相手として認知
+  for (let t = 0; t < 20; t++) civ._diplomacy();
+  assert.ok(ka.wealth > 0, "富が蓄積していない");
+  const n = civ.getNations().find(function (x) { return x.id === A; });
+  assert.ok(n.trait && typeof n.wealth === "number" && typeof n.unrest === "number", "getNationsに社会指標が無い");
+
+  // 反乱: 2都市・高い不満 → 地方が独立して国が増える。
+  const before = civ.getNations().length;
+  ka.cities.push({ x: 22, y: 30, capital: false, level: 1 });
+  // 22,30 周辺をAの領土に。
+  for (let y = 25; y <= 35; y++) for (let x = 18; x <= 26; x++) w.owner[y * 60 + x] = A;
+  ka.unrest = 100;
+  civ._rebellion(ka);
+  assert.ok(civ.getNations().length > before, "反乱で国家が増えていない");
+});
+
 test("CivSystem: 二国の入植者が広がり、やがて大半の土地が領有される", () => {
   const Game = loadCore({ mapWidth: 24, mapHeight: 16 });
   const w = new Game.World(24, 16);
