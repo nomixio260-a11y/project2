@@ -393,6 +393,31 @@ test("CivSystem: 技術が進歩し時代が進む / 宗教・時代が getNatio
   assert.equal(n.religion, k.religion, "宗教が一致しない");
 });
 
+test("CivSystem: 軍事力・同盟参戦・講和", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(8, 8);
+  const B = civ.foundAt(20, 8);
+  const C = civ.foundAt(32, 8);
+  // 軍事力: 兵士が多いほど強い。
+  civ.kingdoms[A].roleCount[Game.ROLE.SOLDIER] = 10;
+  civ.kingdoms[B].roleCount[Game.ROLE.SOLDIER] = 1;
+  assert.ok(civ._military(civ.kingdoms[A]) > civ._military(civ.kingdoms[B]), "軍事力が兵士数を反映しない");
+
+  // A と C は同盟。A が B に宣戦 → 同盟国 C も B と交戦（呼びかけ）。
+  civ._contact(A, B); civ._contact(A, C); civ._contact(B, C);
+  civ._formAlliance(A, C);
+  civ._declareWar(A, B);
+  assert.ok(civ._atWar(A, B), "A-B が交戦していない");
+  assert.ok(civ._atWar(C, B), "同盟国Cが参戦していない");
+
+  // 講和で解除。
+  civ._makePeace(A, B);
+  assert.ok(!civ._atWar(A, B), "講和できていない");
+});
+
 test("CivSystem: 指導者の性格・富・交易・反乱", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
   const w = new Game.World(60, 60);

@@ -509,17 +509,35 @@
     this.kingdoms[b].relations[a] = v;
   };
 
-  CivSystem.prototype._declareWar = function (a, b) {
+  // 国の軍事力（兵士数を技術で底上げ）。決定的な戦争のために使う。
+  CivSystem.prototype._military = function (k) {
+    return (k.roleCount[ROLE.SOLDIER] + 1) * (1 + k.tech * 0.0025);
+  };
+
+  // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
+  CivSystem.prototype._engage = function (a, b) {
     const ka = this.kingdoms[a], kb = this.kingdoms[b];
-    ka.wars[b] = true; kb.wars[a] = true;
+    if (!ka || !kb || !ka.alive || !kb.alive) return;
+    if (ka.wars[b]) return;
+    const t = this._tickN || 1;
+    if (ka.relations[b] === undefined) { ka.relations[b] = 0; kb.relations[a] = 0; }
+    ka.wars[b] = t; kb.wars[a] = t;
     delete ka.allies[b]; delete kb.allies[a];
     this._setRel(a, b, -80);
+  };
+
+  CivSystem.prototype._declareWar = function (a, b) {
+    this._engage(a, b);
+    // 同盟への呼びかけ（ブロック戦争）: 双方の同盟国も参戦する。
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    for (const c in ka.allies) { const ci = +c; if (ci !== b) this._engage(ci, b); }
+    for (const c in kb.allies) { const ci = +c; if (ci !== a) this._engage(ci, a); }
   };
 
   CivSystem.prototype._makePeace = function (a, b) {
     delete this.kingdoms[a].wars[b];
     delete this.kingdoms[b].wars[a];
-    this._setRel(a, b, -10);
+    this._setRel(a, b, -8);
   };
 
   CivSystem.prototype._formAlliance = function (a, b) {
@@ -578,27 +596,38 @@
           else if (kb.humanCount > ka.humanCount * 1.6 && this.rand() < 0.1 * kb.trait.faith) ka.religion = kb.religion;
         }
 
-        // 交易: 戦争でなければ双方が富む（同盟は倍。商才で増す）。
+        // 交易: 戦争でなければ双方が富む（同盟は倍。商才で増す）。少し友好も育む。
         if (!ka.wars[b]) {
           const trade = Math.min(ka.tileCount, kb.tileCount) * 0.012 *
             (ka.allies[b] ? 2 : 1) * ((ka.trait.trade + kb.trait.trade) * 0.5);
           ka.wealth += trade; kb.wealth += trade;
+          if (!ka.allies[b]) this._setRel(a, b, rel + 0.4);
         }
 
         if (ka.wars[b]) {
-          if (this.rand() < CP.peaceChance) this._makePeace(a, b);
+          // 戦争疲弊: 長期化・劣勢ほど講和しやすい。
+          const dur = (this._tickN || 1) - ka.wars[b];
+          let pc = CP.peaceChance * (1 + dur / 3000);
+          const m1 = this._military(ka), m2 = this._military(kb);
+          if (m1 < m2 * 0.6 || m2 < m1 * 0.6) pc *= 2; // 大差がつけば手打ち
+          if (this.rand() < pc) this._makePeace(a, b);
         } else if (ka.allies[b]) {
-          if (this.rand() < 0.05) { delete ka.allies[b]; delete kb.allies[a]; this._setRel(a, b, 10); }
+          if (this.rand() < 0.04) { delete ka.allies[b]; delete kb.allies[a]; this._setRel(a, b, 10); }
         } else {
-          // 性格で開戦/同盟しやすさが変わる（好戦的な隣国は戦を呼ぶ）。
-          const warF = (ka.trait.war + kb.trait.war) * 0.5;
-          const allyF = (ka.trait.ally + kb.trait.ally) * 0.5;
+          // 性格・宗教で開戦/同盟しやすさが変わる。
+          const sameFaith = ka.religion === kb.religion;
+          let warF = (ka.trait.war + kb.trait.war) * 0.5 * (sameFaith ? 0.55 : 1.4);
+          let allyF = (ka.trait.ally + kb.trait.ally) * 0.5 * (sameFaith ? 1.5 : 0.6);
           const warP = (0.09 + (rel < 0 ? (-rel / 100) * 0.25 : 0)) * warF;
           const allyP = (0.05 + (rel > 0 ? (rel / 100) * 0.2 : 0)) * allyF;
           const r = this.rand();
           if (r < warP) this._declareWar(a, b);
           else if (r < warP + allyP) this._formAlliance(a, b);
-          else this._setRel(a, b, rel + (this.rand() * 8 - 4));
+          else {
+            // 平時のゆらぎ。異教は緊張（悪化寄り）、同教は親和（改善寄り）。
+            const drift = sameFaith ? (this.rand() * 8 - 3) : (this.rand() * 8 - 5.5);
+            this._setRel(a, b, rel + drift);
+          }
         }
       }
     }
@@ -675,8 +704,9 @@
     }
 
     // 独立戦争（親国と交戦）。親の不満は少し晴れる。
+    const t = this._tickN || 1;
     nk.relations[parent.id] = -70; parent.relations[id] = -70;
-    nk.wars[parent.id] = true; parent.wars[id] = true;
+    nk.wars[parent.id] = t; parent.wars[id] = t;
     parent.unrest = 45;
   };
 
@@ -1080,7 +1110,10 @@
         const other = this.kingdoms[o];
         if (other && other.alive) {
           const tx = h.x | 0, ty = h.y | 0;
-          if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < CP.conflictChance) {
+          // 征服成功率は相対的な軍事力で決まる（強国が前線を押す）。
+          const m1 = this._military(k), m2 = this._military(other);
+          const chance = CP.conflictChance * 2 * (m1 / (m1 + m2));
+          if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < chance) {
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
             if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
             // 都市の攻略: 足下に敵都市があれば占領（自国の都市になる）。
