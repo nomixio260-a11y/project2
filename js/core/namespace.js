@@ -98,6 +98,41 @@ window.Game = window.Game || {};
     { name: "冬", emoji: "❄️", tempOffset: -0.18, growth: 0.25, fireMul: 0.5 },
   ];
 
+  // デバイス判定（読み込み時）。端末ごとに地図サイズ・上限・初期ズームを最適化する。
+  Game.device = (function () {
+    const nav = typeof navigator !== "undefined" ? navigator : {};
+    const touch = ("ontouchstart" in window) || (nav.maxTouchPoints || 0) > 0;
+    const w = window.innerWidth || 1280;
+    let type = "desktop";
+    if (w < 760) type = "phone";
+    else if (touch && w < 1200) type = "tablet";
+    return {
+      type: type, touch: touch,
+      isPhone: type === "phone",
+      isTablet: type === "tablet",
+      isDesktop: type === "desktop",
+    };
+  })();
+
+  // 端末プロファイル: 地図サイズ・エージェント上限・初期ズーム(表示タイル数)。
+  Game.deviceProfiles = {
+    phone: { mapW: 384, mapH: 384, maxEntities: 4000, maxFires: 4000, maxPeople: 500, fitTiles: 80 },
+    tablet: { mapW: 512, mapH: 512, maxEntities: 8000, maxFires: 8000, maxPeople: 900, fitTiles: 110 },
+    desktop: { mapW: 640, mapH: 640, maxEntities: 16000, maxFires: 12000, maxPeople: 1500, fitTiles: 130 },
+  };
+
+  // 端末プロファイルを config に反映する（main の boot 冒頭で呼ぶ）。
+  Game.applyDeviceProfile = function () {
+    const p = Game.deviceProfiles[Game.device.type] || Game.deviceProfiles.desktop;
+    Game.config.mapWidth = p.mapW;
+    Game.config.mapHeight = p.mapH;
+    Game.config.sim.maxEntities = p.maxEntities;
+    Game.config.sim.maxFires = p.maxFires;
+    Game.config.sim.maxPeople = p.maxPeople;
+    Game.config.initialFitTiles = p.fitTiles;
+    return p;
+  };
+
   // 実行時の共有状態。main.js が中身を埋める。
   Game.state = {
     world: null,

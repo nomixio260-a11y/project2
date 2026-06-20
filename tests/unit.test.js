@@ -346,6 +346,36 @@ test("CivSystem: 他国領は歩いただけでは奪われない（兵士の前
   assert.notEqual(w.getOwner(5, 15), B, "歩いただけで他国領が奪われた");
 });
 
+test("CivSystem: 外交（接触→開戦→講和→同盟）と getNations", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(5, 5);
+  const B = civ.foundAt(30, 5);
+
+  // 接触で関係が生まれる。
+  civ._contact(A, B);
+  assert.notEqual(civ.kingdoms[A].relations[B], undefined, "接触で関係が生まれない");
+
+  // 開戦は双方向。
+  civ._declareWar(A, B);
+  assert.ok(civ._atWar(A, B) && civ._atWar(B, A), "開戦が双方向でない");
+  const nA = civ.getNations().find(function (n) { return n.id === A; });
+  assert.ok(nA.wars.indexOf(civ.kingdoms[B].name) >= 0, "交戦相手が一覧に出ない");
+  assert.ok(nA.ruler && nA.gov, "統治者/政体が無い");
+
+  // 講和で戦争解除。
+  civ._makePeace(A, B);
+  assert.ok(!civ._atWar(A, B) && !civ._atWar(B, A), "講和できていない");
+
+  // 同盟で戦争は無く、同盟一覧に出る。
+  civ._formAlliance(A, B);
+  assert.ok(!civ._atWar(A, B), "同盟したのに交戦中");
+  const nA2 = civ.getNations().find(function (n) { return n.id === A; });
+  assert.ok(nA2.allies.indexOf(civ.kingdoms[B].name) >= 0, "同盟国が一覧に出ない");
+});
+
 test("CivSystem: 二国の入植者が広がり、やがて大半の土地が領有される", () => {
   const Game = loadCore({ mapWidth: 24, mapHeight: 16 });
   const w = new Game.World(24, 16);
