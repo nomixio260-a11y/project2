@@ -101,6 +101,11 @@
       // ブラシサイズ [ ]
       if (e.key === "[") Game.setBrushSize(Game.state.brush.size - 1);
       if (e.key === "]") Game.setBrushSize(Game.state.brush.size + 1);
+
+      // P でシミュレーション一時停止/再生。
+      if (e.key === "p" || e.key === "P") {
+        if (Game.togglePaused) Game.togglePaused();
+      }
     });
 
     window.addEventListener("keyup", function (e) {

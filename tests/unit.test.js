@@ -150,6 +150,66 @@ test("worldgen: 同じシードは同一マップ、別シードは別マップ"
   assert.notDeepEqual(Array.from(a.terrain), Array.from(c.terrain));
 });
 
+test("Entities: spawn/kill が free-list で再利用される", () => {
+  const Game = loadCore();
+  const e = new Game.Entities(3);
+  const a = e.spawn(0, 1, 1);
+  const b = e.spawn(0, 2, 2);
+  const c = e.spawn(1, 3, 3);
+  assert.equal(e.live, 3);
+  assert.equal(e.spawn(0, 4, 4), -1, "上限超過は -1");
+  e.kill(b);
+  assert.equal(e.live, 2);
+  assert.equal(e.alive[b], 0);
+  // 解放スロットを再利用する。
+  const d = e.spawn(1, 5, 5);
+  assert.equal(d, b, "解放スロットを再利用");
+  assert.equal(e.live, 3);
+  // clear で全消去。
+  e.clear();
+  assert.equal(e.live, 0);
+  assert.equal(e.count, 0);
+});
+
+test("CreatureSystem: 採食でエネルギーが増え、餓死で死ぬ", () => {
+  const Game = loadCore({ mapWidth: 16, mapHeight: 16 });
+  const w = new Game.World(16, 16);
+  // 全面を草原にして温度・標高も埋める。
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.elevation.fill(0.5);
+  const ent = new Game.Entities(50);
+  const stubRenderer = { markDirty: function () {} };
+  const sys = new Game.CreatureSystem(ent, w, stubRenderer);
+
+  // 草原上の草食はエネルギーが回復していく。
+  const h = ent.spawn(Game.SPECIES.HERBIVORE, 8, 8, 0.3);
+  const before = ent.energy[h];
+  sys.tick(w);
+  assert.ok(ent.energy[h] > before, "草上で採食して増える");
+
+  // エネルギー0の個体は死ぬ。
+  const starving = ent.spawn(Game.SPECIES.HERBIVORE, 4, 4, 0.005);
+  // 草上だと回復するので、代謝だけで枯れるよう水面に置く想定の代わりに
+  // 直接 energy を負へ近づけてからtick。
+  ent.energy[starving] = 0.001;
+  w.setTerrain(4, 4, Game.TERRAIN.SAND); // 採食できない地形
+  sys.tick(w);
+  assert.equal(ent.alive[starving], 0, "餓死で kill");
+});
+
+test("CreatureSystem: 上限を超えて繁殖しない", () => {
+  const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
+  Game.config.sim.maxEntities = 6;
+  const w = new Game.World(8, 8);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.elevation.fill(0.5);
+  const ent = new Game.Entities(6);
+  const sys = new Game.CreatureSystem(ent, w, { markDirty() {} });
+  for (let i = 0; i < 6; i++) ent.spawn(Game.SPECIES.HERBIVORE, 4, 4, 1);
+  for (let t = 0; t < 30; t++) sys.tick(w);
+  assert.ok(ent.live <= 6, "maxEntities を超えない: " + ent.live);
+});
+
 test("Camera: screenToWorld と worldToScreen は逆変換", () => {
   const Game = loadCore();
   const cam = new Game.Camera(800, 600);

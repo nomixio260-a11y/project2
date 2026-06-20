@@ -21,6 +21,16 @@ window.Game = window.Game || {};
     // 生成シード（再生成で更新される）
     seed: (Math.random() * 1e9) | 0,
 
+    // シミュレーション制御（生物・炎・文明の固定タイムステップ）
+    sim: {
+      running: true, // 一時停止/再生
+      speed: 1, // 速度倍率（0.5/1/2/4）
+      tickMs: 100, // 1ティック=シム内100ms（速度1で10tick/秒）
+      maxSteps: 5, // 1フレームあたりの最大catch-upティック
+      maxEntities: 4000, // 生物の上限
+      maxFires: 6000, // 同時延焼タイルの上限
+    },
+
     // 生成パラメータ
     gen: {
       // 標高ノイズ

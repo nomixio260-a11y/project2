@@ -7,11 +7,24 @@
     this.renderer = renderer;
     this.camera = camera;
     this.input = input;
-    this.systems = []; // { update(dt, world) } を push して拡張
+    // 各 system は tick(world)（固定step・一時停止で止まる）と
+    // update(dt, world)（毎フレーム・アニメ用）を任意で持つ。
+    this.systems = [];
     this.running = false;
     this.last = 0;
+    this.accumulator = 0; // シムtickの端数を蓄積
     this._loop = this._loop.bind(this);
   }
+
+  // シミュレーションの一時停止/再生。
+  Engine.prototype.setPaused = function (paused) {
+    Game.config.sim.running = !paused;
+  };
+
+  // シミュレーション速度倍率。
+  Engine.prototype.setSpeed = function (mult) {
+    Game.config.sim.speed = mult;
+  };
 
   Engine.prototype.start = function () {
     if (this.running) return;
@@ -26,13 +39,31 @@
     this.last = now;
     if (dt > 100) dt = 100; // タブ復帰時の巨大 dt をクランプ
 
-    // 入力（カメラのパン）。
+    // 入力（カメラのパン）は常に毎フレーム。
     this.input.update(dt);
 
-    // 拡張システム。
     const world = Game.state.world;
-    for (let i = 0; i < this.systems.length; i++) {
-      this.systems[i].update(dt, world);
+    const sim = Game.config.sim;
+    const systems = this.systems;
+
+    // 固定タイムステップでシミュレーションを進める（一時停止中は止まる）。
+    if (sim.running) {
+      this.accumulator += dt * sim.speed;
+      let steps = 0;
+      while (this.accumulator >= sim.tickMs && steps < sim.maxSteps) {
+        for (let i = 0; i < systems.length; i++) {
+          if (systems[i].tick) systems[i].tick(world);
+        }
+        this.accumulator -= sim.tickMs;
+        steps++;
+      }
+      // 取りこぼし防止: catch-up 上限に達したら端数を捨てる。
+      if (steps === sim.maxSteps) this.accumulator = 0;
+    }
+
+    // 毎フレームの update（アニメーション等。一時停止中も動く）。
+    for (let i = 0; i < systems.length; i++) {
+      if (systems[i].update) systems[i].update(dt, world);
     }
 
     // 描画。

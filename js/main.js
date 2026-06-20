@@ -21,6 +21,12 @@
     const input = new Game.Input(canvas, camera, world, renderer);
     const engine = new Game.Engine(renderer, camera, input);
 
+    // 生物ストア + シミュレーションシステム。
+    const entities = new Game.Entities(cfg.sim.maxEntities);
+    renderer.setEntities(entities);
+    const creatures = new Game.CreatureSystem(entities, world, renderer);
+    engine.systems.push(creatures);
+
     // 共有状態へ格納。
     Game.state.world = world;
     Game.state.camera = camera;
@@ -28,6 +34,8 @@
     Game.state.input = input;
     Game.state.engine = engine;
     Game.state.brush = brush;
+    Game.state.entities = entities;
+    Game.state.creatures = creatures;
     Game.state.activeToolId = "raise";
 
     // UI からも呼べる公開 API。
@@ -43,6 +51,20 @@
       Game.toolbar.setBrushSize(size);
     };
 
+    Game.setPaused = function (paused) {
+      engine.setPaused(paused);
+      if (Game.toolbar.setPaused) Game.toolbar.setPaused(paused);
+    };
+
+    Game.togglePaused = function () {
+      Game.setPaused(cfg.sim.running);
+    };
+
+    Game.setSpeed = function (mult) {
+      engine.setSpeed(mult);
+      if (Game.toolbar.setSpeed) Game.toolbar.setSpeed(mult);
+    };
+
     Game.regenerate = function () {
       cfg.seed = (Math.random() * 1e9) | 0;
       const w = new Game.World(cfg.mapWidth, cfg.mapHeight);
@@ -50,6 +72,9 @@
       Game.state.world = w;
       renderer.setWorld(w);
       input.setWorld(w);
+      // シミュレーション状態をリセット。
+      entities.clear();
+      creatures.setWorld(w);
       camera.fitToMap();
     };
 

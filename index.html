@@ -25,7 +25,17 @@
       </div>
       <button id="regen" class="regen-btn">新しい世界</button>
     </div>
-    <div class="hint">移動: WASD・矢印 / ホイールでズーム / 1〜8でツール</div>
+    <!-- シミュレーション制御 -->
+    <div class="sim-row">
+      <button id="sim-pause" class="sim-btn" aria-pressed="false">⏸ 停止</button>
+      <div class="speed-control" id="speed-control">
+        <button class="speed-btn" data-speed="0.5">0.5×</button>
+        <button class="speed-btn active" data-speed="1">1×</button>
+        <button class="speed-btn" data-speed="2">2×</button>
+        <button class="speed-btn" data-speed="4">4×</button>
+      </div>
+    </div>
+    <div class="hint">移動: WASD・矢印 / ホイールでズーム / 1〜0でツール / Pで一時停止</div>
   </div>
 
   <div id="coords" class="coords"></div>
@@ -38,6 +48,7 @@
   <script src="js/world/tile.js"></script>
   <script src="js/world/world.js"></script>
   <script src="js/world/worldgen.js"></script>
+  <script src="js/world/entities.js"></script>
   <script src="js/render/camera.js"></script>
   <script src="js/render/renderer.js"></script>
   <script src="js/tools/brush.js"></script>
@@ -45,6 +56,8 @@
   <script src="js/input/input.js"></script>
   <script src="js/ui/toolbar.js"></script>
   <script src="js/engine/engine.js"></script>
+  <!-- シミュレーションシステム（engine の後、main の前） -->
+  <script src="js/systems/creatures.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

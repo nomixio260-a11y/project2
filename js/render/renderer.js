@@ -25,8 +25,14 @@
     this.dpr = 1;
 
     this.dirty = []; // 部分更新待ちのタイル {x,y}
+    this.entities = null; // 生物ストア（setEntities で接続）
     this.fullRedraw(); // 初回は全タイルをバッファへ
   }
+
+  // 生物ストアを接続（毎フレーム描画される）。
+  Renderer.prototype.setEntities = function (entities) {
+    this.entities = entities;
+  };
 
   // 別の world に差し替え（再生成時）。
   Renderer.prototype.setWorld = function (world) {
@@ -124,8 +130,37 @@
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.terrainCanvas, dx, dy, dw, dh);
 
+    // 生物オーバーレイ（地形ブリットの上）。
+    this.drawEntities(camera);
+
     // ブラシのプレビュー（カーソル位置の円）。
     this.drawBrushPreview(camera);
+  };
+
+  // 生物を可視範囲だけ点で描画。
+  Renderer.prototype.drawEntities = function (camera) {
+    const e = this.entities;
+    if (!e || e.live === 0) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 1.2) return; // 縮小しすぎたら省略（LOD）
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const r = Math.max(1.5, scale * 0.35);
+    const SP = Game.SPECIES;
+
+    for (let i = 0; i < e.count; i++) {
+      if (!e.alive[i]) continue;
+      const x = e.x[i];
+      const y = e.y[i];
+      if (x < range.x0 || x > range.x1 || y < range.y0 || y > range.y1) continue;
+      const sx = camera.worldToScreenX((x + 0.5) * tile);
+      const sy = camera.worldToScreenY((y + 0.5) * tile);
+      ctx.fillStyle = e.type[i] === SP.PREDATOR ? "#d83a3a" : "#f2e3b0";
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   };
 
   Renderer.prototype.drawBrushPreview = function (camera) {

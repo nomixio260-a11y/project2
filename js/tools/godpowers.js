@@ -101,6 +101,35 @@
         world.moisture[i] = 0.05;
       },
     },
+    {
+      id: "herbivore",
+      label: "草食",
+      hotkey: "9",
+      group: "life",
+      swatch: "#f2e3b0",
+      apply: function (world, x, y, falloff) {
+        // 確率ゲートで間引き（陸地のみ）。
+        if (Math.random() > 0.12 * falloff) return;
+        const ent = Game.state.entities;
+        if (!ent) return;
+        if (!Game.tile.isLand(world.getTerrain(x, y))) return;
+        ent.spawn(Game.SPECIES.HERBIVORE, x + 0.5, y + 0.5, 0.7);
+      },
+    },
+    {
+      id: "predator",
+      label: "肉食",
+      hotkey: "0",
+      group: "life",
+      swatch: "#d83a3a",
+      apply: function (world, x, y, falloff) {
+        if (Math.random() > 0.08 * falloff) return;
+        const ent = Game.state.entities;
+        if (!ent) return;
+        if (!Game.tile.isLand(world.getTerrain(x, y))) return;
+        ent.spawn(Game.SPECIES.PREDATOR, x + 0.5, y + 0.5, 0.7);
+      },
+    },
   ];
 
   // id → ツールの索引。

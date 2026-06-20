@@ -67,5 +67,35 @@
         default: return 0.5;
       }
     },
+
+    // 草食動物が採食できる植生か。
+    isEdible: function (terrain) {
+      return (
+        terrain === T.GRASS ||
+        terrain === T.FOREST ||
+        terrain === T.SAVANNA ||
+        terrain === T.JUNGLE
+      );
+    },
+
+    // 炎が燃え広がる可燃地形か。
+    isFlammable: function (terrain) {
+      return (
+        terrain === T.GRASS ||
+        terrain === T.FOREST ||
+        terrain === T.SAVANNA ||
+        terrain === T.JUNGLE
+      );
+    },
+
+    // 水タイルか。
+    isWater: function (terrain) {
+      return terrain === T.DEEP_WATER || terrain === T.SHALLOW_WATER;
+    },
+
+    // 生物が居住・歩行できる陸地か（水・雪・山以外）。
+    isLand: function (terrain) {
+      return !this.isWater(terrain) && terrain !== T.MOUNTAIN && terrain !== T.SNOW;
+    },
   };
 })(window.Game);

@@ -47,6 +47,27 @@
         Game.regenerate();
       });
 
+      // シミュレーション: 一時停止トグル。
+      const pauseBtn = document.getElementById("sim-pause");
+      if (pauseBtn) {
+        pauseBtn.addEventListener("click", function () {
+          Game.togglePaused();
+        });
+        this.pauseBtn = pauseBtn;
+      }
+
+      // シミュレーション: 速度ボタン。
+      const speedControl = document.getElementById("speed-control");
+      if (speedControl) {
+        this.speedButtons = speedControl.querySelectorAll(".speed-btn");
+        const self2 = this;
+        this.speedButtons.forEach(function (b) {
+          b.addEventListener("click", function () {
+            Game.setSpeed(parseFloat(b.dataset.speed));
+          });
+        });
+      }
+
       // モバイル: ツールバー開閉トグル。
       const toolbarEl = document.getElementById("toolbar");
       const toggle = document.getElementById("toolbar-toggle");
@@ -68,6 +89,20 @@
     setBrushSize: function (size) {
       if (this.slider) this.slider.value = size;
       if (this.sizeLabel) this.sizeLabel.textContent = size;
+    },
+
+    setPaused: function (paused) {
+      if (!this.pauseBtn) return;
+      this.pauseBtn.textContent = paused ? "▶ 再生" : "⏸ 停止";
+      this.pauseBtn.setAttribute("aria-pressed", paused ? "true" : "false");
+      this.pauseBtn.classList.toggle("paused", paused);
+    },
+
+    setSpeed: function (mult) {
+      if (!this.speedButtons) return;
+      this.speedButtons.forEach(function (b) {
+        b.classList.toggle("active", parseFloat(b.dataset.speed) === mult);
+      });
     },
   };
 })(window.Game);

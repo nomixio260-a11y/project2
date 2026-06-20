@@ -139,6 +139,60 @@ html, body {
   filter: brightness(0.95);
 }
 
+/* シミュレーション制御 */
+.sim-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sim-btn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  background: #2a3550;
+  border: 1px solid #3c4a6b;
+  border-radius: 8px;
+  color: #e7edf8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.12s, background 0.12s;
+}
+
+.sim-btn:hover {
+  filter: brightness(1.12);
+}
+
+.sim-btn.paused {
+  background: linear-gradient(180deg, #57b36a, #3f9a54);
+  border-color: transparent;
+}
+
+.speed-control {
+  display: flex;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.speed-btn {
+  flex: 1 1 0;
+  padding: 7px 0;
+  background: #222c44;
+  border: 1px solid #3c4a6b;
+  border-radius: 6px;
+  color: #aebbd6;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.speed-btn.active {
+  background: #5b8def;
+  border-color: transparent;
+  color: #fff;
+  font-weight: 700;
+}
+
 .hint {
   margin-top: 10px;
   font-size: 10.5px;

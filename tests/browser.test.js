@@ -189,6 +189,70 @@ test("タッチ操作: 1本指タップで地形が変化する", async () => {
   await page.close();
 });
 
+test("生物シミュレーション: spawn → tick で個体が動き繁殖/死亡する", async () => {
+  const { page, errors } = await openPage({ width: 1280, height: 800 });
+
+  const sim = await page.evaluate(async () => {
+    const w = Game.state.world;
+    const ent = Game.state.entities;
+    const sys = Game.state.creatures;
+    // 中央付近を草原で塗って食料を確保。
+    const cx = (w.width / 2) | 0;
+    const cy = (w.height / 2) | 0;
+    for (let y = cy - 10; y < cy + 10; y++) {
+      for (let x = cx - 10; x < cx + 10; x++) {
+        w.setTerrain(x, y, Game.TERRAIN.GRASS);
+        w.setElevation(x, y, 0.5);
+      }
+    }
+    // 草食を多数スポーン。
+    for (let i = 0; i < 30; i++) {
+      ent.spawn(Game.SPECIES.HERBIVORE, cx + (i % 10) - 5, cy + ((i / 10) | 0) - 1, 0.9);
+    }
+    const x0 = ent.x[0];
+    const y0 = ent.y[0];
+    const liveStart = ent.live;
+    // 数十ティック進める。
+    for (let t = 0; t < 60; t++) sys.tick(w);
+    return {
+      moved: ent.x[0] !== x0 || ent.y[0] !== y0,
+      liveStart,
+      liveEnd: ent.live,
+      cap: Game.config.sim.maxEntities,
+      hasSpawnTool: !!Game.godpowers.get("herbivore"),
+      hasPredatorTool: !!Game.godpowers.get("predator"),
+    };
+  });
+
+  assert.ok(sim.moved, "生物が移動していない");
+  assert.ok(sim.liveStart >= 30, "初期個体数が足りない");
+  assert.ok(sim.liveEnd > 0, "全滅してしまった");
+  assert.ok(sim.liveEnd <= sim.cap, "上限を超えた");
+  assert.ok(sim.hasSpawnTool && sim.hasPredatorTool, "生物ツールが登録されていない");
+  assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
+  await page.close();
+});
+
+test("シミュレーション制御: 一時停止と速度変更が反映される", async () => {
+  const { page, errors } = await openPage({ width: 1280, height: 800 });
+
+  const ctrl = await page.evaluate(() => {
+    Game.setPaused(true);
+    const paused = Game.config.sim.running === false;
+    Game.setPaused(false);
+    const resumed = Game.config.sim.running === true;
+    Game.setSpeed(4);
+    const speed = Game.config.sim.speed;
+    return { paused, resumed, speed };
+  });
+
+  assert.ok(ctrl.paused, "一時停止が効かない");
+  assert.ok(ctrl.resumed, "再生が効かない");
+  assert.equal(ctrl.speed, 4, "速度が反映されない");
+  assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
+  await page.close();
+});
+
 test("再生成: 新しい世界ボタンでマップが変わる", async () => {
   const { page, errors } = await openPage({ width: 1024, height: 768 });
 
