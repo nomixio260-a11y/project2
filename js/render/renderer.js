@@ -240,8 +240,9 @@
       return;
     }
 
-    // 近景: 個体ごとに描画（体格・向き）。
-    const base = scale * 0.42;
+    // 近景: ピクセルアートのスプライトで描画（体格・向き付き）。
+    const sprites = Game.sprites;
+    ctx.imageSmoothingEnabled = false;
     for (let i = 0; i < n; i++) {
       if (!e.alive[i]) continue;
       const x = e.x[i];
@@ -250,33 +251,21 @@
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
       const gene = e.gene[i] || 1;
-      const r = base * gene;
-      if (e.type[i] === SP.PREDATOR) {
-        // 肉食: 進行方向を向いた三角形。
-        const h = e.heading[i] || 0;
-        ctx.save();
-        ctx.translate(sx, sy);
-        ctx.rotate(h);
-        ctx.beginPath();
-        ctx.moveTo(r * 1.4, 0);
-        ctx.lineTo(-r, r * 0.85);
-        ctx.lineTo(-r, -r * 0.85);
-        ctx.closePath();
-        ctx.fillStyle = "#e0473a";
-        ctx.fill();
-        ctx.lineWidth = Math.max(0.5, r * 0.18);
-        ctx.strokeStyle = "rgba(60,10,10,0.65)";
-        ctx.stroke();
-        ctx.restore();
+      const type = e.type[i];
+      if (sprites) {
+        // 進行方向で左右反転。heading 0 = 右。
+        const faceLeft = Math.cos(e.heading[i] || 0) < 0;
+        const spr = sprites.get(type, faceLeft);
+        const dh = Math.max(7, scale * 1.5 * gene);
+        const dw = dh * (spr.width / spr.height);
+        ctx.drawImage(spr, sx - dw * 0.5, sy - dh * 0.5, dw, dh);
       } else {
-        // 草食: 丸い体＋淡い縁取り。
+        // フォールバック（スプライト未ロード時）。
+        const r = scale * 0.42 * gene;
         ctx.beginPath();
         ctx.arc(sx, sy, r, 0, Math.PI * 2);
-        ctx.fillStyle = "#efdca0";
+        ctx.fillStyle = type === SP.PREDATOR ? "#e0473a" : "#efdca0";
         ctx.fill();
-        ctx.lineWidth = Math.max(0.5, r * 0.2);
-        ctx.strokeStyle = "rgba(90,70,30,0.55)";
-        ctx.stroke();
       }
     }
   };
@@ -291,9 +280,9 @@
     const range = camera.visibleTileRange();
     const ctx = this.ctx;
     const people = civ.people;
-    const headR = Math.max(1, scale * 0.16);
-    const bodyH = Math.max(2, scale * 0.5);
-    const bodyW = Math.max(1, scale * 0.22);
+    ctx.imageSmoothingEnabled = false;
+    // ピクセル単位（ドット感を出すため整数 px に量子化）。
+    const u = Math.max(1, Math.round(scale * 0.16));
 
     for (let p = 0; p < people.length; p++) {
       const person = people[p];
@@ -301,22 +290,23 @@
       const k = civ.kingdoms[person.kid];
       if (!k) continue;
       const col = k.color;
-      const sx = camera.worldToScreenX((person.x + 0.5) * tile);
-      const sy = camera.worldToScreenY((person.y + 0.5) * tile);
-      // 体（王国色）。
-      ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
-      ctx.fillRect(sx - bodyW * 0.5, sy - bodyH * 0.3, bodyW, bodyH);
-      // 影の縁。
-      ctx.lineWidth = 0.6;
-      ctx.strokeStyle = "rgba(0,0,0,0.5)";
-      ctx.strokeRect(sx - bodyW * 0.5, sy - bodyH * 0.3, bodyW, bodyH);
-      // 頭。
-      ctx.beginPath();
-      ctx.arc(sx, sy - bodyH * 0.3 - headR, headR, 0, Math.PI * 2);
-      ctx.fillStyle = "#f0d2a8";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.45)";
-      ctx.stroke();
+      const sx = Math.round(camera.worldToScreenX((person.x + 0.5) * tile));
+      const sy = Math.round(camera.worldToScreenY((person.y + 0.5) * tile));
+      // ヒト型ピクセル: 頭(肌) + 胴(王国色) + 脚(暗色)。
+      const bodyCol = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
+      // 影。
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(sx - u, sy + 2 * u, 2 * u, u);
+      // 脚。
+      ctx.fillStyle = "#33291a";
+      ctx.fillRect(sx - u, sy + u, u, u);
+      ctx.fillRect(sx, sy + u, u, u);
+      // 胴（王国色, 2u 幅 x 2u 高）。
+      ctx.fillStyle = bodyCol;
+      ctx.fillRect(sx - u, sy - u, 2 * u, 2 * u);
+      // 頭（肌色, 2u x 2u）。
+      ctx.fillStyle = "#f0c89a";
+      ctx.fillRect(sx - u, sy - 3 * u, 2 * u, 2 * u);
     }
   };
 
