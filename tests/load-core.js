@@ -34,6 +34,7 @@ function loadCore(overrides) {
     "js/tools/godpowers.js",
     "js/render/camera.js",
     "js/systems/climate.js",
+    "js/systems/weather.js",
     "js/systems/vegetation.js",
     "js/systems/creatures.js",
     "js/systems/fire.js",

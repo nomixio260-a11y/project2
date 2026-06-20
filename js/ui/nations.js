@@ -86,12 +86,19 @@
       if (n.wars.length) badges += " ⚔" + n.wars.length;
       if (n.allies.length) badges += " 🤝" + n.allies.length;
       meta.textContent = "👤" + n.pop + " 🏛" + n.cities + " ▦" + n.tiles + badges;
+
+      const meta2 = document.createElement("div");
+      meta2.className = "nation-meta";
+      meta2.textContent = (n.era || "") + " ・ " + (n.religion || "");
+
       info.appendChild(name);
       info.appendChild(meta);
+      info.appendChild(meta2);
 
       row.appendChild(sw);
       row.appendChild(info);
-      row.title = n.gov + " / 統治者 " + n.ruler +
+      row.title = n.name + "\n統治者: " + n.ruler + "（" + n.gov + "）" +
+        "\n時代: " + n.era + " / 宗教: " + n.religion + " / 技術: " + n.tech +
         (n.wars.length ? "\n交戦: " + n.wars.join(", ") : "") +
         (n.allies.length ? "\n同盟: " + n.allies.join(", ") : "");
       (function (cap) {

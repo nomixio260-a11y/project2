@@ -190,6 +190,9 @@
     ctx.drawImage(this.territoryCanvas, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
 
+    // 街道（首都と各都市を結ぶ）。
+    this.drawRoads(camera);
+
     // 炎オーバーレイ（地形の上、生物の下）。
     this.drawFire(camera);
 
@@ -202,8 +205,14 @@
     // 市民（人間）エージェント。
     this.drawPeople(camera);
 
+    // 天候（雲の影・雨・落雷）。
+    this.drawWeather(camera);
+
     // 昼夜の環境光（全要素の上に重ねて統一した照明にする）。
     this.drawDayNight(camera);
+
+    // 国名ラベル（照明の影響を受けず常に読める）。
+    this.drawLabels(camera);
 
     // ブラシのプレビュー（カーソル位置の円。照明の影響を受けない）。
     this.drawBrushPreview(camera);
@@ -319,6 +328,41 @@
     }
   };
 
+  // 天候: 雲の影を地表に落とし、雨域を青く翳らせ、落雷を白く閃かせる。
+  Renderer.prototype.drawWeather = function (camera) {
+    const weather = Game.state.weather;
+    if (!weather || !weather.clouds || weather.clouds.length === 0) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    const ctx = this.ctx;
+    const clouds = weather.clouds;
+    ctx.save();
+    for (let c = 0; c < clouds.length; c++) {
+      const cl = clouds[c];
+      const sx = camera.worldToScreenX(cl.x * tile);
+      const sy = camera.worldToScreenY(cl.y * tile);
+      const r = cl.r * scale;
+      if (sx < -r || sy < -r || sx - r > this.cssW || sy - r > this.cssH) continue;
+      // 雲の影（雨域）。
+      const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+      g.addColorStop(0, "rgba(40,55,85,0.30)");
+      g.addColorStop(0.7, "rgba(40,55,85,0.18)");
+      g.addColorStop(1, "rgba(40,55,85,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+      // 落雷フラッシュ。
+      if (cl.flash) {
+        ctx.fillStyle = "rgba(235,240,255," + (cl.flash / 10).toFixed(2) + ")";
+        ctx.beginPath();
+        ctx.arc(sx, sy, r * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  };
+
   // 昼夜の環境光オーバーレイ。夜は青く暗く、朝夕は暖色。夜は都市が灯る。
   Renderer.prototype.drawDayNight = function (camera) {
     if (!Game.lighting) return;
@@ -369,6 +413,68 @@
         ctx.arc(sx, sy, rad, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+    ctx.restore();
+  };
+
+  // 街道: 各国の首都と都市を結ぶ線。
+  Renderer.prototype.drawRoads = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 1.4) return;
+    const ctx = this.ctx;
+    const kingdoms = civ.kingdoms;
+    ctx.save();
+    ctx.lineCap = "round";
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive || !k.cities || k.cities.length < 2) continue;
+      const cap = k.cities[0];
+      const cx = camera.worldToScreenX((cap.x + 0.5) * tile);
+      const cy = camera.worldToScreenY((cap.y + 0.5) * tile);
+      const col = k.color;
+      ctx.strokeStyle = "rgba(" + col[0] + "," + col[1] + "," + col[2] + ",0.5)";
+      ctx.lineWidth = Math.max(1, scale * 0.16);
+      for (let c = 1; c < k.cities.length; c++) {
+        const city = k.cities[c];
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(camera.worldToScreenX((city.x + 0.5) * tile), camera.worldToScreenY((city.y + 0.5) * tile));
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  };
+
+  // 国名ラベルを首都の上に描画。
+  Renderer.prototype.drawLabels = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 2.2) return; // 引きすぎでは省略
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const kingdoms = civ.kingdoms;
+    const fs = Math.max(10, Math.min(22, scale * 1.4));
+    ctx.save();
+    ctx.font = "600 " + fs.toFixed(0) + "px -apple-system, 'Hiragino Kaku Gothic ProN', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.lineWidth = Math.max(2, fs * 0.22);
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive || !k.cities) continue;
+      const cap = k.cities[0];
+      if (cap.x < range.x0 || cap.x > range.x1 || cap.y < range.y0 || cap.y > range.y1) continue;
+      const sx = camera.worldToScreenX((cap.x + 0.5) * tile);
+      const sy = camera.worldToScreenY((cap.y + 0.5) * tile) - Math.max(6, scale * 0.9);
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.strokeText(k.name, sx, sy);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(k.name, sx, sy);
     }
     ctx.restore();
   };
