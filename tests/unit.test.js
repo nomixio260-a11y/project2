@@ -370,3 +370,40 @@ test("Camera: visibleTileRange はマップ範囲内に収まる", () => {
   assert.ok(r.x1 <= 200 && r.y1 <= 150);
   assert.ok(r.x1 >= r.x0 && r.y1 >= r.y0);
 });
+
+test("Hud.sample: 個体数・王国・延焼を集計する", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
+  const S = Game.SPECIES;
+
+  // 生物: 草食2・肉食1、1体は kill 済みで除外される。
+  const e = new Game.Entities(10);
+  e.spawn(S.HERBIVORE, 1, 1);
+  e.spawn(S.HERBIVORE, 2, 2);
+  e.spawn(S.PREDATOR, 3, 3);
+  const dead = e.spawn(S.HERBIVORE, 4, 4);
+  e.kill(dead);
+
+  // 王国: 2国、うち1国は滅亡（alive=false）。
+  const w = new Game.World(20, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const a = civ.foundAt(2, 2);
+  const b = civ.foundAt(15, 2);
+  civ.kingdoms[b].alive = false;
+
+  // 炎: 2タイル着火。
+  const fire = new Game.FireSystem(w, { markDirty() {} });
+  fire.ignite(5, 5);
+  fire.ignite(6, 5);
+
+  Game.state.entities = e;
+  Game.state.civ = civ;
+  Game.state.fire = fire;
+
+  const s = Game.hud.sample();
+  assert.equal(s.herb, 2, "草食数");
+  assert.equal(s.pred, 1, "肉食数");
+  assert.equal(s.pop, 3, "総個体数");
+  assert.equal(s.kingdoms, 1, "生存王国数");
+  assert.equal(s.fires, 2, "延焼数");
+});

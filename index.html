@@ -38,6 +38,9 @@
     <div class="hint">移動: WASD・矢印 / ホイールでズーム / 1〜0でツール / Kで建国 / Pで一時停止</div>
   </div>
 
+  <!-- ライブ統計 HUD（hud.js が中身を生成） -->
+  <div id="hud" class="hud"></div>
+
   <div id="coords" class="coords"></div>
 
   <!-- 依存順にロード（no-build: クラシック script のみ） -->
@@ -55,6 +58,7 @@
   <script src="js/tools/godpowers.js"></script>
   <script src="js/input/input.js"></script>
   <script src="js/ui/toolbar.js"></script>
+  <script src="js/ui/hud.js"></script>
   <script src="js/engine/engine.js"></script>
   <!-- シミュレーションシステム（engine の後、main の前） -->
   <script src="js/systems/creatures.js"></script>
