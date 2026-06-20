@@ -36,6 +36,9 @@ window.Game = window.Game || {};
       // 島マスク（中心ほど標高が高く、端は海に沈む）
       islandMask: true,
       islandStrength: 0.92,
+      // 温度（緯度ベース − 標高×lapse + ノイズ）
+      temperatureLapse: 0.55, // 標高1あたりの気温低下量
+      temperatureNoise: 0.25, // 温度のランダム揺らぎ幅
     },
 
     // 標高しきい値（0..1）。tile.classify で使用。
@@ -49,6 +52,12 @@ window.Game = window.Game || {};
       // それ以上は snow
       // grass 帯で moisture がこの値以上なら forest
       forestMoisture: 0.52,
+      // バイオーム分類（温度 0..1）。
+      cold: 0.32, // これ未満は寒冷（ツンドラ/雪線低下）
+      hot: 0.68, // これ超は高温（砂漠/サバンナ/ジャングル）
+      desertMoisture: 0.35, // 高温かつ乾燥なら砂漠
+      jungleMoisture: 0.66, // 高温かつ多湿ならジャングル
+      swampElevation: 0.50, // 温帯・多湿・低地なら湿地
     },
   };
 

@@ -3,3 +3,5 @@ package-lock.json
 *.log
 .DS_Store
 /tmp/
+tools/cloudflared
+tools/ngrok

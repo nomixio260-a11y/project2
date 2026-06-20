@@ -6,8 +6,8 @@
 
   const T = Game.TERRAIN;
   const C = Game.TERRAIN_COLORS;
-  const classify = function (e, m) {
-    return Game.tile.classify(e, m);
+  const classify = function (e, m, t) {
+    return Game.tile.classify(e, m, t);
   };
 
   // 地形を直接セットし、標高もその帯にスナップするヘルパ。
@@ -25,7 +25,7 @@
       swatch: "#8a8a5a",
       apply: function (world, x, y, falloff) {
         const e = world.raise(x, y, 0.04 * falloff);
-        world.setTerrain(x, y, classify(e, world.getMoisture(x, y)));
+        world.setTerrain(x, y, classify(e, world.getMoisture(x, y), world.getTemperature(x, y)));
       },
     },
     {
@@ -35,7 +35,7 @@
       swatch: "#2f6fb0",
       apply: function (world, x, y, falloff) {
         const e = world.raise(x, y, -0.04 * falloff);
-        world.setTerrain(x, y, classify(e, world.getMoisture(x, y)));
+        world.setTerrain(x, y, classify(e, world.getMoisture(x, y), world.getTemperature(x, y)));
       },
     },
     {

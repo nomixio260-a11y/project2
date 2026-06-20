@@ -9,6 +9,7 @@
     const n = width * height;
     this.elevation = new Float32Array(n); // 0..1
     this.moisture = new Float32Array(n); // 0..1
+    this.temperature = new Float32Array(n); // 0..1（緯度・標高ベース、バイオーム分類用）
     this.terrain = new Uint8Array(n); // TERRAIN enum
   }
 
@@ -38,6 +39,14 @@
 
   World.prototype.getMoisture = function (x, y) {
     return this.moisture[y * this.width + x];
+  };
+
+  World.prototype.getTemperature = function (x, y) {
+    return this.temperature[y * this.width + x];
+  };
+
+  World.prototype.setTemperature = function (x, y, t) {
+    this.temperature[y * this.width + x] = t < 0 ? 0 : t > 1 ? 1 : t;
   };
 
   // 標高を delta だけ変化させ、新標高を返す（0..1 にクランプ）。

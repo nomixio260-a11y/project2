@@ -14,6 +14,12 @@
     MOUNTAIN: 6,
     SNOW: 7,
     SCORCHED: 8, // 破壊ツールの焼け地
+    // バイオーム強化（既存値 0..8 は固定し末尾に追加）。
+    DESERT: 9,
+    SAVANNA: 10,
+    SWAMP: 11,
+    TUNDRA: 12,
+    JUNGLE: 13,
   };
 
   const T = Game.TERRAIN;
@@ -29,6 +35,11 @@
     [T.MOUNTAIN]: "#6f6a64",
     [T.SNOW]: "#eef3f7",
     [T.SCORCHED]: "#3a3330",
+    [T.DESERT]: "#e0c878",
+    [T.SAVANNA]: "#bcae5a",
+    [T.SWAMP]: "#4a5d3a",
+    [T.TUNDRA]: "#9fb0a8",
+    [T.JUNGLE]: "#1f5a2a",
   };
 
   // RGB を事前計算（オフスクリーン ImageData 描画用に高速化）。
@@ -52,5 +63,10 @@
     [T.MOUNTAIN]: "山",
     [T.SNOW]: "雪",
     [T.SCORCHED]: "焼け地",
+    [T.DESERT]: "砂漠",
+    [T.SAVANNA]: "サバンナ",
+    [T.SWAMP]: "湿地",
+    [T.TUNDRA]: "ツンドラ",
+    [T.JUNGLE]: "ジャングル",
   };
 })(window.Game);

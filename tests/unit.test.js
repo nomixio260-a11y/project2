@@ -57,17 +57,37 @@ test("noise: 同じシードは同じ結果、別シードは別結果", () => {
   assert.notEqual(a.simplex2D(1.5, 2.5), c.simplex2D(1.5, 2.5));
 });
 
-test("tile.classify: 標高で正しく地形が決まる", () => {
+test("tile.classify: 標高で正しく地形が決まる（温帯）", () => {
   const Game = loadCore();
   const T = Game.TERRAIN;
-  assert.equal(Game.tile.classify(0.0, 0.5), T.DEEP_WATER);
-  assert.equal(Game.tile.classify(0.35, 0.5), T.SHALLOW_WATER);
-  assert.equal(Game.tile.classify(0.42, 0.5), T.SAND);
-  assert.equal(Game.tile.classify(0.95, 0.5), T.SNOW);
-  // grass帯: 湿度で grass/forest 分岐
+  const TEMPERATE = 0.5;
+  assert.equal(Game.tile.classify(0.0, 0.5, TEMPERATE), T.DEEP_WATER);
+  assert.equal(Game.tile.classify(0.35, 0.5, TEMPERATE), T.SHALLOW_WATER);
+  assert.equal(Game.tile.classify(0.42, 0.5, TEMPERATE), T.SAND);
+  assert.equal(Game.tile.classify(0.95, 0.5, TEMPERATE), T.SNOW);
+  // grass帯: 温帯では湿度で grass/forest 分岐
   const mid = (Game.config.thresholds.sand + Game.config.thresholds.grass) / 2;
+  assert.equal(Game.tile.classify(mid, 0.0, TEMPERATE), T.GRASS);
+  assert.equal(Game.tile.classify(mid, 0.6, TEMPERATE), T.FOREST);
+  // 温度省略時は温帯(0.5)扱い → 旧2引数互換
   assert.equal(Game.tile.classify(mid, 0.0), T.GRASS);
-  assert.equal(Game.tile.classify(mid, 0.9), T.FOREST);
+  assert.equal(Game.tile.classify(mid, 0.6), T.FOREST);
+});
+
+test("tile.classify: 温度でバイオームが分岐する", () => {
+  const Game = loadCore();
+  const T = Game.TERRAIN;
+  const th = Game.config.thresholds;
+  const mid = (th.sand + th.grass) / 2;
+  // 高温・乾燥 → 砂漠 / 高温・多湿 → ジャングル / 高温・中間 → サバンナ
+  assert.equal(Game.tile.classify(mid, 0.1, 0.9), T.DESERT);
+  assert.equal(Game.tile.classify(mid, 0.9, 0.9), T.JUNGLE);
+  assert.equal(Game.tile.classify(mid, 0.5, 0.9), T.SAVANNA);
+  // 寒冷 → ツンドラ
+  assert.equal(Game.tile.classify(mid, 0.5, 0.1), T.TUNDRA);
+  // 温帯・多湿・低地 → 湿地
+  const low = (th.sand + th.swampElevation) / 2;
+  assert.equal(Game.tile.classify(low, 0.9, 0.5), T.SWAMP);
 });
 
 test("World: get/set/raise が境界クランプ込みで動く", () => {
@@ -97,10 +117,25 @@ test("worldgen: 生成すると複数の地形タイプが現れる", () => {
   // 海と陸が最低限あること
   assert.ok(seen.size >= 4, "種類が少なすぎ: " + seen.size);
   assert.ok(seen.has(Game.TERRAIN.DEEP_WATER), "深海が無い");
-  // 標高は全タイル 0..1
+  // 標高・温度は全タイル 0..1
   for (let i = 0; i < w.elevation.length; i++) {
     assert.ok(w.elevation[i] >= 0 && w.elevation[i] <= 1);
+    assert.ok(w.temperature[i] >= 0 && w.temperature[i] <= 1, "temp out of range");
   }
+});
+
+test("worldgen: 川(carveRivers)はシードで再現的", () => {
+  const Game = loadCore({ mapWidth: 96, mapHeight: 96 });
+  const a = new Game.World(96, 96);
+  const b = new Game.World(96, 96);
+  const c = new Game.World(96, 96);
+  Game.worldgen.generate(a, 31337);
+  Game.worldgen.generate(b, 31337);
+  Game.worldgen.generate(c, 31338);
+  // 同一シードは温度も地形(川含む)も完全一致。
+  assert.deepEqual(Array.from(a.terrain), Array.from(b.terrain));
+  assert.deepEqual(Array.from(a.temperature), Array.from(b.temperature));
+  assert.notDeepEqual(Array.from(a.terrain), Array.from(c.terrain));
 });
 
 test("worldgen: 同じシードは同一マップ、別シードは別マップ", () => {
