@@ -30,7 +30,7 @@ window.Game = window.Game || {};
       maxEntities: 16000, // 生物の上限
       maxFires: 12000, // 同時延焼タイルの上限
       maxKingdoms: 96, // 王国数の上限
-      maxPeople: 700, // 可視化用の市民エージェント上限
+      maxPeople: 1500, // 人間エージェント（文明の主体）の総数上限
       claimsPerTick: 40, // 1王国が1ティックに拡張するタイル数の上限（人口で変調）
       conflictChance: 0.05, // 国境での領土反転の基本確率
 
