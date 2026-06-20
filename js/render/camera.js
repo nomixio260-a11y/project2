@@ -89,6 +89,14 @@
     }
   };
 
+  // 指定タイルを画面中央に置く（ズームは維持）。
+  Camera.prototype.centerOnTile = function (tx, ty) {
+    const tile = Game.config.tilePx;
+    this.x = (tx + 0.5) * tile - this.viewW / this.zoom / 2;
+    this.y = (ty + 0.5) * tile - this.viewH / this.zoom / 2;
+    this.clamp();
+  };
+
   // 操作しやすいズームでマップ中央を表示（約 nTiles タイルが画面に収まる）。
   Camera.prototype.fitTiles = function (nTiles) {
     const cfg = Game.config;

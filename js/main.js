@@ -4,6 +4,8 @@
 
   function boot() {
     const cfg = Game.config;
+    // 端末ごとに地図サイズ・上限・初期ズームを最適化。
+    if (Game.applyDeviceProfile) Game.applyDeviceProfile();
     const canvas = document.getElementById("game");
 
     // ワールド生成。
@@ -15,7 +17,7 @@
 
     const renderer = new Game.Renderer(canvas, world);
     renderer.resize(); // 高DPI対応で実バッファを確保
-    camera.fitTiles(130); // 操作しやすい初期ズーム（全体ではなく一帯を表示）
+    camera.fitTiles(cfg.initialFitTiles || 130); // 操作しやすい初期ズーム（全体ではなく一帯を表示）
 
     const brush = new Game.Brush(5);
     const input = new Game.Input(canvas, camera, world, renderer);
@@ -103,13 +105,14 @@
       fire.setWorld(w);
       civ.setWorld(w);
       civ.clear();
-      camera.fitTiles(130);
+      camera.fitTiles(cfg.initialFitTiles || 130);
       if (Game.minimap) Game.minimap._fit();
     };
 
     Game.toolbar.init();
     if (Game.hud) Game.hud.init();
     if (Game.minimap) Game.minimap.init();
+    if (Game.nations) Game.nations.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。
     function handleResize() {

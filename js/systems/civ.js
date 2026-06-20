@@ -51,7 +51,17 @@
     nomadFoundChance: 0.04,
     nomadFoundRadius: 6,
     nomadClusterRadius: 8,
+    // 外交
+    diploInterval: 90,  // 外交を評価する間隔(ティック)
+    warThreshold: -50,   // 関係がこれ以下で開戦しうる
+    allyThreshold: 60,   // これ以上で同盟しうる
+    warChance: 0.35,
+    peaceChance: 0.16,
+    allyChance: 0.18,
   };
+
+  const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
+  const GOV_TYPES = ["君主制", "共和制", "部族連合", "神権制", "氏族制"];
 
   function CivSystem(world, renderer) {
     this.world = world;
@@ -127,12 +137,17 @@
     const k = {
       id: id,
       name: makeName(this.rand),
+      ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
+      gov: GOV_TYPES[(this.rand() * GOV_TYPES.length) | 0],
       color: makeColor(this.rand),
       cities: [{ x: x, y: y, capital: true, level: 1 }],
       tileCount: 1,
       humanCount: 0,
       roleCount: [0, 0, 0, 0],
       clanSeq: 0,
+      relations: {}, // 既知の他国 id → 関係値(-100..100)
+      wars: {},      // 交戦中の id → true
+      allies: {},    // 同盟中の id → true
       alive: true,
     };
     this.kingdoms.push(k);
@@ -346,6 +361,103 @@
       for (let b = 0; b < this._births.length; b++) people.push(this._births[b]);
       this._births.length = 0;
     }
+
+    // 外交（間引いて評価）。
+    if ((tN % CP.diploInterval) === 0) this._diplomacy();
+  };
+
+  // ===== 外交（国システム）=====
+  CivSystem.prototype._contact = function (a, b) {
+    if (a === b || a === 0 || b === 0) return;
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    if (!ka || !kb || !ka.alive || !kb.alive) return;
+    if (ka.relations[b] === undefined) {
+      // 初対面の印象（多少のばらつき）。
+      const r = (this.rand() * 50 - 25) | 0;
+      ka.relations[b] = r; kb.relations[a] = r;
+    }
+  };
+
+  CivSystem.prototype._atWar = function (a, b) {
+    const ka = this.kingdoms[a];
+    return !!(ka && ka.wars[b]);
+  };
+
+  CivSystem.prototype._setRel = function (a, b, v) {
+    v = v < -100 ? -100 : v > 100 ? 100 : v;
+    this.kingdoms[a].relations[b] = v;
+    this.kingdoms[b].relations[a] = v;
+  };
+
+  CivSystem.prototype._declareWar = function (a, b) {
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    ka.wars[b] = true; kb.wars[a] = true;
+    delete ka.allies[b]; delete kb.allies[a];
+    this._setRel(a, b, -80);
+  };
+
+  CivSystem.prototype._makePeace = function (a, b) {
+    delete this.kingdoms[a].wars[b];
+    delete this.kingdoms[b].wars[a];
+    this._setRel(a, b, -10);
+  };
+
+  CivSystem.prototype._formAlliance = function (a, b) {
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    ka.allies[b] = true; kb.allies[a] = true;
+    delete ka.wars[b]; delete kb.wars[a];
+    this._setRel(a, b, 70);
+  };
+
+  // イベント駆動の外交評価。関係値を「傾き」として開戦・同盟・講和の確率を変調する。
+  CivSystem.prototype._diplomacy = function () {
+    const ks = this.kingdoms;
+    for (let a = 1; a < ks.length; a++) {
+      const ka = ks[a];
+      if (!ka || !ka.alive) continue;
+      for (const bStr in ka.relations) {
+        const b = +bStr;
+        if (b <= a) continue;
+        const kb = ks[b];
+        if (!kb || !kb.alive) continue;
+        const rel = ka.relations[b];
+
+        if (ka.wars[b]) {
+          // 講和（戦争が長引くほど起きやすい近似として固定確率）。
+          if (this.rand() < CP.peaceChance) this._makePeace(a, b);
+        } else if (ka.allies[b]) {
+          if (this.rand() < 0.05) { delete ka.allies[b]; delete kb.allies[a]; this._setRel(a, b, 10); }
+        } else {
+          // 関係が悪いほど開戦、良いほど同盟しやすい。
+          const warP = 0.09 + (rel < 0 ? (-rel / 100) * 0.25 : 0);
+          const allyP = 0.05 + (rel > 0 ? (rel / 100) * 0.2 : 0);
+          const r = this.rand();
+          if (r < warP) this._declareWar(a, b);
+          else if (r < warP + allyP) this._formAlliance(a, b);
+          else this._setRel(a, b, rel + (this.rand() * 8 - 4)); // 平時のゆらぎ
+        }
+      }
+    }
+  };
+
+  // UI 用: 各国の要約（人口降順）。
+  CivSystem.prototype.getNations = function () {
+    const ks = this.kingdoms;
+    const out = [];
+    for (let a = 1; a < ks.length; a++) {
+      const k = ks[a];
+      if (!k || !k.alive) continue;
+      const wars = [], allies = [];
+      for (const b in k.wars) if (ks[b] && ks[b].alive) wars.push(ks[b].name);
+      for (const b in k.allies) if (ks[b] && ks[b].alive) allies.push(ks[b].name);
+      out.push({
+        id: a, name: k.name, ruler: k.ruler, gov: k.gov, color: k.color,
+        pop: k.humanCount, cities: k.cities.length, tiles: k.tileCount,
+        capital: k.cities[0], wars: wars, allies: allies,
+      });
+    }
+    out.sort(function (x, y) { return y.pop - x.pop; });
+    return out;
   };
 
   // 放浪者の1ティック: 採食・移動・繁殖。仲間と肥沃地に集まれば国を興す。
@@ -456,9 +568,12 @@
       if (x < 0 || y < 0 || x >= W || y >= H) continue;
       const ni = y * W + x;
       if (!tile.isLand(world.terrain[ni])) continue;
-      if (owner[ni] === 0) {
+      const o = owner[ni];
+      if (o === 0) {
         owner[ni] = id; k.tileCount++;
         if (this.renderer) this.renderer.markTerritoryDirty(x, y);
+      } else if (o !== id) {
+        this._contact(id, o); // 国境で他国と接触 → 外交関係が生まれる
       }
     }
   };
@@ -613,13 +728,16 @@
         this._maybeFoundTown(h, k);
       }
     } else if (h.role === ROLE.SOLDIER) {
-      // 戦闘: 近くの敵に食料ダメージ（飢え→死）。
-      const enemy = this._scan(h.x, h.y, 1.4, function (o) { return (o.kid !== h.kid && o.kid !== 0) ? 2 : 0; }).best;
+      // 戦闘・征服は「交戦中(at war)の国」に対してのみ行う。
+      const self = this;
+      const enemy = this._scan(h.x, h.y, 1.4, function (o) {
+        return (o.kid !== h.kid && o.kid !== 0 && self._atWar(h.kid, o.kid)) ? 2 : 0;
+      }).best;
       if (enemy) { enemy.food -= CP.attack; if (enemy.food < 0) enemy.food = 0; }
-      // 征服: 足下が敵領で、かつ自国領に隣接する「前線」のときだけ奪える。
+      // 征服: 足下が交戦国の領土で、自国領に隣接する前線のときだけ奪える。
       const tx = h.x | 0, ty = h.y | 0;
       const o = world.owner[i];
-      if (o !== 0 && o !== h.kid) {
+      if (o !== 0 && o !== h.kid && this._atWar(h.kid, o)) {
         const other = this.kingdoms[o];
         if (other && other.alive && this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < CP.conflictChance) {
           world.owner[i] = h.kid; k.tileCount++; other.tileCount--;
