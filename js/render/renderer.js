@@ -290,13 +290,13 @@
     for (let p = 0; p < people.length; p++) {
       const person = people[p];
       if (person.x < range.x0 || person.x > range.x1 || person.y < range.y0 || person.y > range.y1) continue;
-      const k = civ.kingdoms[person.kid];
-      if (!k) continue;
-      const col = k.color;
+      const k = person.kid ? civ.kingdoms[person.kid] : null;
       const sx = Math.round(camera.worldToScreenX((person.x + 0.5) * tile));
       const sy = Math.round(camera.worldToScreenY((person.y + 0.5) * tile));
-      // ヒト型ピクセル: 頭(肌) + 胴(王国色) + 脚(暗色)。
-      const bodyCol = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
+      // 放浪者(無所属)は中立色、市民は王国色。
+      const bodyCol = k
+        ? "rgb(" + k.color[0] + "," + k.color[1] + "," + k.color[2] + ")"
+        : "rgb(155,142,120)";
       // 影。
       ctx.fillStyle = "rgba(0,0,0,0.35)";
       ctx.fillRect(sx - u, sy + 2 * u, 2 * u, u);

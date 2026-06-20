@@ -15,9 +15,9 @@
 
     const renderer = new Game.Renderer(canvas, world);
     renderer.resize(); // 高DPI対応で実バッファを確保
-    camera.fitToMap();
+    camera.fitTiles(130); // 操作しやすい初期ズーム（全体ではなく一帯を表示）
 
-    const brush = new Game.Brush(3);
+    const brush = new Game.Brush(5);
     const input = new Game.Input(canvas, camera, world, renderer);
     const engine = new Game.Engine(renderer, camera, input);
 
@@ -103,7 +103,7 @@
       fire.setWorld(w);
       civ.setWorld(w);
       civ.clear();
-      camera.fitToMap();
+      camera.fitTiles(130);
       if (Game.minimap) Game.minimap._fit();
     };
 
