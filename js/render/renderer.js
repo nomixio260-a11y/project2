@@ -4,6 +4,9 @@
 (function (Game) {
   "use strict";
 
+  // 役割ごとの帽子色（ROLE: 0=開拓者,1=農民,2=建築家,3=兵士）。
+  const ROLE_HAT = [null, "#4fae4f", "#e08a2a", "#d24a3a"];
+
   function Renderer(canvas, world) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
@@ -307,6 +310,12 @@
       // 頭（肌色, 2u x 2u）。
       ctx.fillStyle = "#f0c89a";
       ctx.fillRect(sx - u, sy - 3 * u, 2 * u, 2 * u);
+      // 役割の帽子（農民=緑 / 兵士=赤 / 建築家=橙 / 開拓者=無し）。
+      const hat = ROLE_HAT[person.role];
+      if (hat) {
+        ctx.fillStyle = hat;
+        ctx.fillRect(sx - u, sy - 4 * u, 2 * u, u);
+      }
     }
   };
 
@@ -386,7 +395,9 @@
         if (city.x < range.x0 || city.x > range.x1 || city.y < range.y0 || city.y > range.y1) continue;
         const sx = camera.worldToScreenX((city.x + 0.5) * tile);
         const sy = camera.worldToScreenY((city.y + 0.5) * tile);
-        const rad = city.capital ? Math.max(3, scale * 0.6) : Math.max(2, scale * 0.4);
+        // 発展度(level)で大きくする。
+        const lvl = 1 + ((city.level || 1) - 1) * 0.25;
+        const rad = (city.capital ? Math.max(3, scale * 0.6) : Math.max(2, scale * 0.4)) * lvl;
         ctx.beginPath();
         ctx.arc(sx, sy, rad + 1.5, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(0,0,0,0.55)";
