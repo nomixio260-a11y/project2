@@ -34,7 +34,8 @@
     reproCost: 0.34,
     reproCooldown: 240,
     reproRadius: 6,
-    thinkInterval: 12,
+    thinkInterval: 22,   // 重い意思決定の間隔(ティック)。大きいほど低負荷
+    joinRadius: 12,      // 放浪者が既存国を見つけて加入を目指す範囲
     tether: 34,
     seekRange: 3,
     conflictChance: 0.06,
@@ -305,16 +306,16 @@
       const k = kingdoms[h.kid];
       if (!k || !k.alive) { h.alive = false; continue; }
 
-      // 欲求の更新（軽量・毎ティック）。
+      // ---- 軽量・毎ティック ----
       h.age++;
       h.food -= CP.metab;
       h.social += CP.socialRise;
       if (h.repro > 0) h.repro--;
 
-      // 採食（可食地に居れば食べる。fertility があれば収穫して消費）。
       const tx = h.x | 0, ty = h.y | 0;
       const ti = ty * world.width + tx;
       const terr = world.terrain[ti];
+      // 採食。
       if (tile.isEdible(terr)) {
         let gain = CP.eatGain;
         if (world.fertility) {
@@ -325,18 +326,22 @@
         h.food += gain;
         if (h.food > 1) h.food = 1;
       }
+      // 足下タイルだけ確保（5タイル走査は思考時に行う）。
+      const o0 = world.owner[ti];
+      if (o0 === 0) {
+        if (tile.isLand(terr)) { world.owner[ti] = h.kid; k.tileCount++; if (this.renderer) this.renderer.markTerritoryDirty(tx, ty); }
+      } else if (o0 !== h.kid) {
+        this._contact(h.kid, o0);
+      }
 
-      // 領有（足下＋4近傍の陸地を確保。敵地は紛争）。
-      this._claimAround(h, k, world);
-
-      // 思考（重い意思決定は thinkInterval ごと・位相分散）。
+      // ---- 重い意思決定は thinkInterval ごと（位相分散）----
       if (((tN + i) % CP.thinkInterval) === 0) {
         this._think(h, k, world);
       }
 
-      // 行動（毎ティック: 目標へ移動 + 役割の現地効果）。
-      this._move(h, k, world);
-      this._roleAct(h, k, world);
+      // 移動 + 軽量な役割効果。
+      this._move(h, null, world);
+      this._roleTick(h, k, world, ti);
 
       // 死亡（餓死・老衰）。
       if (h.food <= 0 || h.age > CP.maxAge) {
@@ -480,27 +485,46 @@
       if (h.food > 1) h.food = 1;
     }
 
-    // 思考（重い処理は間引き）: 定住地探し・建国・繁殖。
+    // 思考（重い処理は間引き）: 加入・建国・定住地探し・繁殖。
     if (((tN + i) % CP.thinkInterval) === 0) {
-      // 仲間の方へ寄りつつ、肥沃な無所属地を目指す。
-      const spot = this._nearestTile(h, world, 5, function (terr, ow) {
-        return ow === 0 && tile.isEdible(terr);
-      });
-      if (spot) { h.gx = spot.x; h.gy = spot.y; }
-      else {
-        // 近くの仲間の重心へ寄る（群れる）。
-        const mate = this._scan(h.x, h.y, CP.nomadClusterRadius, function (o) { return o.kid === 0 && o.alive ? 2 : 0; }).best;
-        if (mate) { h.gx = mate.x | 0; h.gy = mate.y | 0; }
-        else { h.gx = (h.x + (this.rand() - 0.5) * 8) | 0; h.gy = (h.y + (this.rand() - 0.5) * 8) | 0; }
+      // 1) 加入: 足下が既存国の領土なら、その国に加わる（最優先）。
+      const o = world.owner[ti];
+      if (o !== 0) {
+        const k = this.kingdoms[o];
+        if (k && k.alive && k.humanCount < CP.perKingdomCap) { this._joinKingdom(h, k); return; }
       }
+      // 2) 近くに国の民がいれば、そこへ向かって加入を目指す。
+      const citizen = this._scan(h.x, h.y, CP.joinRadius, function (oo) {
+        return (oo.kid !== 0 && oo.alive) ? 2 : 0;
+      }).best;
+      if (citizen) {
+        const dx = citizen.x - h.x, dy = citizen.y - h.y;
+        if (dx * dx + dy * dy < 6) {
+          const k = this.kingdoms[citizen.kid];
+          if (k && k.alive && k.humanCount < CP.perKingdomCap) { this._joinKingdom(h, k); return; }
+        }
+        h.gx = citizen.x | 0; h.gy = citizen.y | 0; h.state = 9;
+      } else {
+        // 3) 定住先（肥沃な無所属地）を探す。無ければ仲間と群れる/徘徊。
+        const spot = this._nearestTile(h, world, 5, function (terr, ow) {
+          return ow === 0 && tile.isEdible(terr);
+        });
+        if (spot) { h.gx = spot.x; h.gy = spot.y; h.state = 10; }
+        else {
+          const mate = this._scan(h.x, h.y, CP.nomadClusterRadius, function (oo) { return oo.kid === 0 && oo.alive ? 2 : 0; }).best;
+          if (mate) { h.gx = mate.x | 0; h.gy = mate.y | 0; }
+          else { h.gx = (h.x + (this.rand() - 0.5) * 8) | 0; h.gy = (h.y + (this.rand() - 0.5) * 8) | 0; }
+          h.state = 11;
+        }
 
-      // 建国: 肥沃な無所属地に、仲間が一定数集まっていれば国を興す。
-      const fert = !world.fertility || world.fertility[ti] > 0.25;
-      if (world.owner[ti] === 0 && tile.isEdible(world.terrain[ti]) && fert &&
-          this.kingdoms.length - 1 < Game.config.sim.maxKingdoms) {
-        const band = this._scan(h.x, h.y, CP.nomadFoundRadius, function (o) { return o.kid === 0 && o.alive ? 1 : 0; });
-        if (band.count >= CP.nomadFoundBand && this.rand() < CP.nomadFoundChance) {
-          this._foundFromNomads(h, tx, ty);
+        // 4) 建国: 無所属の可食地に仲間が集まっていれば国を興す（近くに国が無いときのみ）。
+        if (world.owner[ti] === 0 && tile.isEdible(world.terrain[ti]) &&
+            this.kingdoms.length - 1 < Game.config.sim.maxKingdoms) {
+          const band = this._scan(h.x, h.y, CP.nomadFoundRadius, function (oo) { return oo.kid === 0 && oo.alive ? 1 : 0; });
+          if (band.count >= CP.nomadFoundBand && this.rand() < CP.nomadFoundChance) {
+            this._foundFromNomads(h, tx, ty);
+            return;
+          }
         }
       }
 
@@ -511,6 +535,18 @@
     this._move(h, null, world);
 
     if (h.food <= 0 || h.age > CP.maxAge) h.alive = false;
+  };
+
+  // 放浪者が既存の国に加入して市民になる。
+  CivSystem.prototype._joinKingdom = function (h, k) {
+    h.kid = k.id;
+    h.clan = ++k.clanSeq;
+    h.role = this._assignRole(k);
+    h.gx = k.cities[0].x; h.gy = k.cities[0].y;
+    h.repro = CP.reproCooldown;
+    h.social = 0;
+    k.humanCount++;
+    k.roleCount[h.role]++;
   };
 
   // 放浪者の集団が建国: 中心の人とその周囲の放浪者が新王国の住人になる。
@@ -557,14 +593,13 @@
     });
   };
 
-  // 人間の足下＋4近傍の「無所属の陸地」だけを確保する。
-  // 他国の領土は歩いただけでは奪わない（征服は兵士が前線で行う / _roleAct）。
-  CivSystem.prototype._claimAround = function (h, k, world) {
+  // 4近傍の無所属の陸地を確保する（足下は毎ティック処理済み）。思考時のみ呼ぶ。
+  CivSystem.prototype._claimNeighbors = function (h, k, world) {
     const W = world.width, H = world.height, owner = world.owner, id = k.id;
     const cx = h.x | 0, cy = h.y | 0;
-    for (let n = 0; n < 5; n++) {
-      const x = cx + (n === 1 ? -1 : n === 2 ? 1 : 0);
-      const y = cy + (n === 3 ? -1 : n === 4 ? 1 : 0);
+    const nb = [cx - 1, cy, cx + 1, cy, cx, cy - 1, cx, cy + 1];
+    for (let n = 0; n < 8; n += 2) {
+      const x = nb[n], y = nb[n + 1];
       if (x < 0 || y < 0 || x >= W || y >= H) continue;
       const ni = y * W + x;
       if (!tile.isLand(world.terrain[ni])) continue;
@@ -573,7 +608,7 @@
         owner[ni] = id; k.tileCount++;
         if (this.renderer) this.renderer.markTerritoryDirty(x, y);
       } else if (o !== id) {
-        this._contact(id, o); // 国境で他国と接触 → 外交関係が生まれる
+        this._contact(id, o);
       }
     }
   };
@@ -600,20 +635,22 @@
     return { dx: dx, dy: dy, d2: d2 };
   };
 
-  // AI: 欲求と役割に応じて目標(gx,gy)を決める。重いのでthinkInterval毎。
+  // AI: 欲求と役割を勘案して目標(gx,gy)を決める「熟考」。thinkInterval 毎にのみ実行。
   CivSystem.prototype._think = function (h, k, world) {
-    const W = world.width, H = world.height;
-    const home = this._home(h, k);
-
-    // 繁殖（役割に関わらず、成人・食料十分・近くに同胞成人がいれば家族を作る）。
+    const self = this;
+    // 近傍の土地を確保（足下は毎ティック）。
+    this._claimNeighbors(h, k, world);
+    // 繁殖（成人・食料十分・近くに同胞成人がいれば家族を作る）。
     this._tryReproduce(h, k);
+
+    const home = this._home(h, k);
 
     // 1) 強い空腹 → 近くの可食地へ。
     if (h.food < 0.4) {
       const t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 1; return; }
     }
-    // 2) 孤独 → 集落へ集まる（同胞の近くへ）。
+    // 2) 孤独 → 同胞のもとへ集まる。
     if (h.social > 1) {
       const soc = this._scan(h.x, h.y, CP.socialRadius, function (o) { return o.kid === h.kid ? 1 : 0; });
       if (soc.count >= CP.socialNeed) h.social = 0;
@@ -623,24 +660,44 @@
     if (home.d2 > CP.tether * CP.tether) {
       h.gx = (h.x + home.dx) | 0; h.gy = (h.y + home.dy) | 0; h.state = 3; return;
     }
-    // 4) 役割ごとの目的地。
+
+    // 4) 役割ごとの目的地・判断。
+    if (h.role === ROLE.SOLDIER) {
+      // 交戦中の敵だけを標的にする（平時は警邏）。
+      const e = this._scan(h.x, h.y, 9, function (o) {
+        return (o.kid !== h.kid && o.kid !== 0 && self._atWar(h.kid, o.kid)) ? 2 : 0;
+      }).best;
+      h._enemy = e;
+      if (e) { h.gx = e.x | 0; h.gy = e.y | 0; h.state = 5; return; }
+      const t = this._nearestTile(h, world, 6, function (terr, ow) {
+        return ow !== 0 && ow !== h.kid && self._atWar(h.kid, ow);
+      });
+      if (t) { h.gx = t.x; h.gy = t.y; h.state = 5; return; }
+      h.gx = k.cities[0].x; h.gy = k.cities[0].y; h.state = 5; return; // 警邏
+    }
     if (h.role === ROLE.EXPLORER) {
-      const t = this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow) { return ow === 0 && tile.isLand(terr); }, true);
+      this._maybeFoundTown(h, k); // 遠地で新集落
+      const t = this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow) { return ow === 0 && tile.isLand(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 4; return; }
       h.gx = (h.x + (this.rand() - 0.5) * 8) | 0;
       h.gy = (h.y + (this.rand() - 0.5) * 8) | 0;
       h.state = 4; return;
     }
-    if (h.role === ROLE.SOLDIER) {
-      const enemy = this._scan(h.x, h.y, 8, function (o) { return o.kid !== h.kid ? 2 : 0; });
-      if (enemy.best) { h.gx = enemy.best.x | 0; h.gy = enemy.best.y | 0; h.state = 5; return; }
-      const t = this._nearestTile(h, world, 6, function (terr, ow) { return ow !== 0 && ow !== h.kid; });
-      if (t) { h.gx = t.x; h.gy = t.y; h.state = 5; return; }
-    }
     if (h.role === ROLE.BUILDER) {
+      if (home.d2 < 4) {
+        // 集落を発展させる。
+        if (this.rand() < 0.1) {
+          for (let c = 0; c < k.cities.length; c++) {
+            const dx = k.cities[c].x + 0.5 - h.x, dy = k.cities[c].y + 0.5 - h.y;
+            if (dx * dx + dy * dy < 4 && k.cities[c].level < 6) { k.cities[c].level++; break; }
+          }
+        }
+      } else {
+        this._maybeFoundTown(h, k);
+      }
       h.gx = k.cities[0].x; h.gy = k.cities[0].y; h.state = 6; return;
     }
-    // FARMER（既定）: 肥沃地に留まり耕作。近くの可食地へ。
+    // FARMER（既定）: 肥沃地に留まり耕作。
     const t = this._nearestTile(h, world, 4, function (terr) { return tile.isEdible(terr); });
     if (t) { h.gx = t.x; h.gy = t.y; } else { h.gx = h.x | 0; h.gy = h.y | 0; }
     h.state = 7;
@@ -704,50 +761,38 @@
     }
   };
 
-  // 役割の現地効果（毎ティック・局所のみ）。
-  CivSystem.prototype._roleAct = function (h, k, world) {
-    const W = world.width;
-    const i = (h.y | 0) * W + (h.x | 0);
+  // 役割の局所効果（毎ティックだが探索なし＝低負荷）。ti は足下のタイル index。
+  CivSystem.prototype._roleTick = function (h, k, world, ti) {
     if (h.role === ROLE.FARMER) {
-      // 耕作: 自分のタイルの fertility を高め、土地を肥やす。
-      if (world.fertility && tile.isLand(world.terrain[i])) {
-        const f = world.fertility[i] + CP.cultivate;
-        world.fertility[i] = f > 1 ? 1 : f;
+      // 耕作: 足下の fertility を高め、土地を肥やす。
+      if (world.fertility && tile.isLand(world.terrain[ti])) {
+        const f = world.fertility[ti] + CP.cultivate;
+        world.fertility[ti] = f > 1 ? 1 : f;
       }
-    } else if (h.role === ROLE.BUILDER) {
-      // 建設: 集落に居れば発展度を上げ、遠地なら新集落を興す。
-      const home = this._home(h, k);
-      if (home.d2 < 4) {
-        if (this.rand() < 0.01) {
-          for (let c = 0; c < k.cities.length; c++) {
-            const dx = k.cities[c].x + 0.5 - h.x, dy = k.cities[c].y + 0.5 - h.y;
-            if (dx * dx + dy * dy < 4 && k.cities[c].level < 6) { k.cities[c].level++; break; }
-          }
-        }
+      return;
+    }
+    if (h.role === ROLE.SOLDIER) {
+      // 思考時にキャッシュした敵が隣接していれば攻撃（探索不要）。
+      const e = h._enemy;
+      if (e && e.alive && this._atWar(h.kid, e.kid)) {
+        const dx = e.x - h.x, dy = e.y - h.y;
+        if (dx * dx + dy * dy < 2.25) { e.food -= CP.attack; if (e.food < 0) e.food = 0; }
       } else {
-        this._maybeFoundTown(h, k);
+        h._enemy = null;
       }
-    } else if (h.role === ROLE.SOLDIER) {
-      // 戦闘・征服は「交戦中(at war)の国」に対してのみ行う。
-      const self = this;
-      const enemy = this._scan(h.x, h.y, 1.4, function (o) {
-        return (o.kid !== h.kid && o.kid !== 0 && self._atWar(h.kid, o.kid)) ? 2 : 0;
-      }).best;
-      if (enemy) { enemy.food -= CP.attack; if (enemy.food < 0) enemy.food = 0; }
-      // 征服: 足下が交戦国の領土で、自国領に隣接する前線のときだけ奪える。
-      const tx = h.x | 0, ty = h.y | 0;
-      const o = world.owner[i];
+      // 征服: 足下が交戦国の前線タイルのときだけ奪う（探索は隣接4のみ）。
+      const o = world.owner[ti];
       if (o !== 0 && o !== h.kid && this._atWar(h.kid, o)) {
         const other = this.kingdoms[o];
-        if (other && other.alive && this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < CP.conflictChance) {
-          world.owner[i] = h.kid; k.tileCount++; other.tileCount--;
-          if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
-          if (other.tileCount <= 0) other.alive = false;
+        if (other && other.alive) {
+          const tx = h.x | 0, ty = h.y | 0;
+          if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < CP.conflictChance) {
+            world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
+            if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
+            if (other.tileCount <= 0) other.alive = false;
+          }
         }
       }
-    } else {
-      // EXPLORER: 遠出先で新集落を興す。
-      this._maybeFoundTown(h, k);
     }
   };
 
