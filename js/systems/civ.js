@@ -1,9 +1,30 @@
-// 文明・王国シミュレーション。建国 → フロンティアからの領土拡張 → 国境紛争。
-// 全タイル走査を避け、各王国の「フロンティア（拡張可能な辺縁タイル）」のみ処理する。
+// 文明シミュレーション（ボトムアップ / 人間主導）。
+// 建国 = 入植者(人間)の小集団を置くこと。領土・人口・都市は人間の行動から創発する:
+//  - 人間は未開の隣接地を求めて歩き、踏み込んだ陸地を自国領として確保する。
+//  - 確保した土地（＝食料・空間）に応じて集落で新たな人間が生まれる。
+//  - 遠くまで移った人間は、良い土地で新しい集落を興し、文明が外へ広がる。
+//  - 他国領に踏み込むと国境紛争で土地を奪い合う。
+// 抽象的な「一定速度の自動拡張」は廃止。territory は人が居る所だけ伸びる。
 (function (Game) {
   "use strict";
 
   const tile = Game.tile;
+
+  // 人間エージェントの挙動パラメータ。
+  const CP = {
+    popStart: 5,        // 建国時の入植者数
+    tilesPerHuman: 5,   // 人間1人が支える土地（人口容量の分母）
+    perKingdomCap: 90,  // 1国あたりの人間上限
+    spawnRate: 0.06,    // 容量未満のとき出生する確率/ティック
+    speed: 0.22,        // 移動速度(タイル/ティック)
+    deathRate: 0.0006,  // 自然死の確率/ティック
+    tether: 30,         // 集落からこの距離を超えたら戻ろうとする
+    conflictChance: 0.06, // 国境1接触あたりの territory 反転確率
+    newTownDist: 22,    // 集落からこれ以上離れた良地で新集落を興しうる
+    foundRate: 0.015,   // その際の建設確率/ティック
+    maxSettlements: 8,  // 1国の集落上限
+    seekRange: 2,       // 未開地を探す距離
+  };
 
   function CivSystem(world, renderer) {
     this.world = world;
@@ -11,7 +32,7 @@
     this.rand = Game.utils.mulberry32((Game.config.seed ^ 0x5bd1e995) >>> 0);
     // index 0 は「無所属」予約。kingdoms[id] が王国レコード。
     this.kingdoms = [null];
-    // 可視化用の市民エージェント（領土を歩く人々）。{x,y,kid,hx,hy}
+    // 人間エージェント（文明の主体）。{x,y,kid,hx,hy}
     this.people = [];
   }
 
@@ -26,7 +47,6 @@
     if (this.world) this.world.owner.fill(0);
   };
 
-  // id から色 [r,g,b] を返す（描画用）。
   CivSystem.prototype.colorOf = function (id) {
     const k = this.kingdoms[id];
     return k ? k.color : null;
@@ -37,10 +57,9 @@
   const NAME_B = ["a", "e", "i", "o", "u", "ae", "ia", "or", "en", "an"];
   const NAME_C = ["dor", "gard", "heim", "land", "mar", "nia", "ria", "thal", "vale", "wick", "stead", "moor", "fell", "reach"];
   function makeName(rand) {
-    const a = NAME_A[(rand() * NAME_A.length) | 0];
-    const b = NAME_B[(rand() * NAME_B.length) | 0];
-    const c = NAME_C[(rand() * NAME_C.length) | 0];
-    return a + b + c;
+    return NAME_A[(rand() * NAME_A.length) | 0] +
+      NAME_B[(rand() * NAME_B.length) | 0] +
+      NAME_C[(rand() * NAME_C.length) | 0];
   }
 
   // HSL 風に id から鮮やかな色を生成。
@@ -48,7 +67,6 @@
     const h = rand() * 360;
     const s = 0.65;
     const l = 0.55;
-    // HSL→RGB
     const c = (1 - Math.abs(2 * l - 1)) * s;
     const hp = h / 60;
     const x = c * (1 - Math.abs((hp % 2) - 1));
@@ -63,7 +81,7 @@
     return [((r + m) * 255) | 0, ((g + m) * 255) | 0, ((b + m) * 255) | 0];
   }
 
-  // (x,y) に建国。陸地かつ無所属のみ。新しい王国IDを返す（失敗時 -1）。
+  // (x,y) に建国 = 入植者の集団を置く。陸地かつ無所属のみ。王国IDを返す（失敗時 -1）。
   CivSystem.prototype.foundAt = function (x, y) {
     const world = this.world;
     if (!world.inBounds(x, y)) return -1;
@@ -77,31 +95,35 @@
       id: id,
       name: makeName(this.rand),
       color: makeColor(this.rand),
-      capitalX: x,
-      capitalY: y,
+      cities: [{ x: x, y: y, capital: true }], // 集落（最初は首都）
       tileCount: 1,
-      population: Game.config.sim.popStart,
-      peopleCount: 0, // この王国の市民エージェント数
-      cities: [{ x: x, y: y, capital: true }],
-      nextCityAt: 300, // この領土数で次の都市を建てる
-      frontier: [i],
-      fhead: 0, // 処理済みフロンティアの先頭位置
+      humanCount: 0,
       alive: true,
     };
     this.kingdoms.push(k);
     world.owner[i] = id;
     if (this.renderer) this.renderer.markTerritoryDirty(x, y);
+    // 入植者を配置（彼らが歩いて領土を広げる）。
+    for (let n = 0; n < CP.popStart; n++) this._spawnHuman(k);
     return id;
   };
 
-  // 領土が閾値に達するたびに新都市を建設する（最大6都市）。
-  CivSystem.prototype._maybeFoundCity = function (k, x, y) {
-    if (k.tileCount < k.nextCityAt || k.cities.length >= 6) return;
-    k.cities.push({ x: x, y: y, capital: false });
-    k.nextCityAt += 350;
+  // 集落の近くに人間を1体スポーン。
+  CivSystem.prototype._spawnHuman = function (k) {
+    if (this.people.length >= Game.config.sim.maxPeople) return;
+    if (k.humanCount >= CP.perKingdomCap) return;
+    const city = k.cities[(this.rand() * k.cities.length) | 0];
+    this.people.push({
+      x: city.x + 0.5 + (this.rand() - 0.5) * 2,
+      y: city.y + 0.5 + (this.rand() - 0.5) * 2,
+      kid: k.id,
+      hx: 0,
+      hy: 0,
+    });
+    k.humanCount++;
   };
 
-  // HUD 用の集計（生存王国数・総人口・都市数）。
+  // HUD 用の集計（生存王国数・総人口=人間数・都市数）。
   CivSystem.prototype.stats = function () {
     let kingdoms = 0;
     let population = 0;
@@ -110,163 +132,168 @@
       const k = this.kingdoms[id];
       if (!k || !k.alive) continue;
       kingdoms++;
-      population += k.population;
+      population += k.humanCount;
       cities += k.cities.length;
     }
-    return { kingdoms: kingdoms, population: Math.round(population), cities: cities };
+    return { kingdoms: kingdoms, population: population, cities: cities };
   };
 
   CivSystem.prototype.tick = function (world) {
     const kingdoms = this.kingdoms;
-    const owner = world.owner;
-    const W = world.width;
-    const H = world.height;
-    const rand = this.rand;
-    const cfg = Game.config.sim;
-    const claimsPerTick = cfg.claimsPerTick;
-    const conflictChance = cfg.conflictChance;
-
-    for (let id = 1; id < kingdoms.length; id++) {
-      const k = kingdoms[id];
-      if (!k || !k.alive) continue;
-
-      // 人口の対数成長（容量＝領土数×popPerTile）。領土が縮めば人口も減衰。
-      const cap = k.tileCount * cfg.popPerTile;
-      k.population += cfg.popGrowth * k.population * (1 - k.population / (cap + 1));
-      if (k.population < 1) k.population = 1;
-
-      // 拡張予算は人口規模で変調（大国ほど速く広がる）。
-      const budget = Math.min(claimsPerTick, 2 + ((k.population / 25) | 0));
-
-      let claims = 0;
-      const frontier = k.frontier;
-
-      while (claims < budget && k.fhead < frontier.length) {
-        const fi = frontier[k.fhead];
-        const x = fi % W;
-        const y = (fi / W) | 0;
-        let stillFrontier = false;
-
-        // 4近傍を見て、拡張・紛争。
-        const nb = [
-          x > 0 ? fi - 1 : -1,
-          x < W - 1 ? fi + 1 : -1,
-          y > 0 ? fi - W : -1,
-          y < H - 1 ? fi + W : -1,
-        ];
-        for (let n = 0; n < 4; n++) {
-          const ni = nb[n];
-          if (ni < 0) continue;
-          const o = owner[ni];
-          if (o === id) continue;
-          if (!tile.isLand(world.terrain[ni])) continue;
-
-          if (o === 0) {
-            // 無所属の陸地を領有。
-            owner[ni] = id;
-            k.tileCount++;
-            frontier.push(ni);
-            if (this.renderer) this.renderer.markTerritoryDirty(ni % W, (ni / W) | 0);
-            this._maybeFoundCity(k, ni % W, (ni / W) | 0);
-            claims++;
-            stillFrontier = true;
-            if (claims >= budget) break;
-          } else {
-            // 他国の領土 → 人口比に応じて確率的に奪う。
-            const other = kingdoms[o];
-            if (other && other.alive) {
-              const ratio = k.population / (k.population + other.population + 1);
-              if (rand() < conflictChance * ratio) {
-                owner[ni] = id;
-                k.tileCount++;
-                other.tileCount--;
-                other.population *= 0.985; // 領土喪失で人口減
-                frontier.push(ni);
-                if (this.renderer) this.renderer.markTerritoryDirty(ni % W, (ni / W) | 0);
-                claims++;
-                stillFrontier = true;
-                if (other.tileCount <= 0) other.alive = false;
-                if (claims >= budget) break;
-              } else {
-                stillFrontier = true; // 隣に敵がいる限りフロンティア
-              }
-            }
-          }
-        }
-
-        if (!stillFrontier) {
-          k.fhead++; // このタイルはもう拡張先が無い
-        } else if (claims >= budget) {
-          break; // 上限。続きは次ティック。
-        } else {
-          k.fhead++; // 拡張済み。次のフロンティアへ。
-        }
-      }
-    }
-
-    this._tickPeople();
-  };
-
-  // 市民エージェントの増減と移動。人口に応じて各国に数人を配置し、
-  // 都市の周りを歩かせる（純粋に可視化用。重い生態シミュレーションには含めない）。
-  CivSystem.prototype._tickPeople = function () {
-    const world = this.world;
-    const W = world.width;
-    const H = world.height;
-    const kingdoms = this.kingdoms;
-    const people = this.people;
     const rand = this.rand;
     const maxPeople = Game.config.sim.maxPeople;
 
-    // スポーン: 各国の目標人数に満たなければ確率的に追加。
+    // 出生: 確保した土地（容量）に空きがあれば集落で人が生まれる。
     for (let id = 1; id < kingdoms.length; id++) {
       const k = kingdoms[id];
       if (!k || !k.alive) continue;
-      const target = Math.min(6, 1 + ((k.population / 2500) | 0));
-      if (k.peopleCount < target && people.length < maxPeople && rand() < 0.25) {
-        const city = k.cities[(rand() * k.cities.length) | 0];
-        people.push({ x: city.x + 0.5, y: city.y + 0.5, kid: id, hx: 0, hy: 0 });
-        k.peopleCount++;
+      const capacity = Math.min(CP.perKingdomCap, Math.max(2, (k.tileCount / CP.tilesPerHuman) | 0));
+      if (k.humanCount < capacity && this.people.length < maxPeople && rand() < CP.spawnRate) {
+        this._spawnHuman(k);
       }
     }
 
-    // 移動: 最寄りの都市へ緩く引き寄せつつランダムウォーク。陸地のみ。
+    // 各人間: 周囲を確保 → 移動（未開地を目指す）→ 新集落 → 自然死。
+    const people = this.people;
     for (let p = people.length - 1; p >= 0; p--) {
-      const person = people[p];
-      const k = kingdoms[person.kid];
-      if (!k || !k.alive) {
-        // 王国消滅 → 市民も消える。
+      const h = people[p];
+      const k = kingdoms[h.kid];
+      if (!k || !k.alive) { // 王国消滅 → 人も消える
         people[p] = people[people.length - 1];
         people.pop();
-        if (k) k.peopleCount--;
+        if (k) k.humanCount--;
         continue;
       }
-      // 最寄り都市方向。
-      let cx = person.x;
-      let cy = person.y;
-      let bestD = 1e9;
-      for (let c = 0; c < k.cities.length; c++) {
-        const dx = k.cities[c].x + 0.5 - person.x;
-        const dy = k.cities[c].y + 0.5 - person.y;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; cx = dx; cy = dy; }
+      this._claimAround(h, k, world);
+      this._moveHuman(h, k, world);
+      this._maybeFoundTown(h, k);
+      if (rand() < CP.deathRate) {
+        people[p] = people[people.length - 1];
+        people.pop();
+        k.humanCount--;
       }
-      // 都市が遠いほど引き寄せを強める。
-      const pull = bestD > 36 ? 0.6 : 0.12;
-      let mx = (rand() - 0.5) + (bestD > 1 ? cx / Math.sqrt(bestD) : 0) * pull;
-      let my = (rand() - 0.5) + (bestD > 1 ? cy / Math.sqrt(bestD) : 0) * pull;
-      const len = Math.hypot(mx, my) || 1;
-      const sp = 0.22;
-      const nxp = person.x + (mx / len) * sp;
-      const nyp = person.y + (my / len) * sp;
-      const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
-      const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
-      if (tile.isLand(world.terrain[nty * W + ntx])) {
-        person.hx = nxp - person.x;
-        person.hy = nyp - person.y;
-        person.x = nxp;
-        person.y = nyp;
+    }
+  };
+
+  // 人間の足下とその4近傍の陸地を自国領として確保する（敵地は紛争で奪う）。
+  CivSystem.prototype._claimAround = function (h, k, world) {
+    const W = world.width;
+    const H = world.height;
+    const owner = world.owner;
+    const id = k.id;
+    const cx = h.x | 0;
+    const cy = h.y | 0;
+    for (let n = 0; n < 5; n++) {
+      const x = cx + (n === 1 ? -1 : n === 2 ? 1 : 0);
+      const y = cy + (n === 3 ? -1 : n === 4 ? 1 : 0);
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      const ni = y * W + x;
+      if (!tile.isLand(world.terrain[ni])) continue;
+      const o = owner[ni];
+      if (o === id) continue;
+      if (o === 0) {
+        owner[ni] = id;
+        k.tileCount++;
+        if (this.renderer) this.renderer.markTerritoryDirty(x, y);
+      } else {
+        const other = this.kingdoms[o];
+        if (other && other.alive && this.rand() < CP.conflictChance) {
+          owner[ni] = id;
+          k.tileCount++;
+          other.tileCount--;
+          if (this.renderer) this.renderer.markTerritoryDirty(x, y);
+          if (other.tileCount <= 0) other.alive = false;
+        }
       }
+    }
+  };
+
+  // 移動: 近くの未開の陸地（自国フロンティア）へ向かい、無ければ集落へ戻るか徘徊。
+  CivSystem.prototype._moveHuman = function (h, k, world) {
+    const W = world.width;
+    const H = world.height;
+    const owner = world.owner;
+    const rand = this.rand;
+
+    // 最寄り集落への方向・距離。
+    let homeDx = 0;
+    let homeDy = 0;
+    let homeD2 = 1e9;
+    for (let c = 0; c < k.cities.length; c++) {
+      const dx = k.cities[c].x + 0.5 - h.x;
+      const dy = k.cities[c].y + 0.5 - h.y;
+      const d = dx * dx + dy * dy;
+      if (d < homeD2) { homeD2 = d; homeDx = dx; homeDy = dy; }
+    }
+
+    let mx = 0;
+    let my = 0;
+    // テザー外なら帰路を優先。
+    if (homeD2 > CP.tether * CP.tether) {
+      const hd = Math.sqrt(homeD2) || 1;
+      mx = homeDx / hd;
+      my = homeDy / hd;
+    } else {
+      // 未開地探索: seekRange の8方向で無所属の陸地を探し、そこへ向かう。
+      const r = CP.seekRange;
+      const cx = h.x | 0;
+      const cy = h.y | 0;
+      let bx = 0;
+      let by = 0;
+      let found = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = cx + dx * r;
+          const ny = cy + dy * r;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const ni = ny * W + nx;
+          if (owner[ni] === 0 && tile.isLand(world.terrain[ni])) {
+            found++;
+            if (rand() < 1 / found) { bx = dx; by = dy; } // reservoir 風に1方向選択
+          }
+        }
+      }
+      if (found > 0) {
+        const bl = Math.hypot(bx, by) || 1;
+        mx = bx / bl;
+        my = by / bl;
+      } else {
+        mx = rand() - 0.5; // 未開地が近くに無ければ徘徊
+        my = rand() - 0.5;
+      }
+    }
+
+    const len = Math.hypot(mx, my) || 1;
+    const nxp = h.x + (mx / len) * CP.speed;
+    const nyp = h.y + (my / len) * CP.speed;
+    const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
+    const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
+    if (tile.isLand(world.terrain[nty * W + ntx])) {
+      h.hx = nxp - h.x;
+      h.hy = nyp - h.y;
+      h.x = nxp;
+      h.y = nyp;
+    }
+  };
+
+  // 集落から十分離れた肥沃な土地で、まれに新しい集落を興す（文明の外延）。
+  CivSystem.prototype._maybeFoundTown = function (h, k) {
+    if (k.cities.length >= CP.maxSettlements) return;
+    // 最寄り集落までの距離。
+    let d2 = 1e9;
+    for (let c = 0; c < k.cities.length; c++) {
+      const dx = k.cities[c].x + 0.5 - h.x;
+      const dy = k.cities[c].y + 0.5 - h.y;
+      const d = dx * dx + dy * dy;
+      if (d < d2) d2 = d;
+    }
+    if (d2 < CP.newTownDist * CP.newTownDist) return;
+    const world = this.world;
+    const i = (h.y | 0) * world.width + (h.x | 0);
+    const fertile = !world.fertility || world.fertility[i] > 0.3;
+    if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate) {
+      k.cities.push({ x: h.x | 0, y: h.y | 0, capital: false });
     }
   };
 

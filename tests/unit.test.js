@@ -265,24 +265,25 @@ test("FireSystem: active 集合が maxFires を超えない", () => {
   }
 });
 
-test("CivSystem: 建国して領土が拡張する（陸地のみ）", () => {
+test("CivSystem: 建国で入植者が生まれ、歩いた陸地が領土になる（水は不可）", () => {
   const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
   const w = new Game.World(30, 30);
   w.terrain.fill(Game.TERRAIN.GRASS);
-  // 一部を海にして拡張が陸地に限られることを確認。
+  // 一部を海にして、領土が陸地に限られることを確認。
   for (let y = 0; y < 30; y++) w.setTerrain(15, y, Game.TERRAIN.DEEP_WATER);
   const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
 
   // 水には建国できない。
   assert.equal(civ.foundAt(15, 5), -1, "水に建国してはいけない");
-  // 陸地に建国。
+  // 陸地に建国 → 入植者が湧く。
   const id = civ.foundAt(5, 5);
   assert.ok(id > 0, "建国できていない");
   assert.equal(w.getOwner(5, 5), id);
+  assert.ok(civ.people.length >= 1, "入植者が生成されていない");
 
-  for (let t = 0; t < 40; t++) civ.tick(w);
-  const k = civ.kingdoms[id];
-  assert.ok(k.tileCount > 1, "領土が拡張していない");
+  const t0 = civ.kingdoms[id].tileCount;
+  for (let t = 0; t < 120; t++) civ.tick(w);
+  assert.ok(civ.kingdoms[id].tileCount > t0, "人間が歩いても領土が増えない");
   // 海(x=15列)は決して領有されない。
   for (let y = 0; y < 30; y++) {
     assert.equal(w.getOwner(15, y), 0, "海を領有してしまった");
@@ -303,21 +304,20 @@ test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   assert.equal(civ.kingdoms.length - 1, founded);
 });
 
-test("CivSystem: 隣接する二国が国境で接触する", () => {
-  const Game = loadCore({ mapWidth: 24, mapHeight: 12 });
-  const w = new Game.World(24, 12);
+test("CivSystem: 二国の入植者が広がり、やがて大半の土地が領有される", () => {
+  const Game = loadCore({ mapWidth: 24, mapHeight: 16 });
+  const w = new Game.World(24, 16);
   w.terrain.fill(Game.TERRAIN.GRASS);
   const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
-  const a = civ.foundAt(3, 6);
-  const b = civ.foundAt(20, 6);
-  for (let t = 0; t < 80; t++) civ.tick(w);
-  // 両国とも拡張し、合計領有数がマップを概ね埋める。
+  const a = civ.foundAt(3, 8);
+  const b = civ.foundAt(20, 8);
+  for (let t = 0; t < 700; t++) civ.tick(w);
   const ka = civ.kingdoms[a];
   const kb = civ.kingdoms[b];
-  assert.ok(ka.tileCount > 10 && kb.tileCount > 10, "両国が十分拡張していない");
+  assert.ok(ka.tileCount > 20 && kb.tileCount > 20, "両国が十分広がっていない: " + ka.tileCount + "/" + kb.tileCount);
   let owned = 0;
   for (let i = 0; i < w.owner.length; i++) if (w.owner[i] !== 0) owned++;
-  assert.ok(owned > w.owner.length * 0.5, "領土が広がっていない: " + owned);
+  assert.ok(owned > w.owner.length * 0.4, "領土が広がっていない: " + owned);
 });
 
 test("Camera: screenToWorld と worldToScreen は逆変換", () => {
@@ -412,24 +412,30 @@ test("lighting: 正午は明るく深夜は暗い、朝夕は暖色", () => {
   assert.ok(dawn.darkness < 0.05, "朝は明るい寄り: " + dawn.darkness);
 });
 
-test("CivSystem: 市民エージェントが生成され領土を歩く", () => {
+test("CivSystem: 人間が自律的に動き、王国の消滅で人も消える", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   const w = new Game.World(40, 40);
   w.terrain.fill(Game.TERRAIN.GRASS);
   const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
   const id = civ.foundAt(20, 20);
-  civ.kingdoms[id].population = 6000; // 目標人数を引き上げ
-  for (let t = 0; t < 200; t++) civ.tick(w);
-  assert.ok(civ.people.length > 0, "市民が生成されない");
+  assert.ok(civ.people.length > 0, "入植者がいない");
+  // 位置を記録し、ティックで実際に移動することを確認。
+  const before = civ.people.map((p) => p.x + "," + p.y);
+  for (let t = 0; t < 30; t++) civ.tick(w);
+  let moved = 0;
+  for (let i = 0; i < Math.min(before.length, civ.people.length); i++) {
+    if (civ.people[i].x + "," + civ.people[i].y !== before[i]) moved++;
+  }
+  assert.ok(moved > 0, "人間が動いていない");
   // すべて当該王国所属で、マップ内。
   for (const p of civ.people) {
     assert.equal(p.kid, id);
-    assert.ok(p.x >= 0 && p.x < 40 && p.y >= 0 && p.y < 40, "範囲外の市民");
+    assert.ok(p.x >= 0 && p.x < 40 && p.y >= 0 && p.y < 40, "範囲外の人間");
   }
-  // 王国が滅べば市民も消える。
+  // 王国が滅べば人も消える。
   civ.kingdoms[id].alive = false;
   for (let t = 0; t < 5; t++) civ.tick(w);
-  assert.equal(civ.people.length, 0, "滅亡後も市民が残る");
+  assert.equal(civ.people.length, 0, "滅亡後も人が残る");
 });
 
 test("VegetationSystem: 焼け地が再成長して草原に回復する", () => {
@@ -466,22 +472,25 @@ test("VegetationSystem: graze で fertility が減り、空なら 0 を返す", 
   assert.equal(veg.graze(i), 0, "枯渇時は 0");
 });
 
-test("CivSystem: 人口が成長し、stats を集計できる", () => {
-  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
-  const w = new Game.World(40, 40);
+test("CivSystem: 確保した土地に応じて人口が増え、stats を集計できる", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
+  const w = new Game.World(60, 60);
   w.terrain.fill(Game.TERRAIN.GRASS);
   const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
-  const id = civ.foundAt(20, 20);
+  const id = civ.foundAt(30, 30);
   const k = civ.kingdoms[id];
   assert.ok(k.name && k.name.length > 0, "王国名が付く");
   assert.equal(k.cities.length, 1, "首都が1つ");
   assert.ok(k.cities[0].capital, "首都フラグ");
-  const pop0 = k.population;
-  for (let t = 0; t < 60; t++) civ.tick(w);
-  assert.ok(k.population > pop0, "人口が成長していない");
+  const pop0 = k.humanCount; // = popStart
+  // 領土が十分広がるまで動かすと、容量が増え人口も増える。
+  for (let t = 0; t < 900; t++) civ.tick(w);
+  assert.ok(k.tileCount > 100, "領土が広がっていない: " + k.tileCount);
+  assert.ok(k.humanCount > pop0, "人口が増えていない: " + k.humanCount);
   const s = civ.stats();
   assert.equal(s.kingdoms, 1);
-  assert.ok(s.population >= Math.round(k.population) - 1, "総人口集計");
+  assert.equal(s.population, k.humanCount, "総人口=人間数");
+  assert.equal(s.cities, k.cities.length);
 });
 
 test("godpowers: 災害・生態ツールが登録されている", () => {
