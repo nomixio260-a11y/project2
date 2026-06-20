@@ -34,6 +34,12 @@
     this.territoryCtx = this.territoryCanvas.getContext("2d");
     this.territoryDirty = [];
 
+    // 国境オーバーレイ用オフスクリーン（所有者が変わる辺だけ濃く着色）。
+    this.borderCanvas = document.createElement("canvas");
+    this.borderCanvas.width = world.width;
+    this.borderCanvas.height = world.height;
+    this.borderCtx = this.borderCanvas.getContext("2d");
+
     this.dirty = []; // 部分更新待ちのタイル {x,y}
     this.entities = null; // 生物ストア（setEntities で接続）
     this.fire = null; // 炎システム（setFire で接続）
@@ -67,6 +73,13 @@
       this.territoryCtx.clearRect(0, 0, world.width, world.height);
     }
     this.territoryDirty.length = 0;
+    // 国境オフスクリーンもサイズ追従しクリア。
+    if (this.borderCanvas.width !== world.width || this.borderCanvas.height !== world.height) {
+      this.borderCanvas.width = world.width;
+      this.borderCanvas.height = world.height;
+    } else {
+      this.borderCtx.clearRect(0, 0, world.width, world.height);
+    }
     this.fullRedraw();
   };
 
@@ -75,16 +88,38 @@
     this.territoryDirty.push(x, y);
   };
 
+  // (x,y) の国境状態を再計算して borderCanvas に反映。
+  // 所有国があり、4近傍に別の所有者（無所属/他国）が接していれば「辺」。
+  Renderer.prototype._updateBorderAt = function (x, y, civ) {
+    const world = this.world, W = world.width, H = world.height, owner = world.owner;
+    const id = owner[y * W + x];
+    const bctx = this.borderCtx;
+    if (id === 0 || !civ) { bctx.clearRect(x, y, 1, 1); return; }
+    let edge = false;
+    if (x > 0 && owner[y * W + x - 1] !== id) edge = true;
+    else if (x < W - 1 && owner[y * W + x + 1] !== id) edge = true;
+    else if (y > 0 && owner[(y - 1) * W + x] !== id) edge = true;
+    else if (y < H - 1 && owner[(y + 1) * W + x] !== id) edge = true;
+    if (!edge) { bctx.clearRect(x, y, 1, 1); return; }
+    const c = civ.colorOf(id);
+    if (!c) { bctx.clearRect(x, y, 1, 1); return; }
+    // 視認性のため明るめに。
+    const br = function (v) { return Math.min(255, (v * 1.25 + 40) | 0); };
+    bctx.fillStyle = "rgb(" + br(c[0]) + "," + br(c[1]) + "," + br(c[2]) + ")";
+    bctx.fillRect(x, y, 1, 1);
+  };
+
   // 領土の dirty を territoryCanvas へ反映（所有者色 or クリア）。
   Renderer.prototype.flushTerritoryDirty = function () {
     if (this.territoryDirty.length === 0) return;
     const world = this.world;
     const civ = Game.state.civ;
     const tctx = this.territoryCtx;
+    const W = world.width, H = world.height;
     for (let k = 0; k < this.territoryDirty.length; k += 2) {
       const x = this.territoryDirty[k];
       const y = this.territoryDirty[k + 1];
-      const id = world.owner[y * world.width + x];
+      const id = world.owner[y * W + x];
       if (id === 0 || !civ) {
         tctx.clearRect(x, y, 1, 1);
       } else {
@@ -96,6 +131,12 @@
           tctx.clearRect(x, y, 1, 1);
         }
       }
+      // 自タイルと4近傍の国境を更新（辺の所在が変わるため）。
+      this._updateBorderAt(x, y, civ);
+      if (x > 0) this._updateBorderAt(x - 1, y, civ);
+      if (x < W - 1) this._updateBorderAt(x + 1, y, civ);
+      if (y > 0) this._updateBorderAt(x, y - 1, civ);
+      if (y < H - 1) this._updateBorderAt(x, y + 1, civ);
     }
     this.territoryDirty.length = 0;
   };
@@ -186,8 +227,11 @@
     ctx.drawImage(this.terrainCanvas, dx, dy, dw, dh);
 
     // 領土オーバーレイ（地形の上、半透明で着色）。
-    ctx.globalAlpha = 0.4;
+    ctx.globalAlpha = 0.32;
     ctx.drawImage(this.territoryCanvas, dx, dy, dw, dh);
+    // 国境（辺だけ濃く描いて領土をはっきりさせる）。
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(this.borderCanvas, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
 
     // 街道（首都と各都市を結ぶ）。

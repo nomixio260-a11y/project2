@@ -348,7 +348,12 @@
       if (h.kid === 0) { this._tickNomad(h, world, tN, i); continue; }
 
       const k = kingdoms[h.kid];
-      if (!k || !k.alive) { h.alive = false; continue; }
+      if (!k || !k.alive) {
+        // 国が滅んだ → 難民（流民）として生き延び、別の国へ加入/再建を目指す。
+        h.kid = 0; h.role = ROLE.EXPLORER;
+        h.home = null; h.farm = null; h.clan = 0;
+        continue;
+      }
 
       // ---- 軽量・毎ティック ----
       h.age++;
@@ -852,9 +857,9 @@
       h.gx = hcx; h.gy = hcy; h.state = 3; return;
     }
 
-    // 4) 役割ごとの目的地・判断。
+    // 4) 役割ごとの目的地・判断（各自ばらけた行動圏を巡回する）。
     if (h.role === ROLE.SOLDIER) {
-      // 交戦中の敵だけを標的にする（平時は警邏）。
+      // 交戦中の敵だけを標的にする。
       const e = this._scan(h.x, h.y, 9, function (o) {
         return (o.kid !== h.kid && o.kid !== 0 && self._atWar(h.kid, o.kid)) ? 2 : 0;
       }).best;
@@ -864,38 +869,45 @@
         return ow !== 0 && ow !== h.kid && self._atWar(h.kid, ow);
       });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 5; return; }
-      h.gx = k.cities[0].x; h.gy = k.cities[0].y; h.state = 5; return; // 警邏
+      // 平時は領内を広く警邏（外周寄りを巡回）。
+      this._ringGoal(h, world, hcx, hcy, CP.tether * 0.4, CP.tether);
+      h.state = 5; return;
     }
     if (h.role === ROLE.EXPLORER) {
       this._maybeFoundTown(h, k); // 遠地で新集落
       const t = this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow) { return ow === 0 && tile.isLand(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 4; return; }
-      h.gx = (h.x + (this.rand() - 0.5) * 8) | 0;
-      h.gy = (h.y + (this.rand() - 0.5) * 8) | 0;
+      this._ringGoal(h, world, hcx, hcy, 4, CP.tether); // 未開地が無ければ領内を広く移動
       h.state = 4; return;
     }
     if (h.role === ROLE.BUILDER) {
-      // 自分の町に詰めて発展させる。遠地に出たら新集落を興す。
-      if (hd2 < 4) {
+      // 町に詰めて発展させる。遠地に出たら新集落を興す。
+      if (hd2 < 9) {
         if (this.rand() < 0.1) {
           for (let c = 0; c < k.cities.length; c++) {
             const dx = k.cities[c].x + 0.5 - h.x, dy = k.cities[c].y + 0.5 - h.y;
-            if (dx * dx + dy * dy < 4 && k.cities[c].level < 6) { k.cities[c].level++; break; }
+            if (dx * dx + dy * dy < 9 && k.cities[c].level < 6) { k.cities[c].level++; break; }
           }
         }
       } else {
         this._maybeFoundTown(h, k);
       }
-      h.gx = hcx; h.gy = hcy; h.state = 6; return;
+      // 町なかをうろつく（中心に固まらないよう小さく散らす）。
+      this._ringGoal(h, world, hcx, hcy, 0, 4);
+      h.state = 6; return;
     }
-    // FARMER（既定）: 町の近くに自分の耕作地を持ち、そこに通って耕す（定住）。
-    if (!h.farm) {
-      const plot = this._nearestTile({ x: hcx + 0.5, y: hcy + 0.5 }, world, 6, function (terr, ow) {
-        return tile.isEdible(terr) && (ow === 0 || ow === h.kid);
-      });
-      h.farm = plot || { x: hcx, y: hcy };
-    }
-    h.gx = h.farm.x; h.gy = h.farm.y; h.state = 7;
+    // FARMER（既定）: 町を囲む農地を耕しに広がる（毎回別の区画へ通う）。
+    this._ringGoal(h, world, hcx, hcy, 2, CP.tetherSettled);
+    h.state = 7;
+  };
+
+  // (cx,cy) を中心とした [minR,maxR] のリング内のランダムな点を目標にする。
+  // 役割ごとの行動圏に人々を散らし、絶えず動かすためのもの。
+  CivSystem.prototype._ringGoal = function (h, world, cx, cy, minR, maxR) {
+    const ang = this.rand() * Math.PI * 2;
+    const dist = minR + this.rand() * (maxR - minR);
+    h.gx = Game.utils.clamp((cx + Math.cos(ang) * dist) | 0, 0, world.width - 1);
+    h.gy = Game.utils.clamp((cy + Math.sin(ang) * dist) | 0, 0, world.height - 1);
   };
 
   // 半径 r 内で pred(terrain, owner) を満たす最寄りタイル（無ければ null）。
@@ -1000,6 +1012,19 @@
           if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < CP.conflictChance) {
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
             if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
+            // 都市の攻略: 足下に敵都市があれば占領（自国の都市になる）。
+            if (other.cities.length > 1 || other.tileCount > 1) {
+              for (let c = 0; c < other.cities.length; c++) {
+                if (other.cities[c].x === tx && other.cities[c].y === ty) {
+                  const captured = other.cities[c];
+                  other.cities.splice(c, 1);
+                  if (other.cities.length === 0) other.cities.push({ x: tx, y: ty, capital: true, level: 1 });
+                  captured.capital = false;
+                  k.cities.push(captured);
+                  break;
+                }
+              }
+            }
             if (other.tileCount <= 0) other.alive = false;
           }
         }
