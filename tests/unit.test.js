@@ -529,7 +529,7 @@ test("lighting: 正午は明るく深夜は暗い、朝夕は暖色", () => {
   assert.ok(dawn.darkness < 0.05, "朝は明るい寄り: " + dawn.darkness);
 });
 
-test("CivSystem: 人間が自律的に動き、王国の消滅で人も消える", () => {
+test("CivSystem: 人間が自律的に動き、王国の消滅で住民は難民化する", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   const w = new Game.World(40, 40);
   w.terrain.fill(Game.TERRAIN.GRASS);
@@ -544,15 +544,18 @@ test("CivSystem: 人間が自律的に動き、王国の消滅で人も消える
     if (civ.people[i].x + "," + civ.people[i].y !== before[i]) moved++;
   }
   assert.ok(moved > 0, "人間が動いていない");
-  // すべて当該王国所属で、マップ内。
   for (const p of civ.people) {
     assert.equal(p.kid, id);
     assert.ok(p.x >= 0 && p.x < 40 && p.y >= 0 && p.y < 40, "範囲外の人間");
   }
-  // 王国が滅べば人も消える。
+  // 王国が滅んでも住民は死なず、難民(無所属)として生き延びる。
+  const pop = civ.people.length;
   civ.kingdoms[id].alive = false;
   for (let t = 0; t < 5; t++) civ.tick(w);
-  assert.equal(civ.people.length, 0, "滅亡後も人が残る");
+  assert.ok(civ.people.length >= pop - 2, "難民が消えてしまった");
+  for (const p of civ.people) {
+    assert.equal(p.kid, 0, "滅亡国の住民が市民のまま残っている");
+  }
 });
 
 test("WeatherSystem: 雨が湿度と植生を潤す", () => {
