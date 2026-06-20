@@ -196,36 +196,182 @@
     // 生物オーバーレイ。
     this.drawEntities(camera);
 
-    // ブラシのプレビュー（カーソル位置の円）。
+    // 市民（人間）エージェント。
+    this.drawPeople(camera);
+
+    // 昼夜の環境光（全要素の上に重ねて統一した照明にする）。
+    this.drawDayNight(camera);
+
+    // ブラシのプレビュー（カーソル位置の円。照明の影響を受けない）。
     this.drawBrushPreview(camera);
   };
 
-  // 生物を可視範囲だけ点で描画。
+  // 生物を可視範囲だけ描画。負荷軽減のため2段階 LOD:
+  //  - 遠景(scale<6): 種別ごとに色を1回だけ設定し fillRect で一括（高速）。
+  //  - 近景(scale>=6): 個体ごとに体格・向き付きの形状で描く（可視数は少ない）。
   Renderer.prototype.drawEntities = function (camera) {
     const e = this.entities;
     if (!e || e.live === 0) return;
     const tile = Game.config.tilePx;
     const scale = tile * camera.zoom;
-    if (scale < 1.2) return; // 縮小しすぎたら省略（LOD）
+    if (scale < 0.8) return; // 縮小しすぎたら省略
     const range = camera.visibleTileRange();
     const ctx = this.ctx;
-    const r = Math.max(1.5, scale * 0.35);
     const SP = Game.SPECIES;
+    const n = e.count;
 
-    for (let i = 0; i < e.count; i++) {
+    if (scale < 6) {
+      // 遠景: 種別ごとに一括（fillStyle 切替を最小化）。
+      const px = Math.max(1, scale * 0.55);
+      const half = px * 0.5;
+      const colors = ["#f2e3b0", "#e0473a"]; // [草食, 肉食]
+      for (let sp = 0; sp < 2; sp++) {
+        ctx.fillStyle = colors[sp];
+        for (let i = 0; i < n; i++) {
+          if (!e.alive[i] || e.type[i] !== sp) continue;
+          const x = e.x[i];
+          const y = e.y[i];
+          if (x < range.x0 || x > range.x1 || y < range.y0 || y > range.y1) continue;
+          const sx = camera.worldToScreenX((x + 0.5) * tile);
+          const sy = camera.worldToScreenY((y + 0.5) * tile);
+          ctx.fillRect(sx - half, sy - half, px, px);
+        }
+      }
+      return;
+    }
+
+    // 近景: 個体ごとに描画（体格・向き）。
+    const base = scale * 0.42;
+    for (let i = 0; i < n; i++) {
       if (!e.alive[i]) continue;
       const x = e.x[i];
       const y = e.y[i];
       if (x < range.x0 || x > range.x1 || y < range.y0 || y > range.y1) continue;
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
-      // 遺伝子(体格)で半径を変える。
       const gene = e.gene[i] || 1;
-      ctx.fillStyle = e.type[i] === SP.PREDATOR ? "#e0473a" : "#f2e3b0";
-      ctx.beginPath();
-      ctx.arc(sx, sy, r * gene, 0, Math.PI * 2);
-      ctx.fill();
+      const r = base * gene;
+      if (e.type[i] === SP.PREDATOR) {
+        // 肉食: 進行方向を向いた三角形。
+        const h = e.heading[i] || 0;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(h);
+        ctx.beginPath();
+        ctx.moveTo(r * 1.4, 0);
+        ctx.lineTo(-r, r * 0.85);
+        ctx.lineTo(-r, -r * 0.85);
+        ctx.closePath();
+        ctx.fillStyle = "#e0473a";
+        ctx.fill();
+        ctx.lineWidth = Math.max(0.5, r * 0.18);
+        ctx.strokeStyle = "rgba(60,10,10,0.65)";
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        // 草食: 丸い体＋淡い縁取り。
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.fillStyle = "#efdca0";
+        ctx.fill();
+        ctx.lineWidth = Math.max(0.5, r * 0.2);
+        ctx.strokeStyle = "rgba(90,70,30,0.55)";
+        ctx.stroke();
+      }
     }
+  };
+
+  // 市民（人間）エージェントをヒト型で描画。一定以上ズーム時のみ。
+  Renderer.prototype.drawPeople = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.people || civ.people.length === 0) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 3) return; // 小さすぎる時は省略
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const people = civ.people;
+    const headR = Math.max(1, scale * 0.16);
+    const bodyH = Math.max(2, scale * 0.5);
+    const bodyW = Math.max(1, scale * 0.22);
+
+    for (let p = 0; p < people.length; p++) {
+      const person = people[p];
+      if (person.x < range.x0 || person.x > range.x1 || person.y < range.y0 || person.y > range.y1) continue;
+      const k = civ.kingdoms[person.kid];
+      if (!k) continue;
+      const col = k.color;
+      const sx = camera.worldToScreenX((person.x + 0.5) * tile);
+      const sy = camera.worldToScreenY((person.y + 0.5) * tile);
+      // 体（王国色）。
+      ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
+      ctx.fillRect(sx - bodyW * 0.5, sy - bodyH * 0.3, bodyW, bodyH);
+      // 影の縁。
+      ctx.lineWidth = 0.6;
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.strokeRect(sx - bodyW * 0.5, sy - bodyH * 0.3, bodyW, bodyH);
+      // 頭。
+      ctx.beginPath();
+      ctx.arc(sx, sy - bodyH * 0.3 - headR, headR, 0, Math.PI * 2);
+      ctx.fillStyle = "#f0d2a8";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.45)";
+      ctx.stroke();
+    }
+  };
+
+  // 昼夜の環境光オーバーレイ。夜は青く暗く、朝夕は暖色。夜は都市が灯る。
+  Renderer.prototype.drawDayNight = function (camera) {
+    if (!Game.lighting) return;
+    const L = Game.lighting(Game.state.clock);
+    const ctx = this.ctx;
+    const W = this.cssW;
+    const H = this.cssH;
+    if (L.darkness > 0.001) {
+      ctx.fillStyle = "rgba(8,14,40," + L.darkness.toFixed(3) + ")";
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (L.twilight > 0.001) {
+      ctx.fillStyle = "rgba(255,150,70," + (L.twilight * 0.16).toFixed(3) + ")";
+      ctx.fillRect(0, 0, W, H);
+    }
+    // 夜は都市が灯る（暗い時だけ加算で光らせる）。
+    if (L.darkness > 0.18) {
+      this._drawCityLights(camera, L.darkness);
+    }
+  };
+
+  Renderer.prototype._drawCityLights = function (camera, darkness) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 1) return;
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const kingdoms = civ.kingdoms;
+    const glow = Math.min(0.85, darkness * 1.4);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive || !k.cities) continue;
+      for (let c = 0; c < k.cities.length; c++) {
+        const city = k.cities[c];
+        if (city.x < range.x0 || city.x > range.x1 || city.y < range.y0 || city.y > range.y1) continue;
+        const sx = camera.worldToScreenX((city.x + 0.5) * tile);
+        const sy = camera.worldToScreenY((city.y + 0.5) * tile);
+        const rad = Math.max(3, scale * (city.capital ? 1.6 : 1.1));
+        const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad);
+        g.addColorStop(0, "rgba(255,210,120," + glow.toFixed(3) + ")");
+        g.addColorStop(1, "rgba(255,180,80,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
   };
 
   // 王国の都市マーカーを描画（首都は大きめ）。

@@ -193,8 +193,11 @@
       }
       const len = Math.hypot(dirX, dirY) || 1;
       const sp = P.speed[type] * (0.8 + 0.4 * gene); // 大型ほど速い
-      let nxp = e.x[i] + (dirX / len) * sp;
-      let nyp = e.y[i] + (dirY / len) * sp;
+      const stepX = (dirX / len) * sp;
+      const stepY = (dirY / len) * sp;
+      e.heading[i] = Math.atan2(stepY, stepX); // 描画の向き
+      let nxp = e.x[i] + stepX;
+      let nyp = e.y[i] + stepY;
       // 水へ踏み込まない（陸生）。境界もクランプ。
       const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
       const nty = Game.utils.clamp(nyp | 0, 0, H - 1);

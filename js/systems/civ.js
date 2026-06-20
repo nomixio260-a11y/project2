@@ -11,14 +11,18 @@
     this.rand = Game.utils.mulberry32((Game.config.seed ^ 0x5bd1e995) >>> 0);
     // index 0 は「無所属」予約。kingdoms[id] が王国レコード。
     this.kingdoms = [null];
+    // 可視化用の市民エージェント（領土を歩く人々）。{x,y,kid,hx,hy}
+    this.people = [];
   }
 
   CivSystem.prototype.setWorld = function (world) {
     this.world = world;
+    this.people.length = 0;
   };
 
   CivSystem.prototype.clear = function () {
     this.kingdoms = [null];
+    this.people.length = 0;
     if (this.world) this.world.owner.fill(0);
   };
 
@@ -77,6 +81,7 @@
       capitalY: y,
       tileCount: 1,
       population: Game.config.sim.popStart,
+      peopleCount: 0, // この王国の市民エージェント数
       cities: [{ x: x, y: y, capital: true }],
       nextCityAt: 300, // この領土数で次の都市を建てる
       frontier: [i],
@@ -196,6 +201,71 @@
         } else {
           k.fhead++; // 拡張済み。次のフロンティアへ。
         }
+      }
+    }
+
+    this._tickPeople();
+  };
+
+  // 市民エージェントの増減と移動。人口に応じて各国に数人を配置し、
+  // 都市の周りを歩かせる（純粋に可視化用。重い生態シミュレーションには含めない）。
+  CivSystem.prototype._tickPeople = function () {
+    const world = this.world;
+    const W = world.width;
+    const H = world.height;
+    const kingdoms = this.kingdoms;
+    const people = this.people;
+    const rand = this.rand;
+    const maxPeople = Game.config.sim.maxPeople;
+
+    // スポーン: 各国の目標人数に満たなければ確率的に追加。
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive) continue;
+      const target = Math.min(6, 1 + ((k.population / 2500) | 0));
+      if (k.peopleCount < target && people.length < maxPeople && rand() < 0.25) {
+        const city = k.cities[(rand() * k.cities.length) | 0];
+        people.push({ x: city.x + 0.5, y: city.y + 0.5, kid: id, hx: 0, hy: 0 });
+        k.peopleCount++;
+      }
+    }
+
+    // 移動: 最寄りの都市へ緩く引き寄せつつランダムウォーク。陸地のみ。
+    for (let p = people.length - 1; p >= 0; p--) {
+      const person = people[p];
+      const k = kingdoms[person.kid];
+      if (!k || !k.alive) {
+        // 王国消滅 → 市民も消える。
+        people[p] = people[people.length - 1];
+        people.pop();
+        if (k) k.peopleCount--;
+        continue;
+      }
+      // 最寄り都市方向。
+      let cx = person.x;
+      let cy = person.y;
+      let bestD = 1e9;
+      for (let c = 0; c < k.cities.length; c++) {
+        const dx = k.cities[c].x + 0.5 - person.x;
+        const dy = k.cities[c].y + 0.5 - person.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; cx = dx; cy = dy; }
+      }
+      // 都市が遠いほど引き寄せを強める。
+      const pull = bestD > 36 ? 0.6 : 0.12;
+      let mx = (rand() - 0.5) + (bestD > 1 ? cx / Math.sqrt(bestD) : 0) * pull;
+      let my = (rand() - 0.5) + (bestD > 1 ? cy / Math.sqrt(bestD) : 0) * pull;
+      const len = Math.hypot(mx, my) || 1;
+      const sp = 0.22;
+      const nxp = person.x + (mx / len) * sp;
+      const nyp = person.y + (my / len) * sp;
+      const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
+      const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
+      if (tile.isLand(world.terrain[nty * W + ntx])) {
+        person.hx = nxp - person.x;
+        person.hy = nyp - person.y;
+        person.x = nxp;
+        person.y = nyp;
       }
     }
   };

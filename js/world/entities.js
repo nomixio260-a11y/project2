@@ -19,6 +19,7 @@
     this.alive = new Uint8Array(capacity);
     this.gene = new Float32Array(capacity); // 体格/俊敏の遺伝子(0.7..1.3)。大=速い・燃費悪い
     this.thirst = new Float32Array(capacity); // 0..1 渇き
+    this.heading = new Float32Array(capacity); // 進行方向(ラジアン)。描画の向き用
 
     this.count = 0; // 使用済みスロットの最大到達点
     this.live = 0; // 現在生存数
