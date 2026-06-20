@@ -37,13 +37,16 @@
     reproRadius: 6,
     thinkInterval: 22,   // 重い意思決定の間隔(ティック)。大きいほど低負荷
     joinRadius: 12,      // 放浪者が既存国を見つけて加入を目指す範囲
-    tether: 34,          // 開拓者・兵士の行動範囲
+    tether: 26,          // 開拓者・兵士の行動範囲
     tetherSettled: 13,   // 農民・建築家は自分の町の近くに定住
     seekRange: 3,
     conflictChance: 0.06,
-    newTownDist: 22,
+    newTownDist: 18,     // この距離を超える自国領で新集落を興す（支配を延伸）
     foundRate: 0.02,
     maxSettlements: 10,
+    controlRadius: 28,   // 都市が支配を及ぼす半径（これを超える辺境は手放す）
+    controlPerLevel: 3,  // 都市の発展度1あたりの支配半径の増分
+    maintainBand: 32,    // 領土メンテのローリング走査の行数/ティック
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
@@ -92,6 +95,7 @@
     this.people = [];   // 人間エージェント
     this._births = [];  // 当ティックに生まれた子（次ティックから処理）
     this._tickN = 0;
+    this._tcursor = 0; // 領土メンテ走査の行カーソル
     // 近傍探索グリッド。
     this._cap = Game.config.sim.maxPeople;
     this._next = new Int32Array(this._cap);
@@ -375,10 +379,13 @@
         h.food += gain;
         if (h.food > 1) h.food = 1;
       }
-      // 足下タイルだけ確保（5タイル走査は思考時に行う）。
+      // 足下タイルを確保（自国領に地続きの未開地のみ＝領土を連続させる）。
       const o0 = world.owner[ti];
       if (o0 === 0) {
-        if (tile.isLand(terr)) { world.owner[ti] = h.kid; k.tileCount++; if (this.renderer) this.renderer.markTerritoryDirty(tx, ty); }
+        if (tile.isLand(terr) && this._adjacentOwner(world, tx, ty, h.kid)) {
+          world.owner[ti] = h.kid; k.tileCount++;
+          if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
+        }
       } else if (o0 !== h.kid) {
         this._contact(h.kid, o0);
       }
@@ -416,8 +423,67 @@
       this._births.length = 0;
     }
 
+    // 領土メンテナンス（支配限界の収縮・亡霊領土の消去・飛び地の穴埋め）。
+    this._maintainTerritory(world);
+
     // 外交（間引いて評価）。
     if ((tN % CP.diploInterval) === 0) this._diplomacy();
+  };
+
+  // 都市 c 群のいずれかの支配圏内に (x,y) があるか。
+  CivSystem.prototype._withinControl = function (k, x, y) {
+    const cities = k.cities;
+    for (let c = 0; c < cities.length; c++) {
+      const r = CP.controlRadius + (cities[c].level || 1) * CP.controlPerLevel;
+      const dx = cities[c].x - x, dy = cities[c].y - y;
+      if (dx * dx + dy * dy <= r * r) return true;
+    }
+    return false;
+  };
+
+  // 未開の陸地 (x,y) が単一国に囲まれていればその国IDを返す（飛び地の穴埋め用）。
+  CivSystem.prototype._enclaveOwner = function (world, x, y) {
+    const W = world.width, H = world.height, owner = world.owner, terr = world.terrain;
+    let p = -1, landN = 0;
+    const nb = [x - 1, y, x + 1, y, x, y - 1, x, y + 1];
+    for (let n = 0; n < 8; n += 2) {
+      const nx = nb[n], ny = nb[n + 1];
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) return 0;
+      const ni = ny * W + nx;
+      if (!tile.isLand(terr[ni])) continue;
+      landN++;
+      const o = owner[ni];
+      if (o === 0) return 0;
+      if (p < 0) p = o; else if (o !== p) return 0;
+    }
+    return landN >= 3 && p > 0 ? p : 0;
+  };
+
+  // 領土メンテ: ローリング走査で支配圏外の辺境を手放し、亡霊領土を消し、飛び地を埋める。
+  CivSystem.prototype._maintainTerritory = function (world) {
+    const W = world.width, H = world.height, owner = world.owner;
+    const ks = this.kingdoms;
+    const rndr = this.renderer;
+    const y0 = this._tcursor;
+    const y1 = Math.min(H, y0 + CP.maintainBand);
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const o = owner[i];
+        if (o > 0) {
+          const k = ks[o];
+          if (!k || !k.alive) { // 滅亡国の亡霊領土を消す
+            owner[i] = 0; if (rndr) rndr.markTerritoryDirty(x, y);
+          } else if (!this._withinControl(k, x, y)) { // 支配限界を超えた辺境を手放す
+            owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
+          }
+        } else if (tile.isLand(world.terrain[i])) {
+          const fill = this._enclaveOwner(world, x, y); // 単一国に囲まれた飛び地を吸収
+          if (fill > 0) { owner[i] = fill; ks[fill].tileCount++; if (rndr) rndr.markTerritoryDirty(x, y); }
+        }
+      }
+    }
+    this._tcursor = y1 >= H ? 0 : y1;
   };
 
   // ===== 外交（国システム）=====
@@ -471,6 +537,8 @@
     for (let a = 1; a < ks.length; a++) {
       const ka = ks[a];
       if (!ka || !ka.alive) continue;
+      // 無人・無領土の国は消滅。
+      if (ka.humanCount <= 0 || ka.tileCount <= 0) { ka.alive = false; continue; }
       const tr = ka.trait;
       // 富: 領土と都市から収入（商才で増す）。
       ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6) * tr.trade;
@@ -778,10 +846,13 @@
     });
   };
 
-  // 4近傍の無所属の陸地を確保する（足下は毎ティック処理済み）。思考時のみ呼ぶ。
+  // 自国領に地続きの未開地のみ確保する（足下が自国領のときだけ周囲へ拡張）。
+  // これにより領土は都市から連続した塊として広がる（斑点・飛び地を防ぐ）。
   CivSystem.prototype._claimNeighbors = function (h, k, world) {
     const W = world.width, H = world.height, owner = world.owner, id = k.id;
     const cx = h.x | 0, cy = h.y | 0;
+    // 足下が自国領でなければ拡張しない（連続性の担保）。
+    if (owner[cy * W + cx] !== id) return;
     const nb = [cx - 1, cy, cx + 1, cy, cx, cy - 1, cx, cy + 1];
     for (let n = 0; n < 8; n += 2) {
       const x = nb[n], y = nb[n + 1];
@@ -1013,19 +1084,22 @@
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
             if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
             // 都市の攻略: 足下に敵都市があれば占領（自国の都市になる）。
-            if (other.cities.length > 1 || other.tileCount > 1) {
-              for (let c = 0; c < other.cities.length; c++) {
-                if (other.cities[c].x === tx && other.cities[c].y === ty) {
-                  const captured = other.cities[c];
-                  other.cities.splice(c, 1);
-                  if (other.cities.length === 0) other.cities.push({ x: tx, y: ty, capital: true, level: 1 });
-                  captured.capital = false;
-                  k.cities.push(captured);
-                  break;
+            for (let c = 0; c < other.cities.length; c++) {
+              if (other.cities[c].x === tx && other.cities[c].y === ty) {
+                const captured = other.cities[c];
+                const wasCapital = c === 0;
+                other.cities.splice(c, 1);
+                captured.capital = false;
+                k.cities.push(captured);
+                if (other.cities.length === 0) {
+                  other.alive = false; // 最後の都市を失い国家崩壊
+                } else if (wasCapital) {
+                  other.cities[0].capital = true; // 遷都
                 }
+                break;
               }
             }
-            if (other.tileCount <= 0) other.alive = false;
+            if (other.alive && other.tileCount <= 0) other.alive = false;
           }
         }
       }
