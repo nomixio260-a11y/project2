@@ -33,6 +33,7 @@
       ["pred", "肉食"],
       ["kingdoms", "王国"],
       ["civpop", "人口"],
+      ["nomads", "放浪"],
       ["fires", "延焼"],
       ["fps", "FPS"],
     ];
@@ -107,13 +108,15 @@
     }
     let kingdoms = 0;
     let civpop = 0;
+    let nomads = 0;
     if (st.civ && st.civ.stats) {
       const cs = st.civ.stats();
       kingdoms = cs.kingdoms;
       civpop = cs.population;
+      nomads = cs.nomads || 0;
     }
     const fires = st.fire && st.fire.active ? st.fire.active.length : 0;
-    return { herb: herb, pred: pred, pop: herb + pred, kingdoms: kingdoms, civpop: civpop, fires: fires };
+    return { herb: herb, pred: pred, pop: herb + pred, kingdoms: kingdoms, civpop: civpop, nomads: nomads, fires: fires };
   };
 
   Hud._render = function () {
@@ -123,6 +126,7 @@
     this.rows.pred.textContent = String(s.pred);
     this.rows.kingdoms.textContent = String(s.kingdoms);
     this.rows.civpop.textContent = s.civpop >= 1000 ? (s.civpop / 1000).toFixed(1) + "k" : String(s.civpop);
+    this.rows.nomads.textContent = String(s.nomads);
     this.rows.fires.textContent = String(s.fires);
     this.rows.fps.textContent = String(Math.round(this._fps));
 

@@ -304,6 +304,48 @@ test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   assert.equal(civ.kingdoms.length - 1, founded);
 });
 
+test("CivSystem: 放浪者(人間)が集まって自ら国を興す", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.fertility.fill(0.8);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  // 人間を一箇所に多めに撒く（国はまだ無い）。
+  for (let n = 0; n < 12; n++) civ.spawnNomad(20 + ((n % 4) - 2), 20 + (((n / 4) | 0) - 1));
+  assert.equal(civ.kingdoms.length - 1, 0, "最初は国が無い");
+  assert.ok(civ.stats().nomads >= 10, "放浪者がいる");
+  // しばらく動かすと、集団が建国する。
+  let founded = false;
+  for (let t = 0; t < 600 && !founded; t++) {
+    civ.tick(w);
+    if (civ.kingdoms.length - 1 > 0) founded = true;
+  }
+  assert.ok(founded, "放浪者が国を興さなかった");
+  // 建国後は市民(人口)が存在する。
+  assert.ok(civ.stats().population > 0, "市民がいない");
+});
+
+test("CivSystem: 他国領は歩いただけでは奪われない（兵士の前線のみ）", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  // 王国Aの領土を一帯に確保。
+  const A = civ.foundAt(5, 15);
+  // 王国Bの市民を1人、Aの真ん中に強制的に置く（歩いて侵入した想定）。
+  const B = civ.foundAt(25, 15);
+  // Bの全市民を非兵士(開拓者)にし、Aの領土の中心へワープ。
+  const owner0 = w.getOwner(5, 15);
+  assert.ok(owner0 === A);
+  for (const p of civ.people) {
+    if (p.kid === B) { p.role = Game.ROLE.EXPLORER; p.x = 6.5; p.y = 15.5; }
+  }
+  // Aタイル(5,15)を含む周辺がAのまま保たれる（非兵士は奪わない）。
+  for (let t = 0; t < 60; t++) civ.tick(w);
+  // (5,15) は決してBにならない（兵士でない侵入者は領土を奪えない）。
+  assert.notEqual(w.getOwner(5, 15), B, "歩いただけで他国領が奪われた");
+});
+
 test("CivSystem: 二国の入植者が広がり、やがて大半の土地が領有される", () => {
   const Game = loadCore({ mapWidth: 24, mapHeight: 16 });
   const w = new Game.World(24, 16);

@@ -137,16 +137,18 @@
       },
     },
     {
-      id: "found",
-      label: "建国",
+      id: "human",
+      label: "人間",
       hotkey: "k",
       group: "civ",
-      swatch: "#c062d0",
+      swatch: "#e8c8a0",
       apply: function (world, x, y, falloff) {
-        // ブラシ中心付近でのみ建国（1ストロークで乱立させない）。
-        if (falloff < 0.92) return;
+        // 放浪者（無所属の人間）を撒く。集まって自ら国を興す。
+        if (Math.random() > 0.16 * falloff) return;
         const civ = Game.state.civ;
-        if (civ) civ.foundAt(x, y);
+        if (!civ) return;
+        if (!Game.tile.isLand(world.getTerrain(x, y))) return;
+        civ.spawnNomad(x, y);
       },
     },
     {
