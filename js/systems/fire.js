@@ -12,12 +12,14 @@
   const RATE_MIN = 8;
   const RATE_MAX = 16;
   // 地形ごとの延焼しやすさ（隣接タイルが着火する確率）。
+  // 草原は延焼しにくく（自然鎮火しやすい）、森・ジャングルは燃え広がる。
+  // 草原を低くすることで「大陸全体が燃え続ける」暴走を防ぐ。
   function spreadProb(terrain) {
     switch (terrain) {
-      case T.JUNGLE: return 0.22;
-      case T.FOREST: return 0.2;
-      case T.SAVANNA: return 0.11;
-      case T.GRASS: return 0.1;
+      case T.JUNGLE: return 0.15;
+      case T.FOREST: return 0.13;
+      case T.SAVANNA: return 0.035;
+      case T.GRASS: return 0.02;
       default: return 0;
     }
   }
