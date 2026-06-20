@@ -1,6 +1,7 @@
 name: Deploy to GitHub Pages
 
-# 静的サイト（HTML/JS/CSS）をそのまま GitHub Pages へ公開する。
+# 静的サイト（HTML/JS/CSS）を gh-pages ブランチへ公開する。
+# Pages の Source は「Deploy from a branch」→ gh-pages / (root) を使用。
 # ビルド工程は無し（バニラJS・依存ゼロ）。
 
 on:
@@ -11,9 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 # 同時デプロイは1つに制限（実行中をキャンセルしない）。
 concurrency:
@@ -23,25 +22,16 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          # Pages 未設定でもワークフロー側で自動的に有効化する。
-          enablement: true
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
           # リポジトリ全体を公開（index.html がルートにある）。
-          path: "."
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          publish_dir: .
+          # Jekyll 処理を無効化（_ 始まりのファイルも配信）。
+          enable_jekyll: false
