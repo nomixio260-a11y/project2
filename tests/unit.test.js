@@ -397,6 +397,41 @@ test("ClimateSystem: 季節が春→夏→秋→冬と巡る", () => {
   assert.deepEqual(seen, [1, 2, 3, 0]);
 });
 
+test("lighting: 正午は明るく深夜は暗い、朝夕は暖色", () => {
+  const Game = loadCore();
+  const per = Game.config.sim.ticksPerDay;
+  // 正午(tod≈0.5)。
+  const noon = Game.lighting({ tick: Math.round(per * 0.5) });
+  assert.ok(noon.darkness < 0.02, "正午は暗くない: " + noon.darkness);
+  // 深夜(tod≈0)。
+  const midnight = Game.lighting({ tick: 0 });
+  assert.ok(midnight.darkness > 0.4, "深夜は暗い: " + midnight.darkness);
+  // 日の出(tod≈0.25)は暖色(twilight)が立つ。
+  const dawn = Game.lighting({ tick: Math.round(per * 0.25) });
+  assert.ok(dawn.twilight > 0.4, "朝は暖色: " + dawn.twilight);
+  assert.ok(dawn.darkness < 0.05, "朝は明るい寄り: " + dawn.darkness);
+});
+
+test("CivSystem: 市民エージェントが生成され領土を歩く", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const id = civ.foundAt(20, 20);
+  civ.kingdoms[id].population = 6000; // 目標人数を引き上げ
+  for (let t = 0; t < 200; t++) civ.tick(w);
+  assert.ok(civ.people.length > 0, "市民が生成されない");
+  // すべて当該王国所属で、マップ内。
+  for (const p of civ.people) {
+    assert.equal(p.kid, id);
+    assert.ok(p.x >= 0 && p.x < 40 && p.y >= 0 && p.y < 40, "範囲外の市民");
+  }
+  // 王国が滅べば市民も消える。
+  civ.kingdoms[id].alive = false;
+  for (let t = 0; t < 5; t++) civ.tick(w);
+  assert.equal(civ.people.length, 0, "滅亡後も市民が残る");
+});
+
 test("VegetationSystem: 焼け地が再成長して草原に回復する", () => {
   const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
   const w = new Game.World(20, 20);

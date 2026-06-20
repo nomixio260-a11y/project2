@@ -27,9 +27,10 @@ window.Game = window.Game || {};
       speed: 1, // 速度倍率（0.5/1/2/4）
       tickMs: 100, // 1ティック=シム内100ms（速度1で10tick/秒）
       maxSteps: 5, // 1フレームあたりの最大catch-upティック
-      maxEntities: 9000, // 生物の上限
-      maxFires: 9000, // 同時延焼タイルの上限
+      maxEntities: 16000, // 生物の上限
+      maxFires: 12000, // 同時延焼タイルの上限
       maxKingdoms: 96, // 王国数の上限
+      maxPeople: 700, // 可視化用の市民エージェント上限
       claimsPerTick: 40, // 1王国が1ティックに拡張するタイル数の上限（人口で変調）
       conflictChance: 0.05, // 国境での領土反転の基本確率
 
