@@ -767,21 +767,37 @@
 
   CivSystem.prototype._move = function (h, k, world) {
     const W = world.width, H = world.height;
-    let mx = h.gx + 0.5 - h.x;
-    let my = h.gy + 0.5 - h.y;
-    const d = Math.hypot(mx, my);
-    if (d < 0.5) { // 目標到達 → 軽く徘徊
-      mx = this.rand() - 0.5; my = this.rand() - 0.5;
-    } else { mx /= d; my /= d; }
-    const nxp = h.x + mx * CP.speed;
-    const nyp = h.y + my * CP.speed;
+    let dux = h.gx + 0.5 - h.x;
+    let duy = h.gy + 0.5 - h.y;
+    const dist = Math.hypot(dux, duy);
+    let speed = CP.speed;
+    if (dist < 0.6) {
+      // 目標到達 → 直前の向きを保ちつつ緩やかに彷徨う（カクつき防止）。
+      dux = (h.hx || 0) * 6 + (this.rand() - 0.5) * 0.5;
+      duy = (h.hy || 0) * 6 + (this.rand() - 0.5) * 0.5;
+      speed *= 0.45;
+    } else {
+      dux /= dist; duy /= dist;
+    }
+    // 慣性: 直前の進行方向と混ぜて滑らかに曲がる。
+    const pl = Math.hypot(h.hx || 0, h.hy || 0);
+    const pux = pl > 1e-4 ? h.hx / pl : dux;
+    const puy = pl > 1e-4 ? h.hy / pl : duy;
+    let bx = pux * 0.55 + dux * 0.45;
+    let by = puy * 0.55 + duy * 0.45;
+    const bl = Math.hypot(bx, by) || 1;
+    const stepx = (bx / bl) * speed;
+    const stepy = (by / bl) * speed;
+    const nxp = h.x + stepx;
+    const nyp = h.y + stepy;
     const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
     const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
     if (tile.isLand(world.terrain[nty * W + ntx])) {
-      h.hx = nxp - h.x; h.hy = nyp - h.y;
+      h.hx = stepx; h.hy = stepy;
       h.x = nxp; h.y = nyp;
     } else {
-      h.hx = 0; h.hy = 0;
+      // 水際で反転気味に減衰（壁に張り付かない）。
+      h.hx *= -0.4; h.hy *= -0.4;
     }
   };
 

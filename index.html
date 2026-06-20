@@ -44,11 +44,13 @@
     <div class="hint">移動: WASD・矢印・右ドラッグ / ホイールでズーム / 1〜0でツール / Kで人間を置く / Pで一時停止<br>※人間を撒くと、集まって自ら国を興します</div>
   </div>
 
-  <!-- ライブ統計 HUD（hud.js が中身を生成） -->
-  <div id="hud" class="hud"></div>
-
-  <!-- 諸国パネル（nations.js が中身を生成） -->
-  <div id="nations" class="nations"></div>
+  <!-- 右サイドバー: HUD と 諸国パネルを縦に積む（重なり防止） -->
+  <div id="sidebar" class="sidebar">
+    <!-- ライブ統計 HUD（hud.js が中身を生成） -->
+    <div id="hud" class="hud"></div>
+    <!-- 諸国パネル（nations.js が中身を生成） -->
+    <div id="nations" class="nations"></div>
+  </div>
 
   <!-- ミニマップ（minimap.js が描画） -->
   <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
