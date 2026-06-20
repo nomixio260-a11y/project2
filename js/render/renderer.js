@@ -237,6 +237,9 @@
     // 街道（首都と各都市を結ぶ）。
     this.drawRoads(camera);
 
+    // 交易路（同盟国の首都を結ぶ金色の線）。
+    this.drawTradeRoutes(camera);
+
     // 炎オーバーレイ（地形の上、生物の下）。
     this.drawFire(camera);
 
@@ -489,6 +492,39 @@
         ctx.stroke();
       }
     }
+    ctx.restore();
+  };
+
+  // 交易路: 同盟国どうしの首都を金色の点線で結ぶ。
+  Renderer.prototype.drawTradeRoutes = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 1.4) return;
+    const ctx = this.ctx;
+    const ks = civ.kingdoms;
+    ctx.save();
+    ctx.strokeStyle = "rgba(240,200,90,0.55)";
+    ctx.lineWidth = Math.max(1, scale * 0.14);
+    ctx.setLineDash([Math.max(3, scale), Math.max(2, scale * 0.7)]);
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive || !k.allies) continue;
+      const c0 = k.cities[0];
+      for (const bStr in k.allies) {
+        const b = +bStr;
+        if (b <= id) continue;
+        const kb = ks[b];
+        if (!kb || !kb.alive) continue;
+        const c1 = kb.cities[0];
+        ctx.beginPath();
+        ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
+        ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
     ctx.restore();
   };
 
