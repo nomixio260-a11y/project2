@@ -89,16 +89,21 @@
       },
     },
     {
-      id: "scorch",
-      label: "破壊",
+      id: "ignite",
+      label: "着火",
       hotkey: "8",
-      swatch: C[T.SCORCHED],
+      swatch: "#ff6a1f",
       apply: function (world, x, y) {
-        // 焼け地化。水中は対象外。
         const i = world.idx(x, y);
-        if (world.terrain[i] === T.DEEP_WATER || world.terrain[i] === T.SHALLOW_WATER) return;
-        world.terrain[i] = T.SCORCHED;
-        world.moisture[i] = 0.05;
+        const t = world.terrain[i];
+        const fire = Game.state.fire;
+        if (fire && Game.tile.isFlammable(t)) {
+          fire.ignite(x, y); // 可燃地形は延焼する炎を着火
+        } else if (!Game.tile.isWater(t)) {
+          // 不燃地形は即焼け地化（水中は対象外）。
+          world.terrain[i] = T.SCORCHED;
+          world.moisture[i] = 0.05;
+        }
       },
     },
     {

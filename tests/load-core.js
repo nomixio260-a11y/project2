@@ -33,6 +33,7 @@ function loadCore(overrides) {
     "js/world/entities.js",
     "js/render/camera.js",
     "js/systems/creatures.js",
+    "js/systems/fire.js",
   ];
   for (const f of files) {
     vm.runInContext(fs.readFileSync(path.join(root, f), "utf8"), ctx, { filename: f });

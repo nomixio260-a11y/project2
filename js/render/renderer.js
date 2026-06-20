@@ -26,12 +26,18 @@
 
     this.dirty = []; // 部分更新待ちのタイル {x,y}
     this.entities = null; // 生物ストア（setEntities で接続）
+    this.fire = null; // 炎システム（setFire で接続）
     this.fullRedraw(); // 初回は全タイルをバッファへ
   }
 
   // 生物ストアを接続（毎フレーム描画される）。
   Renderer.prototype.setEntities = function (entities) {
     this.entities = entities;
+  };
+
+  // 炎システムを接続（オーバーレイ描画）。
+  Renderer.prototype.setFire = function (fire) {
+    this.fire = fire;
   };
 
   // 別の world に差し替え（再生成時）。
@@ -130,7 +136,10 @@
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.terrainCanvas, dx, dy, dw, dh);
 
-    // 生物オーバーレイ（地形ブリットの上）。
+    // 炎オーバーレイ（地形の上、生物の下）。
+    this.drawFire(camera);
+
+    // 生物オーバーレイ。
     this.drawEntities(camera);
 
     // ブラシのプレビュー（カーソル位置の円）。
@@ -161,6 +170,39 @@
       ctx.arc(sx, sy, r, 0, Math.PI * 2);
       ctx.fill();
     }
+  };
+
+  // 燃焼中タイルを可視範囲だけ揺らぐグローで描画。
+  Renderer.prototype.drawFire = function (camera) {
+    const fire = this.fire;
+    if (!fire || fire.active.length === 0) return;
+    const W = this.world.width;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    const range = camera.visibleTileRange();
+    const active = fire.active;
+    const burn = fire.burn;
+    const ctx = this.ctx;
+    const phase = fire.phase * 0.006;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter"; // 加算で光らせる
+    for (let k = 0; k < active.length; k++) {
+      const i = active[k];
+      if (burn[i] === 0) continue;
+      const x = i % W;
+      const y = (i / W) | 0;
+      if (x < range.x0 || x > range.x1 || y < range.y0 || y > range.y1) continue;
+      const sx = camera.worldToScreenX(x * tile);
+      const sy = camera.worldToScreenY(y * tile);
+      // タイルごとに位相をずらした炎のちらつき。
+      const flick = 0.6 + 0.4 * Math.sin(phase + (x * 1.3 + y * 0.7));
+      ctx.fillStyle = "rgba(255," + (90 + ((flick * 110) | 0)) + ",30,0.55)";
+      ctx.fillRect(sx, sy, scale, scale);
+      ctx.fillStyle = "rgba(255,230,120," + (0.25 * flick).toFixed(3) + ")";
+      ctx.fillRect(sx + scale * 0.25, sy + scale * 0.25, scale * 0.5, scale * 0.5);
+    }
+    ctx.restore();
   };
 
   Renderer.prototype.drawBrushPreview = function (camera) {

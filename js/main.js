@@ -27,6 +27,11 @@
     const creatures = new Game.CreatureSystem(entities, world, renderer);
     engine.systems.push(creatures);
 
+    // 炎システム。
+    const fire = new Game.FireSystem(world, renderer);
+    renderer.setFire(fire);
+    engine.systems.push(fire);
+
     // 共有状態へ格納。
     Game.state.world = world;
     Game.state.camera = camera;
@@ -36,6 +41,7 @@
     Game.state.brush = brush;
     Game.state.entities = entities;
     Game.state.creatures = creatures;
+    Game.state.fire = fire;
     Game.state.activeToolId = "raise";
 
     // UI からも呼べる公開 API。
@@ -75,6 +81,7 @@
       // シミュレーション状態をリセット。
       entities.clear();
       creatures.setWorld(w);
+      fire.setWorld(w);
       camera.fitToMap();
     };
 

@@ -210,6 +210,61 @@ test("CreatureSystem: 上限を超えて繁殖しない", () => {
   assert.ok(ent.live <= 6, "maxEntities を超えない: " + ent.live);
 });
 
+test("FireSystem: 可燃地形のみ着火し、延焼して焼け地になる", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
+  const w = new Game.World(20, 20);
+  w.terrain.fill(Game.TERRAIN.FOREST);
+  const fire = new Game.FireSystem(w, { markDirty() {} });
+
+  // 水には着火しない。
+  w.setTerrain(2, 2, Game.TERRAIN.DEEP_WATER);
+  assert.equal(fire.ignite(2, 2), false, "水に着火してはいけない");
+  // 森には着火する。
+  assert.equal(fire.ignite(10, 10), true);
+  assert.equal(fire.active.length, 1);
+
+  // 多数ティックで燃え広がり、やがて焼け地が現れる。
+  let scorched = 0;
+  for (let t = 0; t < 60; t++) fire.tick(w);
+  for (let i = 0; i < w.terrain.length; i++) {
+    if (w.terrain[i] === Game.TERRAIN.SCORCHED) scorched++;
+  }
+  assert.ok(scorched > 0, "焼け地が発生していない");
+});
+
+test("FireSystem: 水を越えて延焼しない", () => {
+  const Game = loadCore({ mapWidth: 5, mapHeight: 1 });
+  const w = new Game.World(5, 1);
+  // [森][水][森][森][森] → 左の森に着火しても水を越えない。
+  w.terrain.set([
+    Game.TERRAIN.FOREST,
+    Game.TERRAIN.DEEP_WATER,
+    Game.TERRAIN.FOREST,
+    Game.TERRAIN.FOREST,
+    Game.TERRAIN.FOREST,
+  ]);
+  const fire = new Game.FireSystem(w, { markDirty() {} });
+  fire.ignite(0, 0);
+  for (let t = 0; t < 80; t++) fire.tick(w);
+  // 右側3つの森は燃えず残る（水で遮断）。
+  assert.equal(w.getTerrain(2, 0), Game.TERRAIN.FOREST);
+  assert.equal(w.getTerrain(3, 0), Game.TERRAIN.FOREST);
+  assert.equal(w.getTerrain(4, 0), Game.TERRAIN.FOREST);
+});
+
+test("FireSystem: active 集合が maxFires を超えない", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  Game.config.sim.maxFires = 50;
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.JUNGLE);
+  const fire = new Game.FireSystem(w, { markDirty() {} });
+  fire.ignite(20, 20);
+  for (let t = 0; t < 100; t++) {
+    fire.tick(w);
+    assert.ok(fire.active.length <= 50, "maxFires超過: " + fire.active.length);
+  }
+});
+
 test("Camera: screenToWorld と worldToScreen は逆変換", () => {
   const Game = loadCore();
   const cam = new Game.Camera(800, 600);
