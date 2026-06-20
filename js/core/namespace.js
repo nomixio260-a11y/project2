@@ -47,6 +47,12 @@ window.Game = window.Game || {};
       popPerTile: 9, // 1タイルあたりの人口容量
       popGrowth: 0.02, // 人口の対数成長率/ティック
       popStart: 12, // 建国時の初期人口
+
+      // 天候
+      cloudCount: 6, // 同時に流れる雲の数
+      rainMoisture: 0.06, // 降雨で上がる湿度/ティック
+      rainFertility: 0.05, // 降雨で上がる植生/ティック
+      lightningChance: 0.015, // 雲ごとの落雷確率/ティック
     },
 
     // 生成パラメータ

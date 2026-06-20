@@ -90,15 +90,19 @@
     const mt = Game.state.mouseTile;
     const world = Game.state.world;
     if (mt.x >= 0 && world.inBounds(mt.x, mt.y)) {
-      const name = Game.TERRAIN_NAMES[world.getTerrain(mt.x, mt.y)];
-      let txt =
-        "(" + mt.x + ", " + mt.y + ")  " + name +
-        "  標高 " + world.getElevation(mt.x, mt.y).toFixed(2);
-      // 領有王国があれば併記。
+      const i = mt.y * world.width + mt.x;
+      const name = Game.TERRAIN_NAMES[world.terrain[i]];
+      let txt = "(" + mt.x + "," + mt.y + ") " + name +
+        " 標高" + world.elevation[i].toFixed(2) +
+        " 気温" + world.temperature[i].toFixed(2) +
+        " 湿度" + world.moisture[i].toFixed(2);
+      if (world.fertility) txt += " 植生" + world.fertility[i].toFixed(2);
+      // 領有国（国名）。
       const civ = Game.state.civ;
       if (civ && world.owner) {
-        const id = world.owner[mt.y * world.width + mt.x];
-        if (id > 0) txt += "  王国#" + id;
+        const id = world.owner[i];
+        const k = id > 0 ? civ.kingdoms[id] : null;
+        if (k) txt += "  " + k.name + "（" + (k.religion || "") + "）";
       }
       el.textContent = txt;
     } else {

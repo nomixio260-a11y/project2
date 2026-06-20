@@ -63,6 +63,15 @@
 
   const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
   const GOV_TYPES = ["君主制", "共和制", "部族連合", "神権制", "氏族制"];
+  const RELIGIONS = ["太陽信仰", "月の教団", "大地母神", "風の精霊", "祖霊崇拝", "星辰教"];
+  const ERAS = ["石器時代", "青銅器時代", "鉄器時代", "古典時代", "中世", "啓蒙時代"];
+  const TECH_PER_ERA = 60;
+
+  function eraOf(tech) {
+    let i = (tech / TECH_PER_ERA) | 0;
+    if (i >= ERAS.length) i = ERAS.length - 1;
+    return ERAS[i];
+  }
 
   function CivSystem(world, renderer) {
     this.world = world;
@@ -149,6 +158,8 @@
       relations: {}, // 既知の他国 id → 関係値(-100..100)
       wars: {},      // 交戦中の id → true
       allies: {},    // 同盟中の id → true
+      tech: 0,       // 技術力（時代の指標）
+      religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
       alive: true,
     };
     this.kingdoms.push(k);
@@ -417,6 +428,12 @@
   // イベント駆動の外交評価。関係値を「傾き」として開戦・同盟・講和の確率を変調する。
   CivSystem.prototype._diplomacy = function () {
     const ks = this.kingdoms;
+    // 技術の進歩（都市数と人口に比例）。
+    for (let a = 1; a < ks.length; a++) {
+      const ka = ks[a];
+      if (!ka || !ka.alive) continue;
+      ka.tech += ka.cities.length * 0.5 + ka.humanCount * 0.01;
+    }
     for (let a = 1; a < ks.length; a++) {
       const ka = ks[a];
       if (!ka || !ka.alive) continue;
@@ -426,6 +443,12 @@
         const kb = ks[b];
         if (!kb || !kb.alive) continue;
         const rel = ka.relations[b];
+
+        // 文化的影響: 国力が大きく上回る国の宗教が、弱い国へ広まる。
+        if (ka.religion !== kb.religion) {
+          if (ka.humanCount > kb.humanCount * 2 && this.rand() < 0.12) kb.religion = ka.religion;
+          else if (kb.humanCount > ka.humanCount * 2 && this.rand() < 0.12) ka.religion = kb.religion;
+        }
 
         if (ka.wars[b]) {
           // 講和（戦争が長引くほど起きやすい近似として固定確率）。
@@ -459,6 +482,7 @@
         id: a, name: k.name, ruler: k.ruler, gov: k.gov, color: k.color,
         pop: k.humanCount, cities: k.cities.length, tiles: k.tileCount,
         capital: k.cities[0], wars: wars, allies: allies,
+        religion: k.religion, era: eraOf(k.tech), tech: Math.round(k.tech),
       });
     }
     out.sort(function (x, y) { return y.pop - x.pop; });

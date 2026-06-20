@@ -57,9 +57,10 @@ async function openPage(viewport) {
   page.on("console", (msg) => {
     if (msg.type() === "error") errors.push("console.error: " + msg.text());
   });
-  await page.goto(baseURL, { waitUntil: "networkidle0" });
-  // ブートとループ開始を待つ。
-  await page.waitForFunction("window.Game && Game.state && Game.state.world", { timeout: 5000 });
+  // networkidle は描画ループでメインスレッドが飽和すると不安定なため、
+  // DOM 構築完了で待ち、ブート完了は waitForFunction で確認する。
+  await page.goto(baseURL, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction("window.Game && Game.state && Game.state.world", { timeout: 10000 });
   return { page, errors };
 }
 

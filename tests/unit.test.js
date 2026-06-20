@@ -376,6 +376,23 @@ test("CivSystem: 外交（接触→開戦→講和→同盟）と getNations", (
   assert.ok(nA2.allies.indexOf(civ.kingdoms[B].name) >= 0, "同盟国が一覧に出ない");
 });
 
+test("CivSystem: 技術が進歩し時代が進む / 宗教・時代が getNations に出る", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const id = civ.foundAt(15, 15);
+  const k = civ.kingdoms[id];
+  assert.ok(k.religion, "宗教が無い");
+  assert.equal(k.tech, 0, "初期技術は0");
+  // 外交評価を繰り返すと技術が伸びる。
+  for (let t = 0; t < 30; t++) civ._diplomacy();
+  assert.ok(k.tech > 0, "技術が進歩していない");
+  const n = civ.getNations().find(function (x) { return x.id === id; });
+  assert.ok(n.era && n.era.length > 0, "時代が出ない");
+  assert.equal(n.religion, k.religion, "宗教が一致しない");
+});
+
 test("CivSystem: 二国の入植者が広がり、やがて大半の土地が領有される", () => {
   const Game = loadCore({ mapWidth: 24, mapHeight: 16 });
   const w = new Game.World(24, 16);
@@ -508,6 +525,29 @@ test("CivSystem: 人間が自律的に動き、王国の消滅で人も消える
   civ.kingdoms[id].alive = false;
   for (let t = 0; t < 5; t++) civ.tick(w);
   assert.equal(civ.people.length, 0, "滅亡後も人が残る");
+});
+
+test("WeatherSystem: 雨が湿度と植生を潤す", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.moisture.fill(0);
+  w.fertility.fill(0);
+  const weather = new Game.WeatherSystem(w, null);
+  // 中央に停止した大きな雲を1つだけ置く。
+  weather.clouds = [{ x: 20, y: 20, vx: 0, vy: 0, r: 12 }];
+  for (let t = 0; t < 200; t++) weather.tick(w);
+  // 雲の下の領域で湿度・植生が上がっている。
+  let wet = 0, fert = 0;
+  for (let y = 12; y < 28; y++) {
+    for (let x = 12; x < 28; x++) {
+      const i = y * 40 + x;
+      if (w.moisture[i] > 0) wet++;
+      if (w.fertility[i] > 0) fert++;
+    }
+  }
+  assert.ok(wet > 20, "雨で湿度が上がっていない: " + wet);
+  assert.ok(fert > 20, "雨で植生が回復していない: " + fert);
 });
 
 test("VegetationSystem: 焼け地が再成長して草原に回復する", () => {

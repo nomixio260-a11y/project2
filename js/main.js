@@ -27,6 +27,10 @@
     const climate = new Game.ClimateSystem();
     engine.systems.push(climate);
 
+    // 天候（雲・雨・落雷）。
+    const weather = new Game.WeatherSystem(world, renderer);
+    engine.systems.push(weather);
+
     // 植生・生態系（fertility を初期化してから配線）。
     const vegetation = new Game.VegetationSystem(world, renderer);
     vegetation.seed(world);
@@ -59,6 +63,7 @@
     Game.state.fire = fire;
     Game.state.civ = civ;
     Game.state.climate = climate;
+    Game.state.weather = weather;
     Game.state.vegetation = vegetation;
     Game.state.activeToolId = "raise";
 
@@ -99,6 +104,7 @@
       // シミュレーション状態をリセット。
       entities.clear();
       climate.reset();
+      weather.setWorld(w);
       vegetation.setWorld(w);
       vegetation.seed(w);
       creatures.setWorld(w);
@@ -113,6 +119,7 @@
     if (Game.hud) Game.hud.init();
     if (Game.minimap) Game.minimap.init();
     if (Game.nations) Game.nations.init();
+    if (Game.help) Game.help.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。
     function handleResize() {

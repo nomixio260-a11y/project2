@@ -53,6 +53,10 @@
   <!-- ミニマップ（minimap.js が描画） -->
   <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
 
+  <!-- ヘルプ＆凡例 -->
+  <button id="help-toggle" class="help-toggle" aria-label="ヘルプ">?</button>
+  <div id="help-overlay" class="help-overlay"></div>
+
   <div id="coords" class="coords"></div>
 
   <!-- 依存順にロード（no-build: クラシック script のみ） -->
@@ -74,9 +78,11 @@
   <script src="js/ui/hud.js"></script>
   <script src="js/ui/minimap.js"></script>
   <script src="js/ui/nations.js"></script>
+  <script src="js/ui/help.js"></script>
   <script src="js/engine/engine.js"></script>
   <!-- シミュレーションシステム（engine の後、main の前） -->
   <script src="js/systems/climate.js"></script>
+  <script src="js/systems/weather.js"></script>
   <script src="js/systems/vegetation.js"></script>
   <script src="js/systems/creatures.js"></script>
   <script src="js/systems/fire.js"></script>
