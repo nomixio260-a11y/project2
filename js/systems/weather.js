@@ -69,13 +69,17 @@
         }
       }
 
-      // 落雷: 雲の下の可燃地にまれに着火。
+      // 落雷: 雲の下の「乾いた」可燃地にまれに着火（湿った草原は燃えない）。
       if (this.rand() < lightningP && fire) {
         const lx = (cl.x + (this.rand() * 2 - 1) * cl.r * 0.7) | 0;
         const ly = (cl.y + (this.rand() * 2 - 1) * cl.r * 0.7) | 0;
-        if (lx >= 0 && ly >= 0 && lx < W && ly < H && Game.tile.isFlammable(world.terrain[ly * W + lx])) {
-          fire.ignite(lx, ly);
-          cl.flash = 6; // 描画用フラッシュ
+        if (lx >= 0 && ly >= 0 && lx < W && ly < H) {
+          const li = ly * W + lx;
+          const dry = !world.moisture || world.moisture[li] < 0.35;
+          if (dry && Game.tile.isFlammable(world.terrain[li])) {
+            fire.ignite(lx, ly);
+            cl.flash = 6; // 描画用フラッシュ
+          }
         }
       }
       if (cl.flash) cl.flash--;
