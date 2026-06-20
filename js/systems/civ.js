@@ -36,7 +36,8 @@
     reproRadius: 6,
     thinkInterval: 22,   // 重い意思決定の間隔(ティック)。大きいほど低負荷
     joinRadius: 12,      // 放浪者が既存国を見つけて加入を目指す範囲
-    tether: 34,
+    tether: 34,          // 開拓者・兵士の行動範囲
+    tetherSettled: 13,   // 農民・建築家は自分の町の近くに定住
     seekRange: 3,
     conflictChance: 0.06,
     newTownDist: 22,
@@ -210,12 +211,15 @@
   CivSystem.prototype._spawnHuman = function (k, x, y, clan, role, food) {
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return null;
     if (k.humanCount >= CP.perKingdomCap) return null;
+    const home = this._nearestCity(k, x, y);
     const h = {
       x: x, y: y, hx: 0, hy: 0,
       kid: k.id, clan: clan,
       age: 0, food: food,
       role: role, state: 0,
       gx: x, gy: y,        // 現在の目標タイル
+      home: home,          // 所属する町（定住の拠点）
+      farm: null,          // 農民の耕作地
       repro: CP.reproCooldown,
       social: 0,
       alive: true,
@@ -223,6 +227,17 @@
     k.humanCount++;
     k.roleCount[role]++;
     return h;
+  };
+
+  // (x,y) に最も近い k の都市座標 {x,y} を返す。
+  CivSystem.prototype._nearestCity = function (k, x, y) {
+    let bx = k.cities[0].x, by = k.cities[0].y, bd = 1e9;
+    for (let c = 0; c < k.cities.length; c++) {
+      const dx = k.cities[c].x - x, dy = k.cities[c].y - y;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; bx = k.cities[c].x; by = k.cities[c].y; }
+    }
+    return { x: bx, y: by };
   };
 
   CivSystem.prototype.stats = function () {
@@ -566,11 +581,25 @@
     h.kid = k.id;
     h.clan = ++k.clanSeq;
     h.role = this._assignRole(k);
-    h.gx = k.cities[0].x; h.gy = k.cities[0].y;
+    h.home = this._nearestCity(k, h.x, h.y);
+    h.farm = null;
+    h.gx = h.home.x; h.gy = h.home.y;
     h.repro = CP.reproCooldown;
     h.social = 0;
     k.humanCount++;
     k.roleCount[h.role]++;
+  };
+
+  // 過密＋飢餓の市民は国を離れて流民になり、よりよい土地を求める（移民）。
+  CivSystem.prototype._leaveKingdom = function (h, k) {
+    k.humanCount--;
+    k.roleCount[h.role]--;
+    h.kid = 0;
+    h.clan = 0;
+    h.role = ROLE.EXPLORER;
+    h.home = null;
+    h.farm = null;
+    h.repro = CP.reproCooldown;
   };
 
   // 放浪者の集団が建国: 中心の人とその周囲の放浪者が新王国の住人になる。
@@ -591,6 +620,8 @@
       o.kid = k.id;
       o.clan = clan;
       o.role = this._assignRole(k);
+      o.home = { x: tx, y: ty };
+      o.farm = null;
       o.gx = tx; o.gy = ty;
       o.repro = CP.reproCooldown;
       o.social = 0;
@@ -667,7 +698,17 @@
     // 繁殖（成人・食料十分・近くに同胞成人がいれば家族を作る）。
     this._tryReproduce(h, k);
 
-    const home = this._home(h, k);
+    // 0) 移民: 国が過密で食料も乏しければ、町を捨て流民となり新天地を探す。
+    const capacity = Math.min(CP.perKingdomCap, Math.max(2, (k.tileCount / CP.tilesPerHuman) | 0));
+    if (h.food < 0.3 && k.humanCount > capacity && this.rand() < 0.12) {
+      this._leaveKingdom(h, k); return;
+    }
+
+    // 自分の町（home）への方向・距離。
+    const hcx = (h.home ? h.home.x : k.cities[0].x);
+    const hcy = (h.home ? h.home.y : k.cities[0].y);
+    const hdx = hcx + 0.5 - h.x, hdy = hcy + 0.5 - h.y;
+    const hd2 = hdx * hdx + hdy * hdy;
 
     // 1) 強い空腹 → 近くの可食地へ。
     if (h.food < 0.4) {
@@ -678,11 +719,12 @@
     if (h.social > 1) {
       const soc = this._scan(h.x, h.y, CP.socialRadius, function (o) { return o.kid === h.kid ? 1 : 0; });
       if (soc.count >= CP.socialNeed) h.social = 0;
-      else { h.gx = k.cities[0].x; h.gy = k.cities[0].y; h.state = 2; return; }
+      else { h.gx = hcx; h.gy = hcy; h.state = 2; return; }
     }
-    // 3) テザー外 → 帰路。
-    if (home.d2 > CP.tether * CP.tether) {
-      h.gx = (h.x + home.dx) | 0; h.gy = (h.y + home.dy) | 0; h.state = 3; return;
+    // 3) 行動範囲外 → 自分の町へ帰る（農民・建築家は狭く定住、開拓者・兵士は広く）。
+    const tether = (h.role === ROLE.EXPLORER || h.role === ROLE.SOLDIER) ? CP.tether : CP.tetherSettled;
+    if (hd2 > tether * tether) {
+      h.gx = hcx; h.gy = hcy; h.state = 3; return;
     }
 
     // 4) 役割ごとの目的地・判断。
@@ -708,8 +750,8 @@
       h.state = 4; return;
     }
     if (h.role === ROLE.BUILDER) {
-      if (home.d2 < 4) {
-        // 集落を発展させる。
+      // 自分の町に詰めて発展させる。遠地に出たら新集落を興す。
+      if (hd2 < 4) {
         if (this.rand() < 0.1) {
           for (let c = 0; c < k.cities.length; c++) {
             const dx = k.cities[c].x + 0.5 - h.x, dy = k.cities[c].y + 0.5 - h.y;
@@ -719,12 +761,16 @@
       } else {
         this._maybeFoundTown(h, k);
       }
-      h.gx = k.cities[0].x; h.gy = k.cities[0].y; h.state = 6; return;
+      h.gx = hcx; h.gy = hcy; h.state = 6; return;
     }
-    // FARMER（既定）: 肥沃地に留まり耕作。
-    const t = this._nearestTile(h, world, 4, function (terr) { return tile.isEdible(terr); });
-    if (t) { h.gx = t.x; h.gy = t.y; } else { h.gx = h.x | 0; h.gy = h.y | 0; }
-    h.state = 7;
+    // FARMER（既定）: 町の近くに自分の耕作地を持ち、そこに通って耕す（定住）。
+    if (!h.farm) {
+      const plot = this._nearestTile({ x: hcx + 0.5, y: hcy + 0.5 }, world, 6, function (terr, ow) {
+        return tile.isEdible(terr) && (ow === 0 || ow === h.kid);
+      });
+      h.farm = plot || { x: hcx, y: hcy };
+    }
+    h.gx = h.farm.x; h.gy = h.farm.y; h.state = 7;
   };
 
   // 半径 r 内で pred(terrain, owner) を満たす最寄りタイル（無ければ null）。
