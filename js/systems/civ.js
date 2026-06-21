@@ -75,10 +75,26 @@
     warChance: 0.35,
     peaceChance: 0.16,
     allyChance: 0.18,
+    borderWindow: 400,   // この tick 数以内に接触があれば「隣国」とみなす
+    warPressure: 0.55,   // 土地不足の隣国どうしは領土紛争で開戦しやすい
+    maxAllies: 3,        // 1国が結べる同盟の上限（同盟の乱立を防ぐ）
+    decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
+    tributeFrac: 0.45,   // 敗戦国が支払う富の割合
+    annexRadius: 18,     // 併合時に割譲される都市周辺の半径
   };
 
   const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
   const GOV_TYPES = ["君主制", "共和制", "部族連合", "神権制", "氏族制"];
+  // 政体ごとの振る舞い補正（指導者の性格 TRAITS と乗算して用いる）。
+  // war=好戦性 ally=同盟志向 trade=交易 tech=技術 unrest=不満の溜まりやすさ
+  // faith=布教力 expand=入植・拡張意欲
+  const GOV_MODS = [
+    { war: 1.2, ally: 1.0, trade: 1.0, tech: 1.0, unrest: 0.85, faith: 1.0, expand: 1.25 }, // 君主制: 中央集権・拡張的
+    { war: 0.7, ally: 1.25, trade: 1.4, tech: 1.3, unrest: 1.0, faith: 0.9, expand: 0.9 },  // 共和制: 交易・技術重視
+    { war: 1.5, ally: 0.9, trade: 0.8, tech: 0.8, unrest: 1.2, faith: 1.0, expand: 1.1 },   // 部族連合: 好戦・不安定
+    { war: 1.0, ally: 1.0, trade: 0.9, tech: 0.85, unrest: 0.8, faith: 1.8, expand: 1.0 },  // 神権制: 信仰・安定
+    { war: 1.15, ally: 1.4, trade: 1.0, tech: 0.9, unrest: 1.0, faith: 1.0, expand: 1.05 }, // 氏族制: 血縁同盟
+  ];
   const RELIGIONS = ["太陽信仰", "月の教団", "大地母神", "風の精霊", "祖霊崇拝", "星辰教"];
   const ERAS = ["石器時代", "青銅器時代", "鉄器時代", "古典時代", "中世", "啓蒙時代"];
   const TECH_PER_ERA = 60;
@@ -170,11 +186,13 @@
     if (this.kingdoms.length - 1 >= Game.config.sim.maxKingdoms) return null;
 
     const id = this.kingdoms.length;
+    const govIdx = (this.rand() * GOV_TYPES.length) | 0;
     const k = {
       id: id,
       name: makeName(this.rand),
       ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
-      gov: GOV_TYPES[(this.rand() * GOV_TYPES.length) | 0],
+      gov: GOV_TYPES[govIdx],
+      govMod: GOV_MODS[govIdx], // 政体の振る舞い補正
       color: makeColor(this.rand),
       cities: [{ x: x, y: y, capital: true, level: 1, buildings: [{ x: x, y: y, t: BUILDING.KEEP }] }],
       tileCount: 1,
@@ -182,7 +200,8 @@
       roleCount: [0, 0, 0, 0],
       clanSeq: 0,
       relations: {}, // 既知の他国 id → 関係値(-100..100)
-      wars: {},      // 交戦中の id → true
+      borders: {},   // 隣接した他国 id → 最後に接触した tick（隣国判定）
+      wars: {},      // 交戦中の id → 開戦 tick
       allies: {},    // 同盟中の id → true
       tech: 0,       // 技術力（時代の指標）
       religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
@@ -226,14 +245,35 @@
     return true;
   };
 
-  // 王国の現状に応じて職業を割り当てる（農民を一定割合確保）。
+  // 王国の現状に応じて職業を割り当てる（農民を一定割合確保。戦時は徴兵で兵士増）。
   CivSystem.prototype._assignRole = function (k) {
     const total = k.humanCount + 1;
-    if (k.roleCount[ROLE.FARMER] / total < 0.45) return ROLE.FARMER;
+    if (k.roleCount[ROLE.FARMER] / total < 0.4) return ROLE.FARMER;
+    const atWar = this._count(k.wars) > 0;
     const r = this.rand();
+    if (atWar) {
+      // 動員: 新たに育つ世代の多くが兵士になる。
+      if (r < 0.5) return ROLE.SOLDIER;
+      if (r < 0.78) return ROLE.EXPLORER;
+      return ROLE.BUILDER;
+    }
     if (r < 0.5) return ROLE.EXPLORER;
-    if (r < 0.75) return ROLE.SOLDIER;
+    if (r < 0.72) return ROLE.SOLDIER;
     return ROLE.BUILDER;
+  };
+
+  // 指導者の性格(TRAITS)と政体(GOV_MODS)を合成した実効補正値。
+  CivSystem.prototype._eff = function (k, f) {
+    const t = k.trait ? (k.trait[f] || 1) : 1;
+    const g = k.govMod ? (k.govMod[f] || 1) : 1;
+    return t * g;
+  };
+
+  // ka が b を「隣国」とみなすか（直近 borderWindow tick 以内に接触）。
+  CivSystem.prototype._isNeighbor = function (ka, b) {
+    if (!ka.borders) return false;
+    const t = ka.borders[b];
+    return t !== undefined && (this._tickN - t) <= CP.borderWindow;
   };
 
   CivSystem.prototype._spawnHuman = function (k, x, y, clan, role, food) {
@@ -502,6 +542,11 @@
     if (a === b || a === 0 || b === 0) return;
     const ka = this.kingdoms[a], kb = this.kingdoms[b];
     if (!ka || !kb || !ka.alive || !kb.alive) return;
+    // 国境接触の鮮度を記録（隣国判定・領土紛争の根拠）。
+    if (!ka.borders) ka.borders = {};
+    if (!kb.borders) kb.borders = {};
+    const t = this._tickN;
+    ka.borders[b] = t; kb.borders[a] = t;
     if (ka.relations[b] === undefined) {
       // 初対面の印象（多少のばらつき）。
       const r = (this.rand() * 50 - 25) | 0;
@@ -551,6 +596,67 @@
     this._setRel(a, b, -8);
   };
 
+  // 決定的勝利の講和: 敗者は賠償金を払い、複数都市を持つなら係争都市を割譲する。
+  CivSystem.prototype._imposePeace = function (s, w) {
+    const ks = this.kingdoms[s], kw = this.kingdoms[w];
+    if (!ks || !kw || !ks.alive || !kw.alive) return;
+    // 賠償金（敗者の富の一部を勝者へ）。
+    const trib = kw.wealth * CP.tributeFrac;
+    if (trib > 0) { kw.wealth -= trib; ks.wealth += trib; }
+    // 併合: 敗者が複数都市を持ち、勝者が隣国なら係争都市を奪う。
+    if (kw.cities.length >= 2 && this._isNeighbor(ks, w)) this._annexNearestCity(ks, kw);
+    this._makePeace(s, w);
+    this._setRel(s, w, -25); // 遺恨は残る
+    kw.unrest = Math.min(100, kw.unrest + 20); // 敗戦で国内動揺
+    ks.unrest = Math.max(0, ks.unrest - 10);   // 戦勝で求心力
+  };
+
+  // 勝者の首都に最も近い敗者都市を、その周辺領土・住民ごと併合する。
+  CivSystem.prototype._annexNearestCity = function (winner, loser) {
+    if (loser.cities.length <= 1) return; // 最後の都市は戦場でしか落ちない
+    const wc = winner.cities[0];
+    let idx = -1, bd = 1e18;
+    for (let c = 0; c < loser.cities.length; c++) {
+      const dx = loser.cities[c].x - wc.x, dy = loser.cities[c].y - wc.y;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; idx = c; }
+    }
+    if (idx < 0) return;
+    const city = loser.cities[idx];
+    const wasCapital = idx === 0;
+    loser.cities.splice(idx, 1);
+    city.capital = false;
+    winner.cities.push(city);
+    if (wasCapital && loser.cities.length) loser.cities[0].capital = true;
+
+    // 周辺領土の割譲。
+    const world = this.world, W = world.width, H = world.height, owner = world.owner;
+    const R = CP.annexRadius, R2 = R * R;
+    for (let y = Math.max(0, city.y - R); y <= Math.min(H - 1, city.y + R); y++) {
+      for (let x = Math.max(0, city.x - R); x <= Math.min(W - 1, city.x + R); x++) {
+        const i = y * W + x;
+        if (owner[i] !== loser.id) continue;
+        const dx = x - city.x, dy = y - city.y;
+        if (dx * dx + dy * dy > R2) continue;
+        owner[i] = winner.id; loser.tileCount--; winner.tileCount++;
+        if (this.renderer) this.renderer.markTerritoryDirty(x, y);
+      }
+    }
+    // 住民の移管（その都市を本拠とする者）。
+    const people = this.people, clan = ++winner.clanSeq;
+    for (let p = 0; p < people.length; p++) {
+      const o = people[p];
+      if (!o.alive || o.kid !== loser.id) continue;
+      const hx = o.home ? o.home.x : o.x, hy = o.home ? o.home.y : o.y;
+      const dx = hx - city.x, dy = hy - city.y;
+      if (dx * dx + dy * dy > R2) continue;
+      loser.humanCount--; loser.roleCount[o.role]--;
+      o.kid = winner.id; o.clan = clan; o.home = { x: city.x, y: city.y }; o.farm = null;
+      winner.humanCount++; winner.roleCount[o.role]++;
+    }
+    if (loser.cities.length === 0 || loser.tileCount <= 0) loser.alive = false;
+  };
+
   CivSystem.prototype._formAlliance = function (a, b) {
     const ka = this.kingdoms[a], kb = this.kingdoms[b];
     ka.allies[b] = true; kb.allies[a] = true;
@@ -568,20 +674,19 @@
       if (!ka || !ka.alive) continue;
       // 無人・無領土の国は消滅。
       if (ka.humanCount <= 0 || ka.tileCount <= 0) { ka.alive = false; continue; }
-      const tr = ka.trait;
-      // 富: 領土と都市から収入（商才で増す）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6) * tr.trade;
-      // 技術: 都市・人口・富で進歩（賢明で加速）。
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001) * tr.tech;
+      // 富: 領土と都市から収入（商才・政体で増す）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6) * this._eff(ka, "trade");
+      // 技術: 都市・人口・富で進歩（賢明・政体で加速）。
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001) * this._eff(ka, "tech");
 
-      // 不満: 戦争・過密・貧困で上昇、平和・繁栄で低下（性格で変調）。
+      // 不満: 戦争・過密・貧困で上昇、平和・繁栄で低下（性格・政体で変調）。
       const cap = this._capacity(ka);
       let dU = -1.5;
       const warCount = this._count(ka.wars);
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
-      dU *= tr.unrest;
+      dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
       // 反乱: 不満が高く、複数都市を持つ国は地方が独立しうる。
       if (ka.unrest > 80 && ka.cities.length >= 2 &&
@@ -601,16 +706,16 @@
         if (!kb || !kb.alive) continue;
         const rel = ka.relations[b];
 
-        // 文化的影響: 国力で勝る国の宗教が広まる（敬虔さで強まる）。
+        // 文化的影響: 国力で勝る国の宗教が広まる（敬虔さ・政体で強まる）。
         if (ka.religion !== kb.religion) {
-          if (ka.humanCount > kb.humanCount * 1.6 && this.rand() < 0.1 * ka.trait.faith) kb.religion = ka.religion;
-          else if (kb.humanCount > ka.humanCount * 1.6 && this.rand() < 0.1 * kb.trait.faith) ka.religion = kb.religion;
+          if (ka.humanCount > kb.humanCount * 1.6 && this.rand() < 0.1 * this._eff(ka, "faith")) kb.religion = ka.religion;
+          else if (kb.humanCount > ka.humanCount * 1.6 && this.rand() < 0.1 * this._eff(kb, "faith")) ka.religion = kb.religion;
         }
 
-        // 交易: 戦争でなければ双方が富む（同盟は倍。商才で増す）。少し友好も育む。
+        // 交易: 戦争でなければ双方が富む（同盟は倍。商才・政体で増す）。少し友好も育む。
         if (!ka.wars[b]) {
           const trade = Math.min(ka.tileCount, kb.tileCount) * 0.012 *
-            (ka.allies[b] ? 2 : 1) * ((ka.trait.trade + kb.trait.trade) * 0.5);
+            (ka.allies[b] ? 2 : 1) * ((this._eff(ka, "trade") + this._eff(kb, "trade")) * 0.5);
           ka.wealth += trade; kb.wealth += trade;
           if (!ka.allies[b]) this._setRel(a, b, rel + 0.4);
         }
@@ -618,26 +723,52 @@
         if (ka.wars[b]) {
           // 戦争疲弊: 長期化・劣勢ほど講和しやすい。
           const dur = (this._tickN || 1) - ka.wars[b];
-          let pc = CP.peaceChance * (1 + dur / 3000);
           const m1 = this._military(ka), m2 = this._military(kb);
-          if (m1 < m2 * 0.6 || m2 < m1 * 0.6) pc *= 2; // 大差がつけば手打ち
-          if (this.rand() < pc) this._makePeace(a, b);
+          // 決定的な軍事差 → 強国が講和条件（賠償・併合）を強いる。
+          if (m1 >= m2 * CP.decisiveRatio) { this._imposePeace(a, b); }
+          else if (m2 >= m1 * CP.decisiveRatio) { this._imposePeace(b, a); }
+          else {
+            let pc = CP.peaceChance * (1 + dur / 3000);
+            if (m1 < m2 * 0.6 || m2 < m1 * 0.6) pc *= 2; // 大差がつけば手打ち
+            if (this.rand() < pc) this._makePeace(a, b);
+          }
         } else if (ka.allies[b]) {
-          if (this.rand() < 0.04) { delete ka.allies[b]; delete kb.allies[a]; this._setRel(a, b, 10); }
+          // 同盟解消: 国境を接し互いに土地不足だと利害が衝突し決裂しやすい。
+          let breakC = 0.05;
+          if (this._isNeighbor(ka, b) &&
+              ka.humanCount >= this._capacity(ka) * 0.9 && kb.humanCount >= this._capacity(kb) * 0.9) {
+            breakC = 0.15;
+          }
+          if (this.rand() < breakC) { delete ka.allies[b]; delete kb.allies[a]; this._setRel(a, b, 5); }
         } else {
-          // 性格・宗教で開戦/同盟しやすさが変わる。
+          // 開戦は隣国どうしのみ（前近代は国境を接さない国へ兵を送れない）。
+          // 同盟は遠国とも結べる（婚姻・通商同盟）。
+          const neighbor = this._isNeighbor(ka, b);
           const sameFaith = ka.religion === kb.religion;
-          let warF = (ka.trait.war + kb.trait.war) * 0.5 * (sameFaith ? 0.55 : 1.4);
-          let allyF = (ka.trait.ally + kb.trait.ally) * 0.5 * (sameFaith ? 1.5 : 0.6);
-          const warP = (0.09 + (rel < 0 ? (-rel / 100) * 0.25 : 0)) * warF;
+          const warF = (this._eff(ka, "war") + this._eff(kb, "war")) * 0.5 * (sameFaith ? 0.6 : 1.4);
+          const allyF = (this._eff(ka, "ally") + this._eff(kb, "ally")) * 0.5 * (sameFaith ? 1.4 : 0.6);
+          // 土地不足の隣国どうしは領土紛争で開戦しやすい（信仰に左右されない casus belli）。
+          let territorial = 0;
+          if (neighbor) {
+            const needA = ka.humanCount >= this._capacity(ka) * 0.9;
+            const needB = kb.humanCount >= this._capacity(kb) * 0.9;
+            if (needA || needB) territorial = CP.warPressure * 0.18;
+          }
+          const warP = (neighbor ? (0.06 + (rel < 0 ? (-rel / 100) * 0.25 : 0)) * warF : 0) + territorial;
           const allyP = (0.05 + (rel > 0 ? (rel / 100) * 0.2 : 0)) * allyF;
+          // 同盟上限に達していれば新たな同盟は結べない（同盟の乱立を防ぐ）。
+          const canAlly = this._count(ka.allies) < CP.maxAllies && this._count(kb.allies) < CP.maxAllies;
           const r = this.rand();
           if (r < warP) this._declareWar(a, b);
-          else if (r < warP + allyP) this._formAlliance(a, b);
+          else if (canAlly && r < warP + allyP) this._formAlliance(a, b);
           else {
             // 平時のゆらぎ。異教は緊張（悪化寄り）、同教は親和（改善寄り）。
-            const drift = sameFaith ? (this.rand() * 8 - 3) : (this.rand() * 8 - 5.5);
-            this._setRel(a, b, rel + drift);
+            // 国境を接さない国とは関係が徐々に中立へ薄れる。
+            if (!neighbor && Math.abs(rel) > 4) this._setRel(a, b, rel * 0.85);
+            else {
+              const drift = sameFaith ? (this.rand() * 8 - 3) : (this.rand() * 8 - 5.5);
+              this._setRel(a, b, rel + drift);
+            }
           }
         }
       }
@@ -666,15 +797,17 @@
 
     // 新国家レコード（独立都市を首都に）。
     const id = this.kingdoms.length;
+    const govIdx = (this.rand() * GOV_TYPES.length) | 0;
     const nk = {
       id: id,
       name: makeName(this.rand),
       ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
-      gov: GOV_TYPES[(this.rand() * GOV_TYPES.length) | 0],
+      gov: GOV_TYPES[govIdx],
+      govMod: GOV_MODS[govIdx],
       color: makeColor(this.rand),
       cities: [{ x: city.x, y: city.y, capital: true, level: city.level || 1, buildings: (city.buildings || []) }],
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0], clanSeq: 0,
-      relations: {}, wars: {}, allies: {},
+      relations: {}, borders: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, religion: parent.religion,
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
       wealth: 0, unrest: 30, alive: true,
@@ -1186,11 +1319,18 @@
       return;
     }
     if (h.role === ROLE.SOLDIER) {
-      // 思考時にキャッシュした敵が隣接していれば攻撃（探索不要）。
+      // 思考時にキャッシュした敵が隣接していれば交戦（探索不要）。
       const e = h._enemy;
       if (e && e.alive && this._atWar(h.kid, e.kid)) {
         const dx = e.x - h.x, dy = e.y - h.y;
-        if (dx * dx + dy * dy < 2.25) { e.food -= CP.attack; if (e.food < 0) e.food = 0; }
+        if (dx * dx + dy * dy < 2.25) {
+          // 戦闘: 軍事力で勝る側ほど大きな損害を与える。0 で戦死。
+          const other = this.kingdoms[e.kid];
+          const m1 = this._military(k), m2 = other ? this._military(other) : 1;
+          const edge = m1 / (m1 + m2);
+          e.food -= CP.attack * (0.6 + edge);
+          if (e.food <= 0) { e.food = 0; e.alive = false; } // 戦死
+        }
       } else {
         h._enemy = null;
       }
@@ -1236,7 +1376,7 @@
     const world = this.world;
     const i = (h.y | 0) * world.width + (h.x | 0);
     const fertile = !world.fertility || world.fertility[i] > 0.3;
-    if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate) {
+    if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate * this._eff(k, "expand")) {
       k.cities.push({ x: h.x | 0, y: h.y | 0, capital: false, level: 1, buildings: [] });
     }
   };
