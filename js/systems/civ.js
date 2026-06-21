@@ -17,10 +17,15 @@
 
   const tile = Game.tile;
 
-  const ROLE = { EXPLORER: 0, FARMER: 1, BUILDER: 2, SOLDIER: 3 };
-  // 建物タイプ（描画 sprites.building と対応）。0=小屋,1=家,2=邸宅,3=砦,4=神殿。
-  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4 };
-  const MAX_BUILDINGS = 14; // 1都市の建物上限
+  // 職業（役割）。0-3 は従来互換、4-6 は専門職（工房・市場・神殿で働く）。
+  const ROLE = { EXPLORER: 0, FARMER: 1, BUILDER: 2, SOLDIER: 3, SMITH: 4, MERCHANT: 5, PRIEST: 6 };
+  const ROLE_COUNT = 7;
+  // 建物タイプ（描画 sprites.building と対応）。
+  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉。
+  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7, BARRACKS: 8, GRANARY: 9 };
+  const MAX_BUILDINGS = 20; // 1都市の建物上限
+  // 生産施設（住居・砦以外の機能建築）。役割の職場になる。
+  const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary"];
 
   // 時代に応じた住居の種別（石器=小屋 / 青銅・鉄=家 / 古典以降=邸宅）。
   function dwellingTier(tech) {
@@ -28,6 +33,11 @@
     if (era <= 0) return BUILDING.HUT;
     if (era <= 2) return BUILDING.HOUSE;
     return BUILDING.MANOR;
+  }
+
+  // 時代に応じた装備の段階（0=無し,1=石器,2=青銅,3=鉄,4=鋼…）。
+  function gearTier(tech) {
+    return Math.min(5, 1 + ((tech / TECH_PER_ERA) | 0));
   }
 
   const CP = {
@@ -81,6 +91,12 @@
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
+    // 生産・装備（専門職が施設で働いて生み出す）
+    workRadius: 3,       // 施設からこの距離以内なら「就労中」
+    toolRate: 0.02,      // 鍛冶が1ティックに作る道具・武具
+    marketRate: 0.06,    // 商人が1ティックに生む富
+    templeCalm: 0.02,    // 神官が1ティックに鎮める不満
+    equipChance: 0.08,   // 就労時に在庫から装備を受け取る確率
   };
 
   const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
@@ -197,7 +213,9 @@
       cities: [{ x: x, y: y, capital: true, level: 1, buildings: [{ x: x, y: y, t: BUILDING.KEEP }] }],
       tileCount: 1,
       humanCount: 0,
-      roleCount: [0, 0, 0, 0],
+      roleCount: [0, 0, 0, 0, 0, 0, 0],
+      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0 }, // 機能建築の総数
+      tools: 0,      // 道具・武具の備蓄（鍛冶が生産・住民が装備）
       clanSeq: 0,
       relations: {}, // 既知の他国 id → 関係値(-100..100)
       borders: {},   // 隣接した他国 id → 最後に接触した tick（隣国判定）
@@ -239,27 +257,68 @@
       kid: 0, clan: 0,
       age: 0, food: 0.9,
       role: ROLE.EXPLORER, state: 0,
-      gx: x, gy: y,
+      gx: x, gy: y, work: null, gear: 0,
       repro: CP.reproCooldown, social: 0, alive: true,
     });
     return true;
   };
 
-  // 王国の現状に応じて職業を割り当てる（農民を一定割合確保。戦時は徴兵で兵士増）。
+  // 王国の現状に応じて職業を割り当てる。食料を支える農民を確保しつつ、
+  // 対応施設（鍛冶場・市場・神殿）があれば専門職を、戦時は兵士を多く育てる。
   CivSystem.prototype._assignRole = function (k) {
     const total = k.humanCount + 1;
-    if (k.roleCount[ROLE.FARMER] / total < 0.4) return ROLE.FARMER;
+    if (k.roleCount[ROLE.FARMER] / total < 0.34) return ROLE.FARMER;
+    const f = k.facilities || {};
     const atWar = this._count(k.wars) > 0;
     const r = this.rand();
+    // 専門職: 職場となる施設があり、まだ足りていなければ就かせる。
+    if (f.smithy > 0 && k.roleCount[ROLE.SMITH] < f.smithy * 3 && r < 0.14) return ROLE.SMITH;
+    if (f.market > 0 && k.roleCount[ROLE.MERCHANT] < f.market * 3 && r < 0.26) return ROLE.MERCHANT;
+    if (f.temple > 0 && k.roleCount[ROLE.PRIEST] < f.temple * 2 && r < 0.34) return ROLE.PRIEST;
     if (atWar) {
       // 動員: 新たに育つ世代の多くが兵士になる。
-      if (r < 0.5) return ROLE.SOLDIER;
-      if (r < 0.78) return ROLE.EXPLORER;
+      if (r < 0.6) return ROLE.SOLDIER;
+      if (r < 0.8) return ROLE.EXPLORER;
       return ROLE.BUILDER;
     }
-    if (r < 0.5) return ROLE.EXPLORER;
+    if (r < 0.55) return ROLE.EXPLORER;
     if (r < 0.72) return ROLE.SOLDIER;
     return ROLE.BUILDER;
+  };
+
+  // 全都市の建物から機能建築の数を集計する（建設・占領・反乱で変動するため）。
+  CivSystem.prototype._recountFacilities = function (k) {
+    const f = k.facilities || (k.facilities = { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0 });
+    f.temple = f.farm = f.smithy = f.market = f.barracks = f.granary = 0;
+    for (let c = 0; c < k.cities.length; c++) {
+      const bs = k.cities[c].buildings;
+      if (!bs) continue;
+      for (let i = 0; i < bs.length; i++) {
+        switch (bs[i].t) {
+          case BUILDING.TEMPLE: f.temple++; break;
+          case BUILDING.FARM: f.farm++; break;
+          case BUILDING.SMITHY: f.smithy++; break;
+          case BUILDING.MARKET: f.market++; break;
+          case BUILDING.BARRACKS: f.barracks++; break;
+          case BUILDING.GRANARY: f.granary++; break;
+        }
+      }
+    }
+  };
+
+  // (x,y) から最も近い type の機能建築の座標を返す（職場探し）。
+  CivSystem.prototype._nearestFacility = function (k, x, y, type) {
+    let best = null, bd = 1e18;
+    for (let c = 0; c < k.cities.length; c++) {
+      const bs = k.cities[c].buildings;
+      if (!bs) continue;
+      for (let i = 0; i < bs.length; i++) {
+        if (bs[i].t !== type) continue;
+        const dx = bs[i].x - x, dy = bs[i].y - y, d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = bs[i]; }
+      }
+    }
+    return best ? { x: best.x, y: best.y } : null;
   };
 
   // 指導者の性格(TRAITS)と政体(GOV_MODS)を合成した実効補正値。
@@ -288,6 +347,8 @@
       gx: x, gy: y,        // 現在の目標タイル
       home: home,          // 所属する町（定住の拠点）
       farm: null,          // 農民の耕作地
+      work: null,          // 専門職の職場（施設座標）
+      gear: 0,             // 装備・道具の段階（0=素手）
       repro: CP.reproCooldown,
       social: 0,
       alive: true,
@@ -565,9 +626,12 @@
     this.kingdoms[b].relations[a] = v;
   };
 
-  // 国の軍事力（兵士数を技術で底上げ）。決定的な戦争のために使う。
+  // 国の軍事力。兵士数を基礎に、技術・兵舎・武装度（道具/武具の備蓄）で底上げ。
   CivSystem.prototype._military = function (k) {
-    return (k.roleCount[ROLE.SOLDIER] + 1) * (1 + k.tech * 0.0025);
+    const soldiers = k.roleCount[ROLE.SOLDIER] + 1;
+    const barracks = k.facilities ? k.facilities.barracks : 0;
+    const armed = 1 + Math.min(1, (k.tools || 0) / soldiers) * 0.6; // 武装した兵ほど強い
+    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -674,18 +738,24 @@
       if (!ka || !ka.alive) continue;
       // 無人・無領土の国は消滅。
       if (ka.humanCount <= 0 || ka.tileCount <= 0) { ka.alive = false; continue; }
-      // 富: 領土と都市から収入（商才・政体で増す）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6) * this._eff(ka, "trade");
-      // 技術: 都市・人口・富で進歩（賢明・政体で加速）。
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001) * this._eff(ka, "tech");
+      // 機能建築の数を集計（市場・鍛冶場・神殿などの効果に使う）。
+      this._recountFacilities(ka);
+      const fac = ka.facilities;
+      // 富: 領土・都市・市場から収入（商才・政体で増す）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5) * this._eff(ka, "trade");
+      // 技術: 都市・人口・富・鍛冶場で進歩（賢明・政体で加速）。
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6) * this._eff(ka, "tech");
+      // 道具・武具の備蓄は人口を上限に飽和（武装度の指標）。
+      if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
 
-      // 不満: 戦争・過密・貧困で上昇、平和・繁栄で低下（性格・政体で変調）。
+      // 不満: 戦争・過密・貧困で上昇、平和・繁栄・神殿・穀倉で低下（性格・政体で変調）。
       const cap = this._capacity(ka);
       let dU = -1.5;
       const warCount = this._count(ka.wars);
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
+      dU -= fac.temple * 0.7 + fac.granary * 0.4; // 信仰と食料安全保障で安定
       dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
       // 反乱: 不満が高く、複数都市を持つ国は地方が独立しうる。
@@ -806,7 +876,9 @@
       govMod: GOV_MODS[govIdx],
       color: makeColor(this.rand),
       cities: [{ x: city.x, y: city.y, capital: true, level: city.level || 1, buildings: (city.buildings || []) }],
-      tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0], clanSeq: 0,
+      tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
+      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0 },
+      tools: parent.tools * 0.3,
       relations: {}, borders: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, religion: parent.religion,
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
@@ -870,6 +942,7 @@
         capital: k.cities[0], wars: wars, allies: allies,
         religion: k.religion, era: eraOf(k.tech), tech: Math.round(k.tech),
         trait: k.trait.name, wealth: Math.round(k.wealth), unrest: Math.round(k.unrest),
+        tools: Math.round(k.tools || 0), facilities: k.facilities,
       });
     }
     out.sort(function (x, y) { return y.pop - x.pop; });
@@ -1151,6 +1224,22 @@
       this._ringGoal(h, world, hcx, hcy, 0, 5);
       h.state = 6; return;
     }
+    // 専門職（鍛冶・商人・神官）: 対応する施設へ出勤して働く。職場のある町に定住する
+    // （職場が遠い町に属していると行動範囲外で働けないため、職場へ住み替える）。
+    if (h.role === ROLE.SMITH || h.role === ROLE.MERCHANT || h.role === ROLE.PRIEST) {
+      const ftype = h.role === ROLE.SMITH ? BUILDING.SMITHY
+        : h.role === ROLE.MERCHANT ? BUILDING.MARKET : BUILDING.TEMPLE;
+      if (!h.work || this.rand() < 0.03) h.work = this._nearestFacility(k, h.x, h.y, ftype);
+      if (h.work) {
+        h.home = { x: h.work.x, y: h.work.y }; // 職場の都市に通勤定住
+        if (this.rand() < 0.7) { h.gx = h.work.x; h.gy = h.work.y; } // 出勤
+        else { this._ringGoal(h, world, h.work.x, h.work.y, 0, 4); }  // 職場周辺
+      } else {
+        // 職場がまだ無ければ町なかで待機（やがて建築家が施設を建てる）。
+        this._ringGoal(h, world, hcx, hcy, 0, 5);
+      }
+      h.state = 12; return;
+    }
     // FARMER（既定）: 町の周りに自分の畑を持ち、出勤して耕し、たまに帰宅する（職住近接）。
     if (!h.farm) {
       const ang = this.rand() * Math.PI * 2;
@@ -1174,33 +1263,56 @@
   };
 
   // 建築家が都市で建設/建て替えを行う（人間が街を作る）。
+  // 住居だけでなく、時代と都市の必要に応じて農場・鍛冶場・市場・兵舎・神殿・穀倉を
+  // バランスよく建て、人々の職場と国の機能を生み出す。
   CivSystem.prototype._construct = function (k, city, world) {
     if (!city.buildings) city.buildings = [];
+    const bs = city.buildings;
+    // 上限に達したら建て替え（時代遅れの住居を更新）のみ。
+    if (bs.length >= MAX_BUILDINGS) { this._rebuild(k, city); return; }
+    // 建設は緩やかに進める。建てない番は古い住居の更新に充てる。
+    if (this.rand() > 0.2) { this._rebuild(k, city); return; }
+
     const tier = dwellingTier(k.tech);
-    // 1) 空きがあれば新しい住居を建てる。
-    if (city.buildings.length < MAX_BUILDINGS && this.rand() < 0.16) {
-      const spot = this._buildSpot(world, k, city);
-      if (spot) {
-        city.buildings.push({ x: spot.x, y: spot.y, t: tier });
-        city.level = 1 + ((city.buildings.length / 3) | 0);
-        return;
-      }
+    // 現在の構成を数える。
+    let dwell = 0; const has = {};
+    for (let i = 0; i < bs.length; i++) {
+      const t = bs[i].t;
+      if (t === BUILDING.HUT || t === BUILDING.HOUSE || t === BUILDING.MANOR) dwell++;
+      has[t] = (has[t] || 0) + 1;
     }
-    // 2) 時代遅れの住居を現代の様式へ建て替える。
-    if (this.rand() < 0.12) {
-      for (let bi = 0; bi < city.buildings.length; bi++) {
-        const bd = city.buildings[bi];
-        if (bd.t !== BUILDING.KEEP && bd.t !== BUILDING.TEMPLE && bd.t < tier) { bd.t = tier; return; }
-      }
+
+    // 必要な建物を優先順位で選ぶ。基幹施設（工房・倉・市・兵舎）は原始的な形で早期から
+    // 建ち、産物は技術で増える。神殿は社会が成熟してから。最後は住居で人口増に対応。
+    const n = bs.length;
+    let want;
+    if (!has[BUILDING.FARM] && n >= 1) want = BUILDING.FARM;               // まず食料生産
+    else if (dwell < 2) want = tier;                                       // 最低限の住居
+    else if (!has[BUILDING.SMITHY] && n >= 3) want = BUILDING.SMITHY;      // 工房（道具・武具）
+    else if (!has[BUILDING.GRANARY] && n >= 4) want = BUILDING.GRANARY;    // 倉（食料安全）
+    else if (!has[BUILDING.MARKET] && n >= 4) want = BUILDING.MARKET;      // 市（富）
+    else if ((this._count(k.wars) > 0 || city.capital) && !has[BUILDING.BARRACKS] && n >= 4) want = BUILDING.BARRACKS; // 兵舎
+    else if (!has[BUILDING.TEMPLE] && n >= 6) want = BUILDING.TEMPLE;      // 神殿（信仰・成熟した都市）
+    else if (dwell < Math.max(3, n * 0.5)) want = tier;                   // 人口に見合う住居
+    else if ((has[BUILDING.SMITHY] || 0) < 2 && n >= 11) want = BUILDING.SMITHY;    // 大都市は2軒目
+    else if ((has[BUILDING.MARKET] || 0) < 2 && n >= 13) want = BUILDING.MARKET;
+    else want = tier;                                                      // さらに住居を増やす
+
+    const spot = this._buildSpot(world, k, city);
+    if (spot) {
+      bs.push({ x: spot.x, y: spot.y, t: want });
+      city.level = 1 + ((bs.length / 3) | 0);
     }
-    // 3) 発展した都市は神殿を建てる（古典以降・首都/大都市）。
-    if (tier >= BUILDING.MANOR && city.buildings.length >= 6 && this.rand() < 0.04) {
-      let hasTemple = false;
-      for (let bi = 0; bi < city.buildings.length; bi++) if (city.buildings[bi].t === BUILDING.TEMPLE) { hasTemple = true; break; }
-      if (!hasTemple) {
-        const spot = this._buildSpot(world, k, city);
-        if (spot) city.buildings.push({ x: spot.x, y: spot.y, t: BUILDING.TEMPLE });
-      }
+  };
+
+  // 時代遅れの住居を現代の様式へ建て替える（古いものは建て替える）。
+  CivSystem.prototype._rebuild = function (k, city) {
+    if (this.rand() > 0.12) return;
+    const tier = dwellingTier(k.tech);
+    const bs = city.buildings;
+    for (let i = 0; i < bs.length; i++) {
+      const t = bs[i].t;
+      if ((t === BUILDING.HUT || t === BUILDING.HOUSE || t === BUILDING.MANOR) && t < tier) { bs[i].t = tier; return; }
     }
   };
 
@@ -1308,27 +1420,62 @@
     }
   };
 
+  // 施設で就労中（職場座標に十分近い）か。
+  CivSystem.prototype._atWork = function (h) {
+    if (!h.work) return false;
+    const dx = h.work.x + 0.5 - h.x, dy = h.work.y + 0.5 - h.y;
+    return dx * dx + dy * dy < CP.workRadius * CP.workRadius;
+  };
+
   // 役割の局所効果（毎ティックだが探索なし＝低負荷）。ti は足下のタイル index。
   CivSystem.prototype._roleTick = function (h, k, world, ti) {
     if (h.role === ROLE.FARMER) {
-      // 耕作: 足下の fertility を高め、土地を肥やす。
+      // 耕作: 道具があるほど効率よく足下の fertility を高める。
       if (world.fertility && tile.isLand(world.terrain[ti])) {
-        const f = world.fertility[ti] + CP.cultivate;
+        const f = world.fertility[ti] + CP.cultivate * (1 + (h.gear || 0) * 0.15);
         world.fertility[ti] = f > 1 ? 1 : f;
+      }
+      // 道具の支給（在庫があれば）。
+      if (!h.gear && k.tools > 0 && this.rand() < CP.equipChance) h.gear = gearTier(k.tech);
+      return;
+    }
+    // 鍛冶: 鍛冶場で道具・武具を生産する（人口を上限に飽和）。
+    if (h.role === ROLE.SMITH) {
+      if (this._atWork(h)) {
+        if (k.tools < k.humanCount) k.tools += CP.toolRate * (1 + k.tech * 0.002);
+        if (!h.gear) h.gear = gearTier(k.tech);
+      }
+      return;
+    }
+    // 商人: 市場で富を生む。
+    if (h.role === ROLE.MERCHANT) {
+      if (this._atWork(h)) {
+        k.wealth += CP.marketRate * this._eff(k, "trade");
+        if (!h.gear) h.gear = gearTier(k.tech);
+      }
+      return;
+    }
+    // 神官: 神殿で不満を鎮める。
+    if (h.role === ROLE.PRIEST) {
+      if (this._atWork(h)) {
+        if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.templeCalm * this._eff(k, "faith"));
+        if (!h.gear) h.gear = gearTier(k.tech);
       }
       return;
     }
     if (h.role === ROLE.SOLDIER) {
+      // 武具の支給（在庫があれば）。
+      if (!h.gear && k.tools > 0 && this.rand() < CP.equipChance) h.gear = gearTier(k.tech);
       // 思考時にキャッシュした敵が隣接していれば交戦（探索不要）。
       const e = h._enemy;
       if (e && e.alive && this._atWar(h.kid, e.kid)) {
         const dx = e.x - h.x, dy = e.y - h.y;
         if (dx * dx + dy * dy < 2.25) {
-          // 戦闘: 軍事力で勝る側ほど大きな損害を与える。0 で戦死。
+          // 戦闘: 軍事力で勝る側ほど、また武装が良いほど大きな損害を与える。0 で戦死。
           const other = this.kingdoms[e.kid];
           const m1 = this._military(k), m2 = other ? this._military(other) : 1;
           const edge = m1 / (m1 + m2);
-          e.food -= CP.attack * (0.6 + edge);
+          e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12);
           if (e.food <= 0) { e.food = 0; e.alive = false; } // 戦死
         }
       } else {

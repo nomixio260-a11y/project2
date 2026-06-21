@@ -4,8 +4,8 @@
 (function (Game) {
   "use strict";
 
-  // 役割ごとの帽子色（ROLE: 0=開拓者,1=農民,2=建築家,3=兵士）。
-  const ROLE_HAT = [null, "#4fae4f", "#e08a2a", "#d24a3a"];
+  // 役割ごとの被り物の色（ROLE: 0=開拓者,1=農民,2=建築家,3=兵士,4=鍛冶,5=商人,6=神官）。
+  const ROLE_HAT = [null, "#4fae4f", "#e08a2a", "#b9c2cc", "#6a6a72", "#d8b84a", "#ece9e0"];
 
   // 都市内の家の配置オフセット（タイル単位・安定配置）。
   const CITY_PATTERN = [
@@ -430,6 +430,37 @@
         ctx.fillStyle = hat;
         ctx.fillRect(sx - 2 * u, sy - 6 * u + ob, 4 * u, u);
       }
+
+      // 道具・武器（役割と装備段階 gear で見た目が変わる＝実際に持って使う）。
+      const g = person.gear || 0;
+      const metal = g >= 4 ? "#e8eef4" : g >= 3 ? "#cdd6df" : g >= 2 ? "#c9a24a" : g >= 1 ? "#b98c4a" : "#9a9a9a";
+      const wood = "#6b4a2a";
+      const hxp = fd > 0 ? sx + 2 * u : sx - 3 * u; // 手の位置
+      switch (person.role) {
+        case 3: // 兵士: 槍（鋼が進むと剣に鍔がつく）
+          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * u + ob, u, 7 * u);
+          ctx.fillStyle = metal; ctx.fillRect(hxp, sy - 6 * u + ob, u, 2 * u);
+          if (g >= 3) { ctx.fillStyle = metal; ctx.fillRect(hxp - u, sy - 5 * u + ob, 3 * u, u); }
+          break;
+        case 1: // 農民: 鍬
+          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * u + ob, u, 6 * u);
+          ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? u : -u), sy - 4 * u + ob, u, u);
+          break;
+        case 2: // 建築家: 槌
+        case 4: // 鍛冶: 槌（頭は鉄黒）
+          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * u + ob, u, 5 * u);
+          ctx.fillStyle = person.role === 4 ? "#55585f" : metal;
+          ctx.fillRect(hxp - u, sy - 4 * u + ob, 3 * u, 2 * u);
+          break;
+        case 6: // 神官: 杖（先端が金色）
+          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * u + ob, u, 7 * u);
+          ctx.fillStyle = "#e8d05a"; ctx.fillRect(hxp, sy - 6 * u + ob, u, u);
+          break;
+        case 5: // 商人: 背中の荷
+          ctx.fillStyle = "#7a5a32";
+          ctx.fillRect(fd > 0 ? sx - 3 * u : sx + 2 * u, sy - 2 * u + ob, u, 3 * u);
+          break;
+      }
     }
   };
 
@@ -665,7 +696,8 @@
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
             const img = sprites.building(bd.t);
-            const bw = (bd.t === 3 ? size * 1.35 : size); // 砦は大きめ
+            // 砦・神殿・兵舎は街のランドマークとして大きめに描く。
+            const bw = bd.t === 3 ? size * 1.4 : (bd.t === 4 || bd.t === 8) ? size * 1.2 : size;
             const bh = bw * (img.height / img.width);
             const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
             const by = camera.worldToScreenY((bd.y + 0.5) * tile);
