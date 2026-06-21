@@ -35,7 +35,7 @@ window.Game = window.Game || {};
       conflictChance: 0.05, // 国境での領土反転の基本確率
 
       // 気候・季節
-      ticksPerDay: 18, // 何ティックで1日進むか
+      ticksPerDay: 72, // 何ティックで1日進むか（昼夜がゆっくり巡り、生活リズムが見える）
       daysPerSeason: 14, // 1季節の日数（4季=1年）
 
       // 植生（vegetation）

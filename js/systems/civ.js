@@ -423,7 +423,7 @@
     const cx = (px / cs) | 0, cy = (py / cs) | 0;
     const r2 = radius * radius;
     const people = this.people, next = this._next, head = this._head;
-    let count = 0, best = null, bestD = r2;
+    let count = 0, count2 = 0, best = null, bestD = r2;
     for (let gy = cy - r; gy <= cy + r; gy++) {
       if (gy < 0 || gy >= gh) continue;
       for (let gx = cx - r; gx <= cx + r; gx++) {
@@ -437,14 +437,14 @@
             if (d <= r2) {
               const m = want(o, d);
               if (m === 1) count++;
-              else if (m === 2 && d < bestD) { bestD = d; best = o; }
+              else if (m === 2) { count2++; if (d < bestD) { bestD = d; best = o; } }
             }
           }
           i = next[i];
         }
       }
     }
-    return { count: count, best: best };
+    return { count: count, count2: count2, best: best };
   };
 
   CivSystem.prototype.tick = function (world) {
@@ -453,6 +453,15 @@
     const people = this.people;
     const kingdoms = this.kingdoms;
     const rand = this.rand;
+    // 昼夜の判定（夜は人々が帰宅して休む）。描画の昼夜と同じ周期を tick 数から算出し、
+    // 気候時計が進まないヘッドレス環境でも正しく循環する。
+    const tpd = (Game.config.sim && Game.config.sim.ticksPerDay) || 0;
+    if (tpd > 0) {
+      const tod = (tN % tpd) / tpd;
+      this._night = Math.sin((tod - 0.25) * Math.PI * 2) < -0.12;
+    } else {
+      this._night = false;
+    }
 
     this._buildGrid();
 
@@ -1047,6 +1056,15 @@
     h.repro = CP.reproCooldown;
   };
 
+  // 市民が状況に応じて転職する（飢饉で農民へ、戦時に兵士へ等の適応行動）。
+  CivSystem.prototype._switchRole = function (h, k, role) {
+    if (h.role === role) return;
+    k.roleCount[h.role]--;
+    h.role = role;
+    k.roleCount[role]++;
+    h.farm = null; h.work = null; h._enemy = null;
+  };
+
   // 放浪者の集団が建国: 中心の人とその周囲の放浪者が新王国の住人になる。
   CivSystem.prototype._foundFromNomads = function (h, tx, ty) {
     const k = this._newKingdom(tx, ty);
@@ -1152,6 +1170,16 @@
       this._leaveKingdom(h, k); return;
     }
 
+    // 0.2) 適応: 慢性的な飢えで農民が手薄なら食料生産へ転職。戦時に兵が手薄なら民間人が
+    //      武器を取る（緊急徴募）。状況に応じて職を変える＝賢い集団としての振る舞い。
+    if (h.role !== ROLE.FARMER && h.food < 0.25 &&
+        k.roleCount[ROLE.FARMER] < k.humanCount * 0.3 && this.rand() < 0.12) {
+      this._switchRole(h, k, ROLE.FARMER);
+    } else if ((h.role === ROLE.EXPLORER || h.role === ROLE.BUILDER) && this._count(k.wars) > 0 &&
+        k.roleCount[ROLE.SOLDIER] < k.humanCount * 0.12 && this.rand() < 0.06) {
+      this._switchRole(h, k, ROLE.SOLDIER);
+    }
+
     // 自分の町（home）への方向・距離。
     const hcx = (h.home ? h.home.x : k.cities[0].x);
     const hcy = (h.home ? h.home.y : k.cities[0].y);
@@ -1177,6 +1205,12 @@
       const t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 1; return; }
     }
+    // 1.5) 夜は帰宅して休む（戦時の兵士は夜も戦う）。昼は働き夜は静まる生活リズムを作る。
+    if (this._night && !(h.role === ROLE.SOLDIER && this._count(k.wars) > 0)) {
+      if (hd2 > 9) { h.gx = hcx; h.gy = hcy; }            // 町へ帰る
+      else { this._ringGoal(h, world, hcx, hcy, 0, 2); }  // 家の周りで休む
+      h.state = 13; return;
+    }
     // 2) 孤独 → 同胞のもとへ集まる。
     if (h.social > 1) {
       const soc = this._scan(h.x, h.y, CP.socialRadius, function (o) { return o.kid === h.kid ? 1 : 0; });
@@ -1191,13 +1225,22 @@
 
     // 4) 役割ごとの目的地・判断（各自ばらけた行動圏を巡回する）。
     if (h.role === ROLE.SOLDIER) {
-      // 交戦中の敵だけを標的にする。
-      const e = this._scan(h.x, h.y, 9, function (o) {
-        return (o.kid !== h.kid && o.kid !== 0 && self._atWar(h.kid, o.kid)) ? 2 : 0;
-      }).best;
+      // 周囲の戦力を把握（味方=count, 敵=count2, 最寄りの交戦相手=best）。
+      const scan = this._scan(h.x, h.y, 9, function (o) {
+        if (o.role !== ROLE.SOLDIER || o.kid === 0) return 0;
+        if (o.kid === h.kid) return 1;            // 味方兵
+        return self._atWar(h.kid, o.kid) ? 2 : 0; // 交戦中の敵兵
+      });
+      const e = scan.best;
       h._enemy = e;
+      // 士気: 局所的に大きく劣勢なら退却して味方と合流する（無謀な突撃を避ける）。
+      if (e && scan.count2 > scan.count + 1) {
+        h.gx = hcx; h.gy = hcy; h.state = 14; return;
+      }
+      // 敵が見えれば交戦。
       if (e) { h.gx = e.x | 0; h.gy = e.y | 0; h.state = 5; return; }
-      const t = this._nearestTile(h, world, 6, function (terr, ow) {
+      // 敵影が無ければ前線（交戦国の領土）へ前進する。
+      const t = this._nearestTile(h, world, 7, function (terr, ow) {
         return ow !== 0 && ow !== h.kid && self._atWar(h.kid, ow);
       });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 5; return; }
