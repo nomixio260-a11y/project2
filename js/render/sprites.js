@@ -44,7 +44,9 @@
   }
 
   // ===== 草食動物（鹿/羊風・右向き）=====
-  const HERB = [
+  // 歩行アニメ用に脚の2フレーム（脚を立てる/踏み出す）を用意する。
+  // フレーム0＝直立、フレーム1＝脚を斜めに踏み出した姿勢。
+  const HERB0 = [
     "..........",
     "......OOO.",
     ".OOOOOOBBO",
@@ -53,6 +55,16 @@
     ".OBBBBBBO.",
     ".O.O.O.O..",
     ".D.D.D.D..",
+  ];
+  const HERB1 = [
+    "..........",
+    "......OOO.",
+    ".OOOOOOBBO",
+    "OBLLLBBBEO",
+    "OBLLLBBBBO",
+    ".OBBBBBBO.",
+    "O.O.O.O...",
+    "..D.D.D.D.",
   ];
   const HERB_PAL = {
     O: [74, 58, 30],   // 輪郭
@@ -63,7 +75,7 @@
   };
 
   // ===== 肉食動物（狼/狐風・右向き）=====
-  const PRED = [
+  const PRED0 = [
     "..........",
     ".......OOO",
     "O.OOOOOBBO",
@@ -73,6 +85,16 @@
     ".O.O.O.O..",
     ".D.D.D.D..",
   ];
+  const PRED1 = [
+    "..........",
+    ".......OOO",
+    "O.OOOOOBBO",
+    "OBBBBBBBEO",
+    ".OBBBRBBBO",
+    ".OBBBBBBO.",
+    "O.O.O.O...",
+    "..D.D.D.D.",
+  ];
   const PRED_PAL = {
     O: [74, 20, 16],   // 輪郭
     B: [196, 74, 63],  // 体（赤茶）
@@ -81,19 +103,25 @@
     D: [60, 22, 18],   // 脚
   };
 
+  const FRAMES = {
+    0: [HERB0, HERB1, HERB_PAL], // 草食
+    1: [PRED0, PRED1, PRED_PAL], // 肉食
+  };
+
   const cache = {};
 
   Game.sprites = {
-    // species: 0=草食,1=肉食。faceLeft=true で左向き。
-    get: function (species, faceLeft) {
-      const key = species + (faceLeft ? "L" : "R");
+    // species: 0=草食,1=肉食。faceLeft=true で左向き。frame=0/1 で歩行コマ。
+    get: function (species, faceLeft, frame) {
+      const f = frame ? 1 : 0;
+      const key = species + "_" + f + (faceLeft ? "L" : "R");
       if (cache[key]) return cache[key];
-      let right = cache[species + "R"];
+      const rkey = species + "_" + f + "R";
+      let right = cache[rkey];
       if (!right) {
-        right = species === Game.SPECIES.PREDATOR
-          ? build(PRED, PRED_PAL)
-          : build(HERB, HERB_PAL);
-        cache[species + "R"] = right;
+        const def = FRAMES[species] || FRAMES[0];
+        right = build(def[f], def[2]);
+        cache[rkey] = right;
       }
       if (!faceLeft) return right;
       const left = flipH(right);
