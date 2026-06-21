@@ -411,6 +411,30 @@ html, body {
 .nations-body::-webkit-scrollbar { width: 7px; }
 .nations-body::-webkit-scrollbar-thumb { background: rgba(120,150,210,0.4); border-radius: 4px; }
 
+/* 年代記パネル（諸国の下に小さく固定表示） */
+.chronicle { flex: 0 0 auto; }
+.chronicle .chronicle-body {
+  overflow-y: auto;
+  max-height: 164px;
+  padding: 6px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 150, 210, 0.4) transparent;
+}
+.chronicle .chronicle-body::-webkit-scrollbar { width: 7px; }
+.chronicle .chronicle-body::-webkit-scrollbar-thumb { background: rgba(120,150,210,0.4); border-radius: 4px; }
+.chronicle-row {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  padding: 3px 2px;
+  font-size: 11px;
+  line-height: 1.3;
+  border-bottom: 1px solid rgba(120, 150, 210, 0.08);
+}
+.chronicle-year { flex: 0 0 auto; color: #8fa6d6; font-variant-numeric: tabular-nums; font-size: 10px; }
+.chronicle-text { color: #d6deef; }
+.chronicle-empty { color: #7e88a0; font-style: italic; }
+
 .nation-row {
   display: flex;
   align-items: center;

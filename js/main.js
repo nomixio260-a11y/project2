@@ -119,6 +119,7 @@
     if (Game.hud) Game.hud.init();
     if (Game.minimap) Game.minimap.init();
     if (Game.nations) Game.nations.init();
+    if (Game.chronicle) Game.chronicle.init();
     if (Game.help) Game.help.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。

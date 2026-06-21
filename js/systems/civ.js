@@ -97,6 +97,12 @@
     marketRate: 0.06,    // 商人が1ティックに生む富
     templeCalm: 0.02,    // 神官が1ティックに鎮める不満
     equipChance: 0.08,   // 就労時に在庫から装備を受け取る確率
+    // 航海・植民（時代1以降、沿岸の開拓者が海を越えて新天地に植民する）
+    embarkChance: 0.16,  // 近くに未開の陸が無い沿岸の開拓者が船出する確率
+    sailSpeed: 0.5,      // 航海速度（陸の移動より速い）
+    maxSailRange: 40,    // 船出して到達を試みる最大距離
+    minSailGap: 6,       // 目的地まで最低この距離（海を隔てた別の陸）
+    sailMetab: 0.004,    // 航海中の食料消費（海難のリスク）
   };
 
   const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
@@ -139,6 +145,7 @@
     this._births = [];  // 当ティックに生まれた子（次ティックから処理）
     this._tickN = 0;
     this._tcursor = 0; // 領土メンテ走査の行カーソル
+    this.events = [];  // 年代記（世界の主要な出来事のログ）
     // 近傍探索グリッド。
     this._cap = Game.config.sim.maxPeople;
     this._next = new Int32Array(this._cap);
@@ -146,6 +153,22 @@
     this._gw = 0;
     this._gh = 0;
   }
+
+  // 年代記に出来事を記録する（新しいものを末尾に、上限つき）。
+  CivSystem.prototype._logEvent = function (text) {
+    const clk = Game.state.clock;
+    this.events.push({ year: clk ? clk.year : 0, text: text });
+    if (this.events.length > 80) this.events.shift();
+  };
+
+  // UI 用: 直近の出来事（新しい順）。
+  CivSystem.prototype.getEvents = function (n) {
+    const out = [];
+    const ev = this.events;
+    const m = Math.min(n || 12, ev.length);
+    for (let i = 0; i < m; i++) out.push(ev[ev.length - 1 - i]);
+    return out;
+  };
 
   CivSystem.prototype.setWorld = function (world) {
     this.world = world;
@@ -157,6 +180,7 @@
     this.kingdoms = [null];
     this.people.length = 0;
     this._births.length = 0;
+    this.events.length = 0;
     if (this.world) this.world.owner.fill(0);
   };
 
@@ -472,6 +496,9 @@
       // 放浪者（無所属）: 集まり、やがて国を興す。
       if (h.kid === 0) { this._tickNomad(h, world, tN, i); continue; }
 
+      // 航海中の入植者: 海を渡って新天地を目指す（専用の更新）。
+      if (h.sailing) { this._tickSail(h, world); continue; }
+
       const k = kingdoms[h.kid];
       if (!k || !k.alive) {
         // 国が滅んだ → 難民（流民）として生き延び、別の国へ加入/再建を目指す。
@@ -656,9 +683,10 @@
   };
 
   CivSystem.prototype._declareWar = function (a, b) {
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    if (ka && kb) this._logEvent("⚔ " + ka.name + " が " + kb.name + " に宣戦布告");
     this._engage(a, b);
     // 同盟への呼びかけ（ブロック戦争）: 双方の同盟国も参戦する。
-    const ka = this.kingdoms[a], kb = this.kingdoms[b];
     for (const c in ka.allies) { const ci = +c; if (ci !== b) this._engage(ci, b); }
     for (const c in kb.allies) { const ci = +c; if (ci !== a) this._engage(ci, a); }
   };
@@ -727,7 +755,11 @@
       o.kid = winner.id; o.clan = clan; o.home = { x: city.x, y: city.y }; o.farm = null;
       winner.humanCount++; winner.roleCount[o.role]++;
     }
-    if (loser.cities.length === 0 || loser.tileCount <= 0) loser.alive = false;
+    this._logEvent("🏰 " + winner.name + " が " + loser.name + " の都市を併合した");
+    if (loser.cities.length === 0 || loser.tileCount <= 0) {
+      loser.alive = false;
+      this._logEvent("☠ " + loser.name + " が滅亡した");
+    }
   };
 
   CivSystem.prototype._formAlliance = function (a, b) {
@@ -746,7 +778,11 @@
       const ka = ks[a];
       if (!ka || !ka.alive) continue;
       // 無人・無領土の国は消滅。
-      if (ka.humanCount <= 0 || ka.tileCount <= 0) { ka.alive = false; continue; }
+      if (ka.humanCount <= 0 || ka.tileCount <= 0) {
+        ka.alive = false;
+        this._logEvent("☠ " + ka.name + " が滅亡した");
+        continue;
+      }
       // 機能建築の数を集計（市場・鍛冶場・神殿などの効果に使う）。
       this._recountFacilities(ka);
       const fac = ka.facilities;
@@ -754,6 +790,10 @@
       ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5) * this._eff(ka, "trade");
       // 技術: 都市・人口・富・鍛冶場で進歩（賢明・政体で加速）。
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6) * this._eff(ka, "tech");
+      // 時代の進歩を年代記に記録（初到達のみ）。
+      const eidx = Math.min(ERAS.length - 1, (ka.tech / TECH_PER_ERA) | 0);
+      if (ka._eraIdx === undefined) ka._eraIdx = eidx;
+      else if (eidx > ka._eraIdx) { ka._eraIdx = eidx; this._logEvent("✦ " + ka.name + " が" + ERAS[eidx] + "を迎えた"); }
       // 道具・武具の備蓄は人口を上限に飽和（武装度の指標）。
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
 
@@ -933,6 +973,7 @@
     nk.relations[parent.id] = -70; parent.relations[id] = -70;
     nk.wars[parent.id] = t; parent.wars[id] = t;
     parent.unrest = 45;
+    this._logEvent("✊ " + nk.name + " が " + parent.name + " から独立した");
   };
 
   // UI 用: 各国の要約（人口降順）。
@@ -1091,6 +1132,7 @@
       k.humanCount++;
       k.roleCount[o.role]++;
     }
+    this._logEvent("⚑ " + k.name + " が建国された");
   };
 
   CivSystem.prototype._tryReproduceNomad = function (h) {
@@ -1252,6 +1294,16 @@
       this._maybeFoundTown(h, k); // 遠地で新集落
       const t = this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow) { return ow === 0 && tile.isLand(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 4; return; }
+      // 近くに未開の陸が無い → 海を越える植民を試みる（時代1以降・沿岸・確率）。
+      if (k.tech >= TECH_PER_ERA && this.rand() < CP.embarkChance && this._coastal(world, h.x | 0, h.y | 0)) {
+        const tgt = this._findOverseasLand(world, h.x | 0, h.y | 0);
+        if (tgt) {
+          h.sailing = true; h.sea = tgt; h.gx = tgt.x; h.gy = tgt.y; h.state = 15;
+          this._embarks = (this._embarks || 0) + 1;
+          this._logEvent(k.name + "の入植者が海へ船出した");
+          return;
+        }
+      }
       this._ringGoal(h, world, hcx, hcy, 4, CP.tether); // 未開地が無ければ領内を広く移動
       h.state = 4; return;
     }
@@ -1295,6 +1347,79 @@
     if (this.rand() < 0.25) { h.gx = hcx; h.gy = hcy; } // 帰宅
     else { h.gx = h.farm.x; h.gy = h.farm.y; }          // 畑へ出勤
     h.state = 7;
+  };
+
+  // (x,y) が海に接する沿岸タイルか（4近傍に水）。
+  CivSystem.prototype._coastal = function (world, x, y) {
+    const W = world.width, H = world.height, terr = world.terrain;
+    if (x > 0 && tile.isWater(terr[y * W + x - 1])) return true;
+    if (x < W - 1 && tile.isWater(terr[y * W + x + 1])) return true;
+    if (y > 0 && tile.isWater(terr[(y - 1) * W + x])) return true;
+    if (y < H - 1 && tile.isWater(terr[(y + 1) * W + x])) return true;
+    return false;
+  };
+
+  // 海を隔てた未開の陸地を探す。中点が海であること（=海路で渡る）を条件に、
+  // minSailGap〜maxSailRange の範囲でランダム方向に走査して最初の候補を返す。
+  CivSystem.prototype._findOverseasLand = function (world, x, y) {
+    const W = world.width, H = world.height, terr = world.terrain, owner = world.owner;
+    const minR = CP.minSailGap, maxR = CP.maxSailRange;
+    // 8方向を起点ランダムで一巡。各方向に外側へ伸ばし、海を越えた先の未開地を探す。
+    const start = (this.rand() * 8) | 0;
+    for (let s = 0; s < 8; s++) {
+      const a = ((start + s) % 8) * (Math.PI / 4);
+      const cx = Math.cos(a), cy = Math.sin(a);
+      let crossedWater = false;
+      for (let r = 2; r <= maxR; r++) {
+        const nx = (x + cx * r) | 0, ny = (y + cy * r) | 0;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) break;
+        const i = ny * W + nx;
+        if (tile.isWater(terr[i])) { crossedWater = true; continue; }
+        // 陸に到達。海を越えており、未開（無所属）かつ十分遠ければ植民先。
+        if (crossedWater && r >= minR && owner[i] === 0 && tile.isLand(terr[i])) {
+          return { x: nx, y: ny };
+        }
+        // 海を越える前に陸（地続き）に当たったら、その方向は不可。
+        if (!crossedWater) break;
+      }
+    }
+    return null;
+  };
+
+  // 航海中の入植者の1ティック: 目的地へ水上を直進し、上陸して植民する。
+  CivSystem.prototype._tickSail = function (h, world) {
+    h.age++;
+    h.food -= CP.sailMetab;
+    const tx = h.sea.x + 0.5, ty = h.sea.y + 0.5;
+    const dx = tx - h.x, dy = ty - h.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 1.3) { this._landColony(h); return; }
+    const sp = CP.sailSpeed;
+    h.x += dx / d * sp; h.y += dy / d * sp;
+    h.hx = dx / d * sp; h.hy = dy / d * sp;
+    if (h.food <= 0 || h.age > CP.maxAge) h.alive = false; // 海難（行方不明）
+  };
+
+  // 上陸して植民地（新王国）を興す。母国の宗教・技術を引き継ぐ。
+  CivSystem.prototype._landColony = function (h) {
+    const k0 = this.kingdoms[h.kid];
+    const tx = h.sea ? h.sea.x : (h.x | 0), ty = h.sea ? h.sea.y : (h.y | 0);
+    h.sailing = false; h.sea = null;
+    h.x = tx + 0.5; h.y = ty + 0.5;
+    const nk = this._newKingdom(tx, ty);
+    // 入植者を母国から外す。
+    if (k0 && k0.alive) { k0.humanCount--; k0.roleCount[h.role]--; }
+    if (nk) {
+      if (k0) { nk.religion = k0.religion; nk.tech = k0.tech * 0.6; }
+      h.kid = nk.id; h.clan = ++nk.clanSeq; h.role = ROLE.EXPLORER;
+      h.home = { x: tx, y: ty }; h.farm = null; h.work = null;
+      nk.humanCount++; nk.roleCount[h.role]++;
+      this._colonies = (this._colonies || 0) + 1;
+      this._logEvent(nk.name + " が海の彼方に建国した" + (k0 ? "（" + k0.name + "の植民地）" : ""));
+    } else {
+      // 上陸地が既に所有/不適 → 放浪者になる。
+      h.kid = 0; h.clan = 0; h.role = ROLE.EXPLORER; h.home = null; h.farm = null; h.work = null;
+    }
   };
 
   // (x,y) に一致する k の都市オブジェクトを返す。
@@ -1546,13 +1671,14 @@
                 k.cities.push(captured);
                 if (other.cities.length === 0) {
                   other.alive = false; // 最後の都市を失い国家崩壊
+                  this._logEvent("☠ " + other.name + " が " + k.name + " に征服された");
                 } else if (wasCapital) {
                   other.cities[0].capital = true; // 遷都
                 }
                 break;
               }
             }
-            if (other.alive && other.tileCount <= 0) other.alive = false;
+            if (other.alive && other.tileCount <= 0) { other.alive = false; this._logEvent("☠ " + other.name + " が滅亡した"); }
           }
         }
       }

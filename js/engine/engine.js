@@ -78,6 +78,9 @@
     // 諸国パネル（内部で間引いて更新）。
     if (Game.nations) Game.nations.tick(dt);
 
+    // 年代記パネル（内部で間引いて更新）。
+    if (Game.chronicle) Game.chronicle.tick(dt);
+
     // ミニマップ（内部で間引いて描画）。
     if (Game.minimap) Game.minimap.draw(dt, this.camera);
 
