@@ -214,6 +214,8 @@
   Renderer.prototype.draw = function (camera) {
     this.flushDirty();
     this.flushTerritoryDirty();
+    // 歩行アニメ用の時間（秒）。
+    this._t = (typeof performance !== "undefined" ? performance.now() : Date.now()) * 0.001;
     const ctx = this.ctx;
     const cfg = Game.config;
     const tile = cfg.tilePx;
@@ -309,11 +311,24 @@
     // 近景: ピクセルアートのスプライトで描画（体格・向き付き）。
     const sprites = Game.sprites;
     ctx.imageSmoothingEnabled = false;
+    // 移動検知用の前フレーム座標・移動カウントダウン（描画側で保持）。
+    if (!this._cpx || this._cpx.length < e.capacity) {
+      this._cpx = new Float32Array(e.capacity);
+      this._cpy = new Float32Array(e.capacity);
+      this._cmv = new Uint8Array(e.capacity);
+    }
+    const t = this._t;
     for (let i = 0; i < n; i++) {
       if (!e.alive[i]) continue;
       const x = e.x[i];
       const y = e.y[i];
+      // 移動していれば歩行アニメをしばらく継続（tick間も滑らかに）。
+      const ddx = x - this._cpx[i], ddy = y - this._cpy[i];
+      if (ddx * ddx + ddy * ddy > 1e-5) this._cmv[i] = 16;
+      this._cpx[i] = x; this._cpy[i] = y;
       if (x < range.x0 || x > range.x1 || y < range.y0 || y > range.y1) continue;
+      const moving = this._cmv[i] > 0;
+      if (moving) this._cmv[i]--;
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
       const gene = e.gene[i] || 1;
@@ -321,10 +336,14 @@
       if (sprites) {
         // 進行方向で左右反転。heading 0 = 右。
         const faceLeft = Math.cos(e.heading[i] || 0) < 0;
-        const spr = sprites.get(type, faceLeft);
-        const dh = Math.max(7, scale * 1.5 * gene);
+        const dh = Math.max(6, scale * 1.0 * gene);
+        // 歩行: 脚の2コマ切替＋上下のバウンドで「動いてる感」を出す。
+        const ph = moving ? t * 7 + i * 0.9 : 0;
+        const frame = moving && Math.sin(ph) > 0 ? 1 : 0;
+        const bob = moving ? Math.abs(Math.sin(ph)) * dh * 0.10 : 0;
+        const spr = sprites.get(type, faceLeft, frame);
         const dw = dh * (spr.width / spr.height);
-        ctx.drawImage(spr, sx - dw * 0.5, sy - dh * 0.5, dw, dh);
+        ctx.drawImage(spr, sx - dw * 0.5, sy - dh * 0.5 - bob, dw, dh);
       } else {
         // フォールバック（スプライト未ロード時）。
         const r = scale * 0.42 * gene;
@@ -348,11 +367,18 @@
     const people = civ.people;
     ctx.imageSmoothingEnabled = false;
     const detailed = scale >= 5; // 近景は人型、遠景は簡易点
-    const u = Math.max(1, Math.round(scale * 0.14)); // ドット単位
+    const u = Math.max(1, Math.round(scale * 0.085)); // ドット単位（人物は世界に対し小さめ）
+    const t = this._t;
 
     for (let p = 0; p < people.length; p++) {
       const person = people[p];
+      // 移動検知（前フレーム座標を各人に保持し、しばらく歩行アニメを継続）。
+      const ddx = person.x - (person._px || 0), ddy = person.y - (person._py || 0);
+      if (ddx * ddx + ddy * ddy > 1e-5) person._mv = 16;
+      person._px = person.x; person._py = person.y;
       if (person.x < range.x0 || person.x > range.x1 || person.y < range.y0 || person.y > range.y1) continue;
+      const moving = (person._mv || 0) > 0;
+      if (moving) person._mv--;
       const k = person.kid ? civ.kingdoms[person.kid] : null;
       const sx = Math.round(camera.worldToScreenX((person.x + 0.5) * tile));
       const sy = Math.round(camera.worldToScreenY((person.y + 0.5) * tile));
@@ -371,34 +397,38 @@
       // 近景: ちゃんとした人型（向きに応じて顔/腕を寄せる）。
       const faceLeft = (person.hx || 0) < -0.001;
       const fd = faceLeft ? -1 : 1;
+      // 歩行の振り（脚は前後、腕は逆位相）＋胴の小さなバウンド。
+      const ph = moving ? t * 6 + p * 0.7 : 0;
+      const sw = moving ? Math.round(Math.sin(ph) * u) : 0; // -u..u
+      const ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * u * 0.5) : 0; // 上下動
       // 影。
       ctx.fillStyle = "rgba(0,0,0,0.30)";
       ctx.fillRect(sx - 2 * u, sy + 3 * u, 4 * u, u);
-      // 脚（暗）。
+      // 脚（暗・交互に踏み出す）。
       ctx.fillStyle = "#3a2f1e";
-      ctx.fillRect(sx - 2 * u, sy + u, 2 * u, 2 * u);
-      ctx.fillRect(sx, sy + u, 2 * u, 2 * u);
+      ctx.fillRect(sx - 2 * u + sw, sy + u, 2 * u, 2 * u);
+      ctx.fillRect(sx - sw, sy + u, 2 * u, 2 * u);
       // 胴（王国色）。
       ctx.fillStyle = body;
-      ctx.fillRect(sx - 2 * u, sy - 2 * u, 4 * u, 3 * u);
-      // 腕（肌・進行方向側を少し前へ）。
+      ctx.fillRect(sx - 2 * u, sy - 2 * u + ob, 4 * u, 3 * u);
+      // 腕（肌・歩行で前後に振る＝脚と逆）。
       ctx.fillStyle = "#e9bd8e";
-      ctx.fillRect(sx - 3 * u, sy - 2 * u, u, 2 * u);
-      ctx.fillRect(sx + 2 * u, sy - 2 * u, u, 2 * u);
+      ctx.fillRect(sx - 3 * u - sw, sy - 2 * u + ob, u, 2 * u);
+      ctx.fillRect(sx + 2 * u + sw, sy - 2 * u + ob, u, 2 * u);
       // 頭（肌）。
       ctx.fillStyle = "#f3cd9b";
-      ctx.fillRect(sx - 2 * u, sy - 5 * u, 4 * u, 3 * u);
+      ctx.fillRect(sx - 2 * u, sy - 5 * u + ob, 4 * u, 3 * u);
       // 髪（暗）。
       ctx.fillStyle = "#4a3422";
-      ctx.fillRect(sx - 2 * u, sy - 5 * u, 4 * u, u);
+      ctx.fillRect(sx - 2 * u, sy - 5 * u + ob, 4 * u, u);
       // 目（向き側に1ドット）。
       ctx.fillStyle = "#2a1c10";
-      ctx.fillRect(sx + (fd > 0 ? u : -2 * u), sy - 4 * u, u, u);
+      ctx.fillRect(sx + (fd > 0 ? u : -2 * u), sy - 4 * u + ob, u, u);
       // 役割の帽子。
       const hat = ROLE_HAT[person.role];
       if (hat) {
         ctx.fillStyle = hat;
-        ctx.fillRect(sx - 2 * u, sy - 6 * u, 4 * u, u);
+        ctx.fillRect(sx - 2 * u, sy - 6 * u + ob, 4 * u, u);
       }
     }
   };
@@ -630,7 +660,8 @@
         // 近景: 人間が建てた実際の建物を描く。
         const bs = city.buildings;
         if (bs && bs.length) {
-          const size = Math.max(7, scale * 1.1);
+          // 建物は人物より明確に大きく（世界が小さく見えないように）。
+          const size = Math.max(10, scale * 1.95);
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
             const img = sprites.building(bd.t);
