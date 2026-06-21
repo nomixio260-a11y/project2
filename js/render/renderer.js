@@ -385,6 +385,26 @@
       const col = k ? k.color : [150, 140, 122];
       const body = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
 
+      // 航海中の入植者は船で描く（海の上を進む）。
+      if (person.sailing) {
+        const uu = Math.max(1, Math.round(scale * 0.1));
+        const faceL = (person.hx || 0) < -0.001;
+        // 帆。
+        ctx.fillStyle = "#ece6d2";
+        ctx.fillRect(sx - uu, sy - 4 * uu, uu, 3 * uu);
+        ctx.fillStyle = "#6b4a2a"; // マスト
+        ctx.fillRect(sx, sy - 4 * uu, Math.max(1, uu * 0.5) | 0 || 1, 4 * uu);
+        // 船体。
+        ctx.fillStyle = "#5a3d24";
+        ctx.fillRect(sx - 3 * uu, sy, 6 * uu, 2 * uu);
+        ctx.fillStyle = "#7a5230";
+        ctx.fillRect(sx - 2 * uu, sy - uu, 4 * uu, uu);
+        // 航跡。
+        ctx.fillStyle = "rgba(220,235,255,0.5)";
+        ctx.fillRect(sx + (faceL ? 3 * uu : -4 * uu), sy + uu, uu, uu);
+        continue;
+      }
+
       if (!detailed) {
         // 遠景: 頭＋胴の2ドット。
         ctx.fillStyle = body;
