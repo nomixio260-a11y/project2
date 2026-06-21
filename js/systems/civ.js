@@ -997,8 +997,17 @@
       this._ringGoal(h, world, hcx, hcy, 0, 4);
       h.state = 6; return;
     }
-    // FARMER（既定）: 町を囲む農地を耕しに広がる（毎回別の区画へ通う）。
-    this._ringGoal(h, world, hcx, hcy, 2, CP.tetherSettled);
+    // FARMER（既定）: 町の周りに自分の畑を持ち、出勤して耕し、たまに帰宅する（職住近接）。
+    if (!h.farm) {
+      const ang = this.rand() * Math.PI * 2;
+      const dr = 3 + this.rand() * (CP.tetherSettled - 3);
+      h.farm = {
+        x: Game.utils.clamp((hcx + Math.cos(ang) * dr) | 0, 0, world.width - 1),
+        y: Game.utils.clamp((hcy + Math.sin(ang) * dr) | 0, 0, world.height - 1),
+      };
+    }
+    if (this.rand() < 0.25) { h.gx = hcx; h.gy = hcy; } // 帰宅
+    else { h.gx = h.farm.x; h.gy = h.farm.y; }          // 畑へ出勤
     h.state = 7;
   };
 

@@ -101,4 +101,43 @@
       return left;
     },
   };
+
+  // ===== 建物 =====
+  const HOUSE = [
+    "...OO...",
+    "..ORRO..",
+    ".ORRRRO.",
+    "ORRRRRRO",
+    ".OWWWWO.",
+    ".OWDDWO.",
+    ".OWDDWO.",
+    ".OWWWWO.",
+  ];
+  const HOUSE_PAL = {
+    O: [60, 40, 28],     // 輪郭
+    R: [150, 66, 50],    // 屋根（赤茶）
+    W: [206, 184, 140],  // 壁
+    D: [74, 51, 36],     // 戸口
+  };
+  const KEEP = [
+    "O.O.O.O.",
+    "OOOOOOOO",
+    ".KKKKKK.",
+    ".KKBBKK.",
+    ".KKBBKK.",
+    ".KKKKKK.",
+    ".KKBBKK.",
+    ".KKDDKK.",
+    ".KKKKKK.",
+  ];
+  const KEEP_PAL = {
+    O: [70, 70, 62],
+    K: [150, 150, 138],  // 石壁
+    B: [58, 86, 120],    // 窓
+    D: [40, 30, 22],     // 門
+  };
+
+  let _house = null, _keep = null;
+  Game.sprites.house = function () { return _house || (_house = build(HOUSE, HOUSE_PAL)); };
+  Game.sprites.keep = function () { return _keep || (_keep = build(KEEP, KEEP_PAL)); };
 })(window.Game);
