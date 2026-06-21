@@ -137,7 +137,65 @@
     D: [40, 30, 22],     // 門
   };
 
-  let _house = null, _keep = null;
-  Game.sprites.house = function () { return _house || (_house = build(HOUSE, HOUSE_PAL)); };
-  Game.sprites.keep = function () { return _keep || (_keep = build(KEEP, KEEP_PAL)); };
+  // 石器時代の竪穴/茅葺き小屋。
+  const HUT = [
+    "........",
+    "...OO...",
+    "..OTTO..",
+    ".OTTTTO.",
+    "OTTTTTTO",
+    "OWWDDWWO",
+    "OWWDDWWO",
+    ".OOOOOO.",
+  ];
+  const HUT_PAL = {
+    O: [50, 36, 22], T: [156, 123, 74], W: [122, 92, 58], D: [58, 38, 22],
+  };
+  // 古典・中世の石造邸宅（2階建て）。
+  const MANOR = [
+    "..OOOO..",
+    ".ORRRRO.",
+    "ORRRRRRO",
+    "OWBWWBWO",
+    "OWWWWWWO",
+    "OWBWWBWO",
+    "OWWDDWWO",
+    "OOOOOOOO",
+  ];
+  const MANOR_PAL = {
+    O: [54, 54, 48], R: [91, 107, 128], W: [184, 180, 164], B: [58, 85, 112], D: [74, 51, 36],
+  };
+  // 神殿（列柱）。
+  const TEMPLE = [
+    "...OO...",
+    "..OPPO..",
+    ".OPPPPO.",
+    "OPPPPPPO",
+    "OC.CC.CO",
+    "OC.CC.CO",
+    "OCCCCCCO",
+    "OOOOOOOO",
+  ];
+  const TEMPLE_PAL = {
+    O: [96, 92, 78], P: [224, 220, 200], C: [206, 202, 184],
+  };
+
+  const _b = {};
+  function bget(key, grid, pal) { return _b[key] || (_b[key] = build(grid, pal)); }
+  Game.sprites.house = function () { return bget("house", HOUSE, HOUSE_PAL); };
+  Game.sprites.keep = function () { return bget("keep", KEEP, KEEP_PAL); };
+  Game.sprites.hut = function () { return bget("hut", HUT, HUT_PAL); };
+  Game.sprites.manor = function () { return bget("manor", MANOR, MANOR_PAL); };
+  Game.sprites.temple = function () { return bget("temple", TEMPLE, TEMPLE_PAL); };
+
+  // 建物タイプID → スプライト（civ の Game.BUILDING と対応）。
+  Game.sprites.building = function (t) {
+    switch (t) {
+      case 0: return Game.sprites.hut();
+      case 2: return Game.sprites.manor();
+      case 3: return Game.sprites.keep();
+      case 4: return Game.sprites.temple();
+      default: return Game.sprites.house(); // 1
+    }
+  };
 })(window.Game);
