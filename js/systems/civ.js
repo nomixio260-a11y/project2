@@ -18,6 +18,17 @@
   const tile = Game.tile;
 
   const ROLE = { EXPLORER: 0, FARMER: 1, BUILDER: 2, SOLDIER: 3 };
+  // 建物タイプ（描画 sprites.building と対応）。0=小屋,1=家,2=邸宅,3=砦,4=神殿。
+  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4 };
+  const MAX_BUILDINGS = 14; // 1都市の建物上限
+
+  // 時代に応じた住居の種別（石器=小屋 / 青銅・鉄=家 / 古典以降=邸宅）。
+  function dwellingTier(tech) {
+    const era = (tech / TECH_PER_ERA) | 0;
+    if (era <= 0) return BUILDING.HUT;
+    if (era <= 2) return BUILDING.HOUSE;
+    return BUILDING.MANOR;
+  }
 
   const CP = {
     popStart: 5,
@@ -165,7 +176,7 @@
       ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
       gov: GOV_TYPES[(this.rand() * GOV_TYPES.length) | 0],
       color: makeColor(this.rand),
-      cities: [{ x: x, y: y, capital: true, level: 1 }],
+      cities: [{ x: x, y: y, capital: true, level: 1, buildings: [{ x: x, y: y, t: BUILDING.KEEP }] }],
       tileCount: 1,
       humanCount: 0,
       roleCount: [0, 0, 0, 0],
@@ -661,7 +672,7 @@
       ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
       gov: GOV_TYPES[(this.rand() * GOV_TYPES.length) | 0],
       color: makeColor(this.rand),
-      cities: [{ x: city.x, y: city.y, capital: true, level: city.level || 1 }],
+      cities: [{ x: city.x, y: city.y, capital: true, level: city.level || 1, buildings: (city.buildings || []) }],
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0], clanSeq: 0,
       relations: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, religion: parent.religion,
@@ -941,6 +952,20 @@
     const hdx = hcx + 0.5 - h.x, hdy = hcy + 0.5 - h.y;
     const hd2 = hdx * hdx + hdy * hdy;
 
+    // 0.5) 戦時の民間人は侵入してきた敵兵から逃げる（賢い回避行動）。
+    if (h.role !== ROLE.SOLDIER && this._count(k.wars) > 0) {
+      const foe = this._scan(h.x, h.y, 6, function (o) {
+        return (o.kid !== h.kid && o.kid !== 0 && o.role === ROLE.SOLDIER && self._atWar(h.kid, o.kid)) ? 2 : 0;
+      }).best;
+      if (foe) {
+        // 敵から離れる向き＋自国の町方向へ退避。
+        const ax = h.x - foe.x, ay = h.y - foe.y;
+        h.gx = Game.utils.clamp((h.x + ax + (hcx - h.x) * 0.3) | 0, 0, world.width - 1);
+        h.gy = Game.utils.clamp((h.y + ay + (hcy - h.y) * 0.3) | 0, 0, world.height - 1);
+        h.state = 8; return;
+      }
+    }
+
     // 1) 強い空腹 → 近くの可食地へ。
     if (h.food < 0.4) {
       const t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
@@ -982,19 +1007,15 @@
       h.state = 4; return;
     }
     if (h.role === ROLE.BUILDER) {
-      // 町に詰めて発展させる。遠地に出たら新集落を興す。
-      if (hd2 < 9) {
-        if (this.rand() < 0.1) {
-          for (let c = 0; c < k.cities.length; c++) {
-            const dx = k.cities[c].x + 0.5 - h.x, dy = k.cities[c].y + 0.5 - h.y;
-            if (dx * dx + dy * dy < 9 && k.cities[c].level < 6) { k.cities[c].level++; break; }
-          }
-        }
+      // 町に居れば実際に建設・建て替え。遠地に出たら新集落を興す。
+      if (hd2 < 36) {
+        const city = this._cityAt(k, hcx, hcy);
+        if (city) this._construct(k, city, world);
       } else {
         this._maybeFoundTown(h, k);
       }
-      // 町なかをうろつく（中心に固まらないよう小さく散らす）。
-      this._ringGoal(h, world, hcx, hcy, 0, 4);
+      // 工事現場（町なか）をうろつく。
+      this._ringGoal(h, world, hcx, hcy, 0, 5);
       h.state = 6; return;
     }
     // FARMER（既定）: 町の周りに自分の畑を持ち、出勤して耕し、たまに帰宅する（職住近接）。
@@ -1009,6 +1030,66 @@
     if (this.rand() < 0.25) { h.gx = hcx; h.gy = hcy; } // 帰宅
     else { h.gx = h.farm.x; h.gy = h.farm.y; }          // 畑へ出勤
     h.state = 7;
+  };
+
+  // (x,y) に一致する k の都市オブジェクトを返す。
+  CivSystem.prototype._cityAt = function (k, x, y) {
+    for (let c = 0; c < k.cities.length; c++) {
+      if (k.cities[c].x === x && k.cities[c].y === y) return k.cities[c];
+    }
+    return k.cities[0];
+  };
+
+  // 建築家が都市で建設/建て替えを行う（人間が街を作る）。
+  CivSystem.prototype._construct = function (k, city, world) {
+    if (!city.buildings) city.buildings = [];
+    const tier = dwellingTier(k.tech);
+    // 1) 空きがあれば新しい住居を建てる。
+    if (city.buildings.length < MAX_BUILDINGS && this.rand() < 0.16) {
+      const spot = this._buildSpot(world, k, city);
+      if (spot) {
+        city.buildings.push({ x: spot.x, y: spot.y, t: tier });
+        city.level = 1 + ((city.buildings.length / 3) | 0);
+        return;
+      }
+    }
+    // 2) 時代遅れの住居を現代の様式へ建て替える。
+    if (this.rand() < 0.12) {
+      for (let bi = 0; bi < city.buildings.length; bi++) {
+        const bd = city.buildings[bi];
+        if (bd.t !== BUILDING.KEEP && bd.t !== BUILDING.TEMPLE && bd.t < tier) { bd.t = tier; return; }
+      }
+    }
+    // 3) 発展した都市は神殿を建てる（古典以降・首都/大都市）。
+    if (tier >= BUILDING.MANOR && city.buildings.length >= 6 && this.rand() < 0.04) {
+      let hasTemple = false;
+      for (let bi = 0; bi < city.buildings.length; bi++) if (city.buildings[bi].t === BUILDING.TEMPLE) { hasTemple = true; break; }
+      if (!hasTemple) {
+        const spot = this._buildSpot(world, k, city);
+        if (spot) city.buildings.push({ x: spot.x, y: spot.y, t: BUILDING.TEMPLE });
+      }
+    }
+  };
+
+  // 都市の近くで建設可能な空きタイル（自国の陸地・建物が未設置）を探す。
+  CivSystem.prototype._buildSpot = function (world, k, city) {
+    const W = world.width, H = world.height, owner = world.owner;
+    for (let r = 1; r <= 4; r++) {
+      for (let tries = 0; tries < 6; tries++) {
+        const ang = this.rand() * Math.PI * 2;
+        const x = (city.x + Math.cos(ang) * r) | 0;
+        const y = (city.y + Math.sin(ang) * r) | 0;
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const i = y * W + x;
+        if (owner[i] !== k.id || !tile.isLand(world.terrain[i])) continue;
+        let occupied = false;
+        for (let bi = 0; bi < city.buildings.length; bi++) {
+          if (city.buildings[bi].x === x && city.buildings[bi].y === y) { occupied = true; break; }
+        }
+        if (!occupied) return { x: x, y: y };
+      }
+    }
+    return null;
   };
 
   // (cx,cy) を中心とした [minR,maxR] のリング内のランダムな点を目標にする。
@@ -1156,7 +1237,7 @@
     const i = (h.y | 0) * world.width + (h.x | 0);
     const fertile = !world.fertility || world.fertility[i] > 0.3;
     if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate) {
-      k.cities.push({ x: h.x | 0, y: h.y | 0, capital: false, level: 1 });
+      k.cities.push({ x: h.x | 0, y: h.y | 0, capital: false, level: 1, buildings: [] });
     }
   };
 

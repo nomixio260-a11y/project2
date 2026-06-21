@@ -627,25 +627,25 @@
           continue;
         }
 
-        // 近景: 家々を中心の周りに配置（位置は安定）。発展度で軒数増。
-        const houses = Math.min(CITY_PATTERN.length, 2 + level * 2);
-        const hSize = Math.max(6, scale * 1.0);
-        const hImg = sprites.house();
-        for (let hI = (city.capital ? 1 : 0); hI < houses; hI++) {
-          const off = CITY_PATTERN[hI];
-          const hx = camera.worldToScreenX((city.x + 0.5 + off[0]) * tile);
-          const hy = camera.worldToScreenY((city.y + 0.5 + off[1]) * tile);
-          const hw = hSize, hh = hSize * (hImg.height / hImg.width);
-          ctx.drawImage(hImg, (hx - hw * 0.5) | 0, (hy - hh) | 0, hw | 0, hh | 0);
+        // 近景: 人間が建てた実際の建物を描く。
+        const bs = city.buildings;
+        if (bs && bs.length) {
+          const size = Math.max(7, scale * 1.1);
+          for (let bi = 0; bi < bs.length; bi++) {
+            const bd = bs[bi];
+            const img = sprites.building(bd.t);
+            const bw = (bd.t === 3 ? size * 1.35 : size); // 砦は大きめ
+            const bh = bw * (img.height / img.width);
+            const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
+            const by = camera.worldToScreenY((bd.y + 0.5) * tile);
+            ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
+          }
         }
-        // 首都・大都市は中心に砦。
         if (city.capital) {
-          const kImg = sprites.keep();
-          const kw = Math.max(8, scale * 1.5), kh = kw * (kImg.height / kImg.width);
-          ctx.drawImage(kImg, (sx - kw * 0.5) | 0, (sy - kh) | 0, kw | 0, kh | 0);
-          // 国の旗（色点）。
+          // 国旗（砦の上）。
+          const fs = Math.max(2, scale * 0.5);
           ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
-          ctx.fillRect((sx - kw * 0.5) | 0, (sy - kh - Math.max(2, scale * 0.4)) | 0, Math.max(2, scale * 0.5), Math.max(2, scale * 0.5));
+          ctx.fillRect((sx - fs * 0.5) | 0, (sy - Math.max(10, scale * 1.6)) | 0, fs, fs);
         }
       }
     }
