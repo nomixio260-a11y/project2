@@ -208,6 +208,77 @@
     O: [96, 92, 78], P: [224, 220, 200], C: [206, 202, 184],
   };
 
+  // 農場（赤い納屋＋作物）。
+  const FARM = [
+    "..OOOO..",
+    ".ORRRRO.",
+    "ORRRRRRO",
+    "OWWWWWWO",
+    "OWGGGGWO",
+    "OWGDDGWO",
+    "OWGDDGWO",
+    "OOOOOOOO",
+  ];
+  const FARM_PAL = {
+    O: [60, 40, 28], R: [150, 66, 50], W: [206, 184, 140], G: [120, 160, 70], D: [74, 51, 36],
+  };
+  // 鍛冶場（石造の工房＋炉の火＋煙突）。
+  const SMITHY = [
+    "...O....",
+    "..OO....",
+    ".OWWWWO.",
+    "OWWWWWWO",
+    "OWWFFWWO",
+    "OWWFFWWO",
+    "OWDDWWWO",
+    "OOOOOOOO",
+  ];
+  const SMITHY_PAL = {
+    O: [48, 44, 40], W: [120, 116, 110], F: [240, 150, 40], D: [44, 32, 22],
+  };
+  // 市場（縞模様の天幕＋商品）。
+  const MARKET = [
+    "........",
+    "OOOOOOOO",
+    "OYBYBYBO",
+    "OYBYBYBO",
+    ".O.WW.O.",
+    ".O.WW.O.",
+    ".OGGGGO.",
+    ".OOOOOO.",
+  ];
+  const MARKET_PAL = {
+    O: [80, 60, 40], Y: [230, 210, 120], B: [200, 90, 70], W: [184, 162, 120], G: [150, 120, 80],
+  };
+  // 兵舎（旗の立つ石造の砦小屋）。
+  const BARRACKS = [
+    "...F....",
+    "...F....",
+    ".OOOOOO.",
+    "OKKKKKKO",
+    "OKBBKKKO",
+    "OKKKKKKO",
+    "OKKDDKKO",
+    "OOOOOOOO",
+  ];
+  const BARRACKS_PAL = {
+    O: [70, 66, 60], K: [140, 135, 120], B: [58, 70, 90], D: [40, 30, 22], F: [200, 70, 60],
+  };
+  // 穀倉（円錐茅葺きのサイロ＋穀物）。
+  const GRANARY = [
+    "...OO...",
+    "..OYYO..",
+    ".OYYYYO.",
+    ".OWWWWO.",
+    ".OWGGWO.",
+    ".OWGGWO.",
+    ".OWWWWO.",
+    ".OOOOOO.",
+  ];
+  const GRANARY_PAL = {
+    O: [60, 44, 28], Y: [180, 150, 90], W: [200, 180, 140], G: [230, 200, 110],
+  };
+
   const _b = {};
   function bget(key, grid, pal) { return _b[key] || (_b[key] = build(grid, pal)); }
   Game.sprites.house = function () { return bget("house", HOUSE, HOUSE_PAL); };
@@ -215,14 +286,25 @@
   Game.sprites.hut = function () { return bget("hut", HUT, HUT_PAL); };
   Game.sprites.manor = function () { return bget("manor", MANOR, MANOR_PAL); };
   Game.sprites.temple = function () { return bget("temple", TEMPLE, TEMPLE_PAL); };
+  Game.sprites.farm = function () { return bget("farm", FARM, FARM_PAL); };
+  Game.sprites.smithy = function () { return bget("smithy", SMITHY, SMITHY_PAL); };
+  Game.sprites.market = function () { return bget("market", MARKET, MARKET_PAL); };
+  Game.sprites.barracks = function () { return bget("barracks", BARRACKS, BARRACKS_PAL); };
+  Game.sprites.granary = function () { return bget("granary", GRANARY, GRANARY_PAL); };
 
   // 建物タイプID → スプライト（civ の Game.BUILDING と対応）。
+  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉。
   Game.sprites.building = function (t) {
     switch (t) {
       case 0: return Game.sprites.hut();
       case 2: return Game.sprites.manor();
       case 3: return Game.sprites.keep();
       case 4: return Game.sprites.temple();
+      case 5: return Game.sprites.farm();
+      case 6: return Game.sprites.smithy();
+      case 7: return Game.sprites.market();
+      case 8: return Game.sprites.barracks();
+      case 9: return Game.sprites.granary();
       default: return Game.sprites.house(); // 1
     }
   };
