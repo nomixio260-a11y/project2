@@ -4,6 +4,8 @@
 
   function boot() {
     const cfg = Game.config;
+    // 端末ごとに地図サイズ・上限・初期ズームを最適化。
+    if (Game.applyDeviceProfile) Game.applyDeviceProfile();
     const canvas = document.getElementById("game");
 
     // ワールド生成。
@@ -15,11 +17,24 @@
 
     const renderer = new Game.Renderer(canvas, world);
     renderer.resize(); // 高DPI対応で実バッファを確保
-    camera.fitToMap();
+    camera.fitTiles(cfg.initialFitTiles || 130); // 操作しやすい初期ズーム（全体ではなく一帯を表示）
 
-    const brush = new Game.Brush(3);
+    const brush = new Game.Brush(5);
     const input = new Game.Input(canvas, camera, world, renderer);
     const engine = new Game.Engine(renderer, camera, input);
+
+    // 気候・季節（最初に tick して clock を更新）。
+    const climate = new Game.ClimateSystem();
+    engine.systems.push(climate);
+
+    // 天候（雲・雨・落雷）。
+    const weather = new Game.WeatherSystem(world, renderer);
+    engine.systems.push(weather);
+
+    // 植生・生態系（fertility を初期化してから配線）。
+    const vegetation = new Game.VegetationSystem(world, renderer);
+    vegetation.seed(world);
+    engine.systems.push(vegetation);
 
     // 生物ストア + シミュレーションシステム。
     const entities = new Game.Entities(cfg.sim.maxEntities);
@@ -47,6 +62,9 @@
     Game.state.creatures = creatures;
     Game.state.fire = fire;
     Game.state.civ = civ;
+    Game.state.climate = climate;
+    Game.state.weather = weather;
+    Game.state.vegetation = vegetation;
     Game.state.activeToolId = "raise";
 
     // UI からも呼べる公開 API。
@@ -85,14 +103,23 @@
       input.setWorld(w);
       // シミュレーション状態をリセット。
       entities.clear();
+      climate.reset();
+      weather.setWorld(w);
+      vegetation.setWorld(w);
+      vegetation.seed(w);
       creatures.setWorld(w);
       fire.setWorld(w);
       civ.setWorld(w);
       civ.clear();
-      camera.fitToMap();
+      camera.fitTiles(cfg.initialFitTiles || 130);
+      if (Game.minimap) Game.minimap._fit();
     };
 
     Game.toolbar.init();
+    if (Game.hud) Game.hud.init();
+    if (Game.minimap) Game.minimap.init();
+    if (Game.nations) Game.nations.init();
+    if (Game.help) Game.help.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。
     function handleResize() {

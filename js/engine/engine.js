@@ -72,6 +72,15 @@
     // 座標 HUD 更新。
     this._updateCoords();
 
+    // 統計 HUD（内部で間引いて DOM 更新）。
+    if (Game.hud) Game.hud.tick(dt);
+
+    // 諸国パネル（内部で間引いて更新）。
+    if (Game.nations) Game.nations.tick(dt);
+
+    // ミニマップ（内部で間引いて描画）。
+    if (Game.minimap) Game.minimap.draw(dt, this.camera);
+
     requestAnimationFrame(this._loop);
   };
 
@@ -81,10 +90,21 @@
     const mt = Game.state.mouseTile;
     const world = Game.state.world;
     if (mt.x >= 0 && world.inBounds(mt.x, mt.y)) {
-      const name = Game.TERRAIN_NAMES[world.getTerrain(mt.x, mt.y)];
-      el.textContent =
-        "(" + mt.x + ", " + mt.y + ")  " + name +
-        "  標高 " + world.getElevation(mt.x, mt.y).toFixed(2);
+      const i = mt.y * world.width + mt.x;
+      const name = Game.TERRAIN_NAMES[world.terrain[i]];
+      let txt = "(" + mt.x + "," + mt.y + ") " + name +
+        " 標高" + world.elevation[i].toFixed(2) +
+        " 気温" + world.temperature[i].toFixed(2) +
+        " 湿度" + world.moisture[i].toFixed(2);
+      if (world.fertility) txt += " 植生" + world.fertility[i].toFixed(2);
+      // 領有国（国名）。
+      const civ = Game.state.civ;
+      if (civ && world.owner) {
+        const id = world.owner[i];
+        const k = id > 0 ? civ.kingdoms[id] : null;
+        if (k) txt += "  " + k.name + "（" + (k.religion || "") + "）";
+      }
+      el.textContent = txt;
     } else {
       el.textContent = "";
     }

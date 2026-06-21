@@ -89,6 +89,27 @@
     }
   };
 
+  // 指定タイルを画面中央に置く（ズームは維持）。
+  Camera.prototype.centerOnTile = function (tx, ty) {
+    const tile = Game.config.tilePx;
+    this.x = (tx + 0.5) * tile - this.viewW / this.zoom / 2;
+    this.y = (ty + 0.5) * tile - this.viewH / this.zoom / 2;
+    this.clamp();
+  };
+
+  // 操作しやすいズームでマップ中央を表示（約 nTiles タイルが画面に収まる）。
+  Camera.prototype.fitTiles = function (nTiles) {
+    const cfg = Game.config;
+    const mapW = cfg.mapWidth * cfg.tilePx;
+    const mapH = cfg.mapHeight * cfg.tilePx;
+    const viewMin = Math.min(this.viewW, this.viewH);
+    const zoom = Game.utils.clamp(viewMin / (nTiles * cfg.tilePx), cfg.minZoom, cfg.maxZoom);
+    this.zoom = zoom;
+    this.x = (mapW - this.viewW / zoom) / 2;
+    this.y = (mapH - this.viewH / zoom) / 2;
+    this.clamp();
+  };
+
   // マップ全体が見えるよう初期化（中央表示）。
   Camera.prototype.fitToMap = function () {
     const cfg = Game.config;

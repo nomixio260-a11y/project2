@@ -11,6 +11,12 @@
 <body>
   <canvas id="game"></canvas>
 
+  <!-- 上部ステータスバー（タイトル・季節時計） -->
+  <header id="topbar" class="topbar">
+    <span class="topbar-title">🗺 Fantasy Map Simulator</span>
+    <span id="clock" class="topbar-clock">🌸 春 1年 1日</span>
+  </header>
+
   <!-- モバイルでツールバーを開閉するトグル -->
   <button id="toolbar-toggle" class="toolbar-toggle" aria-label="ツールバー開閉">☰</button>
 
@@ -20,8 +26,8 @@
     <div id="tool-buttons" class="tool-buttons"></div>
     <div class="controls-row">
       <div class="brush-control">
-        <label for="brush-size">ブラシ <span id="brush-size-label">3</span></label>
-        <input type="range" id="brush-size" min="1" max="40" value="3">
+        <label for="brush-size">ブラシ <span id="brush-size-label">5</span></label>
+        <input type="range" id="brush-size" min="1" max="40" value="5">
       </div>
       <button id="regen" class="regen-btn">新しい世界</button>
     </div>
@@ -35,8 +41,23 @@
         <button class="speed-btn" data-speed="4">4×</button>
       </div>
     </div>
-    <div class="hint">移動: WASD・矢印 / ホイールでズーム / 1〜0でツール / Kで建国 / Pで一時停止</div>
+    <div class="hint">PC: WASD・矢印・右ドラッグで移動 / ホイールでズーム / クリックでツール<br>スマホ: 1本指ドラッグで移動・タップで配置 / 2本指でズーム<br>Kで人間を置く（集まって国を興す）/ Pで一時停止</div>
   </div>
+
+  <!-- 右サイドバー: HUD と 諸国パネルを縦に積む（重なり防止） -->
+  <div id="sidebar" class="sidebar">
+    <!-- ライブ統計 HUD（hud.js が中身を生成） -->
+    <div id="hud" class="hud"></div>
+    <!-- 諸国パネル（nations.js が中身を生成） -->
+    <div id="nations" class="nations"></div>
+  </div>
+
+  <!-- ミニマップ（minimap.js が描画） -->
+  <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
+
+  <!-- ヘルプ＆凡例 -->
+  <button id="help-toggle" class="help-toggle" aria-label="ヘルプ">?</button>
+  <div id="help-overlay" class="help-overlay"></div>
 
   <div id="coords" class="coords"></div>
 
@@ -50,13 +71,21 @@
   <script src="js/world/worldgen.js"></script>
   <script src="js/world/entities.js"></script>
   <script src="js/render/camera.js"></script>
+  <script src="js/render/sprites.js"></script>
   <script src="js/render/renderer.js"></script>
   <script src="js/tools/brush.js"></script>
   <script src="js/tools/godpowers.js"></script>
   <script src="js/input/input.js"></script>
   <script src="js/ui/toolbar.js"></script>
+  <script src="js/ui/hud.js"></script>
+  <script src="js/ui/minimap.js"></script>
+  <script src="js/ui/nations.js"></script>
+  <script src="js/ui/help.js"></script>
   <script src="js/engine/engine.js"></script>
   <!-- シミュレーションシステム（engine の後、main の前） -->
+  <script src="js/systems/climate.js"></script>
+  <script src="js/systems/weather.js"></script>
+  <script src="js/systems/vegetation.js"></script>
   <script src="js/systems/creatures.js"></script>
   <script src="js/systems/fire.js"></script>
   <script src="js/systems/civ.js"></script>

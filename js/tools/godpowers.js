@@ -92,6 +92,7 @@
       id: "ignite",
       label: "着火",
       hotkey: "8",
+      group: "disaster",
       swatch: "#ff6a1f",
       apply: function (world, x, y) {
         const i = world.idx(x, y);
@@ -136,16 +137,106 @@
       },
     },
     {
-      id: "found",
-      label: "建国",
+      id: "human",
+      label: "人間",
       hotkey: "k",
       group: "civ",
-      swatch: "#c062d0",
+      swatch: "#e8c8a0",
       apply: function (world, x, y, falloff) {
-        // ブラシ中心付近でのみ建国（1ストロークで乱立させない）。
-        if (falloff < 0.92) return;
+        // 放浪者（無所属の人間）を撒く。集まって自ら国を興す。
+        if (Math.random() > 0.16 * falloff) return;
         const civ = Game.state.civ;
-        if (civ) civ.foundAt(x, y);
+        if (!civ) return;
+        if (!Game.tile.isLand(world.getTerrain(x, y))) return;
+        civ.spawnNomad(x, y);
+      },
+    },
+    {
+      id: "fertilize",
+      label: "豊穣",
+      hotkey: "r",
+      group: "life",
+      swatch: "#7ec850",
+      apply: function (world, x, y) {
+        // 植生を活性化（湿度と fertility を底上げ）。森林化を促す。
+        const i = world.idx(x, y);
+        if (Game.tile.isWater(world.terrain[i])) return;
+        world.moisture[i] = Math.min(1, world.moisture[i] + 0.25);
+        if (world.fertility) world.fertility[i] = Math.min(1, world.fertility[i] + 0.5);
+        if (world.terrain[i] === T.SCORCHED || world.terrain[i] === T.SAND) {
+          world.terrain[i] = T.GRASS;
+        }
+      },
+    },
+    {
+      id: "earthquake",
+      label: "地震",
+      hotkey: "e",
+      group: "disaster",
+      swatch: "#a87b4a",
+      apply: function (world, x, y, falloff) {
+        // 標高をランダムに揺らし、地形を再分類（山が崩れ谷が裂ける）。
+        const i = world.idx(x, y);
+        const jolt = (Math.random() - 0.5) * 0.35 * falloff;
+        const e = world.raise(x, y, jolt);
+        world.setTerrain(x, y, classify(e, world.getMoisture(x, y), world.getTemperature(x, y)));
+      },
+    },
+    {
+      id: "meteor",
+      label: "隕石",
+      hotkey: "m",
+      group: "disaster",
+      swatch: "#ff3b2f",
+      apply: function (world, x, y, falloff) {
+        const i = world.idx(x, y);
+        if (Game.tile.isWater(world.terrain[i])) return; // 着水は無視
+        // クレーター: 中心ほど深く沈め、一帯を焼け地化。
+        world.elevation[i] = Math.max(0, world.elevation[i] - 0.22 * falloff);
+        world.terrain[i] = T.SCORCHED;
+        world.moisture[i] = 0.05;
+        if (world.fertility) world.fertility[i] = 0;
+        // 縁では可燃地形に着火し、燃え広がる火災を起こす。
+        const fire = Game.state.fire;
+        if (fire && falloff < 0.5) fire.ignite(x, y);
+      },
+    },
+    {
+      id: "flood",
+      label: "洪水",
+      hotkey: "f",
+      group: "disaster",
+      swatch: "#1f6fd0",
+      apply: function (world, x, y) {
+        // 低地のみ水没させる（高地は残る）。
+        const th = Game.config.thresholds;
+        const i = world.idx(x, y);
+        if (world.elevation[i] >= th.grass) return;
+        world.elevation[i] = (th.deepWater + th.shallowWater) * 0.5;
+        world.terrain[i] = T.SHALLOW_WATER;
+        world.moisture[i] = 1;
+      },
+    },
+    {
+      id: "plague",
+      label: "疫病",
+      hotkey: "v",
+      group: "disaster",
+      swatch: "#6db33f",
+      apply: function (world, x, y, falloff) {
+        // 中心タイルでのみ発動し、ブラシ半径内の生物を大量死させる（1回スキャン）。
+        if (falloff < 0.95) return;
+        const ent = Game.state.entities;
+        const brush = Game.state.brush;
+        if (!ent || !brush) return;
+        const r = brush.size;
+        const r2 = r * r;
+        for (let k = 0; k < ent.count; k++) {
+          if (!ent.alive[k]) continue;
+          const dx = ent.x[k] - (x + 0.5);
+          const dy = ent.y[k] - (y + 0.5);
+          if (dx * dx + dy * dy <= r2 && Math.random() < 0.7) ent.kill(k);
+        }
       },
     },
   ];

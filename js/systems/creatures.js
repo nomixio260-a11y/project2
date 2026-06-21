@@ -9,17 +9,29 @@
 
   // パラメータ（1ティック=シム内100ms 基準）。
   const P = {
-    metabolism: [0.010, 0.016], // 種別ごとの基礎代謝
-    speed: [0.25, 0.36], // タイル/ティック
-    grazeGain: 0.06, // 採食でのエネルギー回復
-    preyGain: 0.55, // 捕食でのエネルギー回復
-    reproduceAt: 0.82, // この energy で繁殖
-    reproduceChance: 0.06,
-    offspringEnergy: 0.32,
-    maxAge: [1100, 1500],
+    metabolism: [0.009, 0.010], // 種別ごとの基礎代謝
+    speed: [0.25, 0.31], // タイル/ティック（肉食はやや速い）
+    huntRadius: 6, // 肉食が獲物を探す半径
+    grazeGainScale: 0.95, // 採食量(fertility)→エネルギーの変換係数
+    grazeGain: 0.06, // 植生システム未接続時のフォールバック回復
+    preyGain: 0.6, // 捕食でのエネルギー回復
+    reproduceAt: 0.8, // この energy で繁殖
+    reproduceChance: [0.05, 0.022], // 種別ごとの繁殖確率（肉食は控えめ）
+    offspringEnergy: 0.34,
+    maxAge: [1200, 1700],
     eatRadius: 0.7, // 肉食の捕食到達距離
-    degradeChance: 0.02, // 採食で植生が一段劣化する確率
+    thirstRate: 0.0025, // 1ティックの渇きの進行
+    dehydration: 0.008, // 渇き限界でのエネルギー消耗
+    thirstSeek: 0.45, // この渇きで水を探し始める
+    geneMutate: 0.06, // 遺伝子の変異幅
   };
+
+  // 遺伝子を継承（軽い変異つき、0.7..1.3 にクランプ）。
+  function mutate(rand, gene) {
+    let g = gene + (rand() - 0.5) * 2 * P.geneMutate;
+    if (g < 0.7) g = 0.7; else if (g > 1.3) g = 1.3;
+    return g;
+  }
 
   function CreatureSystem(entities, world, renderer) {
     this.entities = entities;
@@ -107,43 +119,59 @@
       if (!e.alive[i]) continue;
       const type = e.type[i];
 
+      const gene = e.gene[i] || 1;
       e.age[i] += 1;
-      e.energy[i] -= P.metabolism[type];
+      e.energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene); // 大型ほど燃費が悪い
 
       const tx = e.x[i] | 0;
       const ty = e.y[i] | 0;
-      const here = world.terrain[ty * W + tx];
+      const idx = ty * W + tx;
+      const here = world.terrain[idx];
 
       // 溺死（陸生が深海に出た）。
       if (here === Game.TERRAIN.DEEP_WATER) {
         e.energy[i] -= 0.08;
       }
 
+      // 渇き: 進行し、岸（浅瀬隣接）で飲んでリセット。限界で消耗。
+      e.thirst[i] += P.thirstRate;
+      if (this._nearWater(world, tx, ty)) {
+        e.thirst[i] = 0;
+      } else if (e.thirst[i] > 0.85) {
+        e.energy[i] -= P.dehydration;
+        if (e.thirst[i] > 1) e.thirst[i] = 1;
+      }
+
       let dirX = 0;
       let dirY = 0;
 
+      // 渇きが強ければ水を最優先で探す。
+      if (e.thirst[i] > P.thirstSeek) {
+        const wseek = this._seekWater(world, tx, ty);
+        dirX = wseek.x;
+        dirY = wseek.y;
+      }
+
       if (type === S.HERBIVORE) {
-        // 採食。
+        // 採食（植生 fertility を消費。未接続時はフォールバック）。
         if (tile.isEdible(here)) {
-          e.energy[i] = Math.min(1, e.energy[i] + P.grazeGain);
-          // たまに植生を一段劣化させる（過放牧）。
-          if (rand() < P.degradeChance) {
-            const idx = ty * W + tx;
-            const t = world.terrain[idx];
-            if (t === Game.TERRAIN.FOREST) world.terrain[idx] = Game.TERRAIN.GRASS;
-            else if (t === Game.TERRAIN.JUNGLE) world.terrain[idx] = Game.TERRAIN.SAVANNA;
-            else world.terrain[idx] = Game.TERRAIN.SAND;
-            if (this.renderer) this.renderer.markDirty(tx, ty);
+          const veg = Game.state.vegetation;
+          if (veg && veg.world === world) {
+            const eaten = veg.graze(idx);
+            if (eaten > 0) e.energy[i] = Math.min(1, e.energy[i] + eaten * P.grazeGainScale);
+          } else {
+            e.energy[i] = Math.min(1, e.energy[i] + P.grazeGain);
           }
-        } else if (e.energy[i] < 0.6) {
-          // 空腹なら近傍の食べられるタイルへ寄る。
+        }
+        // 空腹かつ水を探していないなら、近傍の食べられるタイルへ寄る。
+        if (dirX === 0 && dirY === 0 && e.energy[i] < 0.6) {
           const f = this._seekFood(world, tx, ty);
           dirX = f.x;
           dirY = f.y;
         }
-      } else {
+      } else if (dirX === 0 && dirY === 0) {
         // 肉食: 近くの草食を捕食。
-        const prey = this._nearest(e.x[i], e.y[i], S.HERBIVORE, 5, i);
+        const prey = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.huntRadius, i);
         if (prey !== -1) {
           const dx = e.x[prey] - e.x[i];
           const dy = e.y[prey] - e.y[i];
@@ -164,9 +192,12 @@
         dirY = rand() - 0.5;
       }
       const len = Math.hypot(dirX, dirY) || 1;
-      const sp = P.speed[type];
-      let nxp = e.x[i] + (dirX / len) * sp;
-      let nyp = e.y[i] + (dirY / len) * sp;
+      const sp = P.speed[type] * (0.8 + 0.4 * gene); // 大型ほど速い
+      const stepX = (dirX / len) * sp;
+      const stepY = (dirY / len) * sp;
+      e.heading[i] = Math.atan2(stepY, stepX); // 描画の向き
+      let nxp = e.x[i] + stepX;
+      let nyp = e.y[i] + stepY;
       // 水へ踏み込まない（陸生）。境界もクランプ。
       const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
       const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
@@ -178,8 +209,14 @@
       // 繁殖。新個体は次ティックの _buildGrid で登録される
       // （ここでグリッドへ挿し込むと、解放スロット再利用時に
       //  リンクリストが循環し _nearest が無限ループするため挿さない）。
-      if (e.energy[i] > P.reproduceAt && e.live < maxEntities && rand() < P.reproduceChance) {
-        const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy);
+      let canRepro = e.energy[i] > P.reproduceAt && e.live < maxEntities && rand() < P.reproduceChance[type];
+      // 草食は局所の食料(fertility)が乏しいと繁殖を控える（密度依存で暴走を防ぐ）。
+      if (canRepro && type === S.HERBIVORE) {
+        const veg = Game.state.vegetation;
+        if (veg && veg.world === world && world.fertility[idx] < 0.4) canRepro = false;
+      }
+      if (canRepro) {
+        const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy, mutate(rand, gene));
         if (child !== -1) e.energy[i] -= 0.4;
       }
 
@@ -188,6 +225,49 @@
         e.kill(i);
       }
     }
+  };
+
+  // (tx,ty) が水（浅瀬/深海）に隣接していれば true（飲水判定）。
+  CreatureSystem.prototype._nearWater = function (world, tx, ty) {
+    const W = world.width;
+    const H = world.height;
+    for (let dy = -1; dy <= 1; dy++) {
+      const ny = ty + dy;
+      if (ny < 0 || ny >= H) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = tx + dx;
+        if (nx < 0 || nx >= W) continue;
+        if (tile.isWater(world.terrain[ny * W + nx])) return true;
+      }
+    }
+    return false;
+  };
+
+  // (tx,ty) の周囲±3タイルで最も近い水タイル方向を返す（無ければ {0,0}）。
+  CreatureSystem.prototype._seekWater = function (world, tx, ty) {
+    const W = world.width;
+    const H = world.height;
+    let bx = 0;
+    let by = 0;
+    let bestD = 1e9;
+    for (let dy = -3; dy <= 3; dy++) {
+      const ny = ty + dy;
+      if (ny < 0 || ny >= H) continue;
+      for (let dx = -3; dx <= 3; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = tx + dx;
+        if (nx < 0 || nx >= W) continue;
+        if (tile.isWater(world.terrain[ny * W + nx])) {
+          const d = dx * dx + dy * dy;
+          if (d < bestD) {
+            bestD = d;
+            bx = dx;
+            by = dy;
+          }
+        }
+      }
+    }
+    return { x: bx, y: by };
   };
 
   // (tx,ty) の周囲±2タイルで最も近い食べられるタイル方向を返す。

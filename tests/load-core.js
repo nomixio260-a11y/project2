@@ -31,10 +31,15 @@ function loadCore(overrides) {
     "js/world/world.js",
     "js/world/worldgen.js",
     "js/world/entities.js",
+    "js/tools/godpowers.js",
     "js/render/camera.js",
+    "js/systems/climate.js",
+    "js/systems/weather.js",
+    "js/systems/vegetation.js",
     "js/systems/creatures.js",
     "js/systems/fire.js",
     "js/systems/civ.js",
+    "js/ui/hud.js",
   ];
   for (const f of files) {
     vm.runInContext(fs.readFileSync(path.join(root, f), "utf8"), ctx, { filename: f });

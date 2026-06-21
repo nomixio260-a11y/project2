@@ -17,6 +17,9 @@
     this.energy = new Float32Array(capacity);
     this.age = new Float32Array(capacity); // 経過ティック
     this.alive = new Uint8Array(capacity);
+    this.gene = new Float32Array(capacity); // 体格/俊敏の遺伝子(0.7..1.3)。大=速い・燃費悪い
+    this.thirst = new Float32Array(capacity); // 0..1 渇き
+    this.heading = new Float32Array(capacity); // 進行方向(ラジアン)。描画の向き用
 
     this.count = 0; // 使用済みスロットの最大到達点
     this.live = 0; // 現在生存数
@@ -26,8 +29,8 @@
     this._freeTop = 0;
   }
 
-  // 新規スポーン。空きが無ければ -1。
-  Entities.prototype.spawn = function (type, x, y, energy) {
+  // 新規スポーン。空きが無ければ -1。gene 省略時は 1.0（標準体格）。
+  Entities.prototype.spawn = function (type, x, y, energy, gene) {
     let i;
     if (this._freeTop > 0) {
       i = this._free[--this._freeTop];
@@ -42,6 +45,8 @@
     this.energy[i] = energy === undefined ? 0.6 : energy;
     this.age[i] = 0;
     this.alive[i] = 1;
+    this.gene[i] = gene === undefined ? 1 : gene;
+    this.thirst[i] = 0;
     this.live++;
     return i;
   };

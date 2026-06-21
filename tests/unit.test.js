@@ -265,24 +265,25 @@ test("FireSystem: active 集合が maxFires を超えない", () => {
   }
 });
 
-test("CivSystem: 建国して領土が拡張する（陸地のみ）", () => {
+test("CivSystem: 建国で入植者が生まれ、歩いた陸地が領土になる（水は不可）", () => {
   const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
   const w = new Game.World(30, 30);
   w.terrain.fill(Game.TERRAIN.GRASS);
-  // 一部を海にして拡張が陸地に限られることを確認。
+  // 一部を海にして、領土が陸地に限られることを確認。
   for (let y = 0; y < 30; y++) w.setTerrain(15, y, Game.TERRAIN.DEEP_WATER);
   const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
 
   // 水には建国できない。
   assert.equal(civ.foundAt(15, 5), -1, "水に建国してはいけない");
-  // 陸地に建国。
+  // 陸地に建国 → 入植者が湧く。
   const id = civ.foundAt(5, 5);
   assert.ok(id > 0, "建国できていない");
   assert.equal(w.getOwner(5, 5), id);
+  assert.ok(civ.people.length >= 1, "入植者が生成されていない");
 
-  for (let t = 0; t < 40; t++) civ.tick(w);
-  const k = civ.kingdoms[id];
-  assert.ok(k.tileCount > 1, "領土が拡張していない");
+  const t0 = civ.kingdoms[id].tileCount;
+  for (let t = 0; t < 120; t++) civ.tick(w);
+  assert.ok(civ.kingdoms[id].tileCount > t0, "人間が歩いても領土が増えない");
   // 海(x=15列)は決して領有されない。
   for (let y = 0; y < 30; y++) {
     assert.equal(w.getOwner(15, y), 0, "海を領有してしまった");
@@ -303,21 +304,162 @@ test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   assert.equal(civ.kingdoms.length - 1, founded);
 });
 
-test("CivSystem: 隣接する二国が国境で接触する", () => {
-  const Game = loadCore({ mapWidth: 24, mapHeight: 12 });
-  const w = new Game.World(24, 12);
+test("CivSystem: 放浪者(人間)が集まって自ら国を興す", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.fertility.fill(0.8);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  // 人間を一箇所に多めに撒く（国はまだ無い）。
+  for (let n = 0; n < 12; n++) civ.spawnNomad(20 + ((n % 4) - 2), 20 + (((n / 4) | 0) - 1));
+  assert.equal(civ.kingdoms.length - 1, 0, "最初は国が無い");
+  assert.ok(civ.stats().nomads >= 10, "放浪者がいる");
+  // しばらく動かすと、集団が建国する。
+  let founded = false;
+  for (let t = 0; t < 600 && !founded; t++) {
+    civ.tick(w);
+    if (civ.kingdoms.length - 1 > 0) founded = true;
+  }
+  assert.ok(founded, "放浪者が国を興さなかった");
+  // 建国後は市民(人口)が存在する。
+  assert.ok(civ.stats().population > 0, "市民がいない");
+});
+
+test("CivSystem: 他国領は歩いただけでは奪われない（兵士の前線のみ）", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
   w.terrain.fill(Game.TERRAIN.GRASS);
   const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
-  const a = civ.foundAt(3, 6);
-  const b = civ.foundAt(20, 6);
-  for (let t = 0; t < 80; t++) civ.tick(w);
-  // 両国とも拡張し、合計領有数がマップを概ね埋める。
+  // 王国Aの領土を一帯に確保。
+  const A = civ.foundAt(5, 15);
+  // 王国Bの市民を1人、Aの真ん中に強制的に置く（歩いて侵入した想定）。
+  const B = civ.foundAt(25, 15);
+  // Bの全市民を非兵士(開拓者)にし、Aの領土の中心へワープ。
+  const owner0 = w.getOwner(5, 15);
+  assert.ok(owner0 === A);
+  for (const p of civ.people) {
+    if (p.kid === B) { p.role = Game.ROLE.EXPLORER; p.x = 6.5; p.y = 15.5; }
+  }
+  // Aタイル(5,15)を含む周辺がAのまま保たれる（非兵士は奪わない）。
+  for (let t = 0; t < 60; t++) civ.tick(w);
+  // (5,15) は決してBにならない（兵士でない侵入者は領土を奪えない）。
+  assert.notEqual(w.getOwner(5, 15), B, "歩いただけで他国領が奪われた");
+});
+
+test("CivSystem: 外交（接触→開戦→講和→同盟）と getNations", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(5, 5);
+  const B = civ.foundAt(30, 5);
+
+  // 接触で関係が生まれる。
+  civ._contact(A, B);
+  assert.notEqual(civ.kingdoms[A].relations[B], undefined, "接触で関係が生まれない");
+
+  // 開戦は双方向。
+  civ._declareWar(A, B);
+  assert.ok(civ._atWar(A, B) && civ._atWar(B, A), "開戦が双方向でない");
+  const nA = civ.getNations().find(function (n) { return n.id === A; });
+  assert.ok(nA.wars.indexOf(civ.kingdoms[B].name) >= 0, "交戦相手が一覧に出ない");
+  assert.ok(nA.ruler && nA.gov, "統治者/政体が無い");
+
+  // 講和で戦争解除。
+  civ._makePeace(A, B);
+  assert.ok(!civ._atWar(A, B) && !civ._atWar(B, A), "講和できていない");
+
+  // 同盟で戦争は無く、同盟一覧に出る。
+  civ._formAlliance(A, B);
+  assert.ok(!civ._atWar(A, B), "同盟したのに交戦中");
+  const nA2 = civ.getNations().find(function (n) { return n.id === A; });
+  assert.ok(nA2.allies.indexOf(civ.kingdoms[B].name) >= 0, "同盟国が一覧に出ない");
+});
+
+test("CivSystem: 技術が進歩し時代が進む / 宗教・時代が getNations に出る", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const id = civ.foundAt(15, 15);
+  const k = civ.kingdoms[id];
+  assert.ok(k.religion, "宗教が無い");
+  assert.equal(k.tech, 0, "初期技術は0");
+  // 外交評価を繰り返すと技術が伸びる。
+  for (let t = 0; t < 30; t++) civ._diplomacy();
+  assert.ok(k.tech > 0, "技術が進歩していない");
+  const n = civ.getNations().find(function (x) { return x.id === id; });
+  assert.ok(n.era && n.era.length > 0, "時代が出ない");
+  assert.equal(n.religion, k.religion, "宗教が一致しない");
+});
+
+test("CivSystem: 軍事力・同盟参戦・講和", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(8, 8);
+  const B = civ.foundAt(20, 8);
+  const C = civ.foundAt(32, 8);
+  // 軍事力: 兵士が多いほど強い。
+  civ.kingdoms[A].roleCount[Game.ROLE.SOLDIER] = 10;
+  civ.kingdoms[B].roleCount[Game.ROLE.SOLDIER] = 1;
+  assert.ok(civ._military(civ.kingdoms[A]) > civ._military(civ.kingdoms[B]), "軍事力が兵士数を反映しない");
+
+  // A と C は同盟。A が B に宣戦 → 同盟国 C も B と交戦（呼びかけ）。
+  civ._contact(A, B); civ._contact(A, C); civ._contact(B, C);
+  civ._formAlliance(A, C);
+  civ._declareWar(A, B);
+  assert.ok(civ._atWar(A, B), "A-B が交戦していない");
+  assert.ok(civ._atWar(C, B), "同盟国Cが参戦していない");
+
+  // 講和で解除。
+  civ._makePeace(A, B);
+  assert.ok(!civ._atWar(A, B), "講和できていない");
+});
+
+test("CivSystem: 指導者の性格・富・交易・反乱", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
+  const w = new Game.World(60, 60);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(15, 30);
+  const B = civ.foundAt(45, 30);
+  const ka = civ.kingdoms[A];
+  assert.ok(ka.trait && ka.trait.name, "指導者の性格が無い");
+  assert.equal(ka.wealth, 0, "初期の富は0");
+  // 領土を与えて外交評価 → 富が蓄積する。
+  ka.tileCount = 200; civ.kingdoms[B].tileCount = 200;
+  civ._contact(A, B); // 交易相手として認知
+  for (let t = 0; t < 20; t++) civ._diplomacy();
+  assert.ok(ka.wealth > 0, "富が蓄積していない");
+  const n = civ.getNations().find(function (x) { return x.id === A; });
+  assert.ok(n.trait && typeof n.wealth === "number" && typeof n.unrest === "number", "getNationsに社会指標が無い");
+
+  // 反乱: 2都市・高い不満 → 地方が独立して国が増える。
+  const before = civ.getNations().length;
+  ka.cities.push({ x: 22, y: 30, capital: false, level: 1 });
+  // 22,30 周辺をAの領土に。
+  for (let y = 25; y <= 35; y++) for (let x = 18; x <= 26; x++) w.owner[y * 60 + x] = A;
+  ka.unrest = 100;
+  civ._rebellion(ka);
+  assert.ok(civ.getNations().length > before, "反乱で国家が増えていない");
+});
+
+test("CivSystem: 二国の入植者が広がり、やがて大半の土地が領有される", () => {
+  const Game = loadCore({ mapWidth: 24, mapHeight: 16 });
+  const w = new Game.World(24, 16);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const a = civ.foundAt(3, 8);
+  const b = civ.foundAt(20, 8);
+  for (let t = 0; t < 700; t++) civ.tick(w);
   const ka = civ.kingdoms[a];
   const kb = civ.kingdoms[b];
-  assert.ok(ka.tileCount > 10 && kb.tileCount > 10, "両国が十分拡張していない");
+  assert.ok(ka.tileCount > 20 && kb.tileCount > 20, "両国が十分広がっていない: " + ka.tileCount + "/" + kb.tileCount);
   let owned = 0;
   for (let i = 0; i < w.owner.length; i++) if (w.owner[i] !== 0) owned++;
-  assert.ok(owned > w.owner.length * 0.5, "領土が広がっていない: " + owned);
+  assert.ok(owned > w.owner.length * 0.4, "領土が広がっていない: " + owned);
 });
 
 test("Camera: screenToWorld と worldToScreen は逆変換", () => {
@@ -369,4 +511,199 @@ test("Camera: visibleTileRange はマップ範囲内に収まる", () => {
   assert.ok(r.x0 >= 0 && r.y0 >= 0);
   assert.ok(r.x1 <= 200 && r.y1 <= 150);
   assert.ok(r.x1 >= r.x0 && r.y1 >= r.y0);
+});
+
+test("ClimateSystem: ティックで日・季節・年が進む", () => {
+  const Game = loadCore();
+  const clim = new Game.ClimateSystem();
+  const cfg = Game.config.sim;
+  // 1日 = ticksPerDay ティック。1季節 = daysPerSeason 日。
+  const ticksPerYear = cfg.ticksPerDay * cfg.daysPerSeason * 4;
+  for (let i = 0; i < ticksPerYear; i++) clim.tick();
+  const clk = Game.state.clock;
+  assert.equal(clk.year, 2, "1年経過で year=2");
+  assert.equal(clk.seasonIndex, 0, "1年後は春に戻る");
+  assert.ok(clk.season && clk.season.name === "春");
+});
+
+test("ClimateSystem: 季節が春→夏→秋→冬と巡る", () => {
+  const Game = loadCore();
+  const clim = new Game.ClimateSystem();
+  const perSeason = Game.config.sim.ticksPerDay * Game.config.sim.daysPerSeason;
+  const seen = [];
+  for (let s = 0; s < 4; s++) {
+    for (let i = 0; i < perSeason; i++) clim.tick();
+    seen.push(Game.state.clock.seasonIndex);
+  }
+  // 各季節末で index が 1,2,3,0 を踏む。
+  assert.deepEqual(seen, [1, 2, 3, 0]);
+});
+
+test("lighting: 正午は明るく深夜は暗い、朝夕は暖色", () => {
+  const Game = loadCore();
+  const per = Game.config.sim.ticksPerDay;
+  // 正午(tod≈0.5)。
+  const noon = Game.lighting({ tick: Math.round(per * 0.5) });
+  assert.ok(noon.darkness < 0.02, "正午は暗くない: " + noon.darkness);
+  // 深夜(tod≈0)。
+  const midnight = Game.lighting({ tick: 0 });
+  assert.ok(midnight.darkness > 0.4, "深夜は暗い: " + midnight.darkness);
+  // 日の出(tod≈0.25)は暖色(twilight)が立つ。
+  const dawn = Game.lighting({ tick: Math.round(per * 0.25) });
+  assert.ok(dawn.twilight > 0.4, "朝は暖色: " + dawn.twilight);
+  assert.ok(dawn.darkness < 0.05, "朝は明るい寄り: " + dawn.darkness);
+});
+
+test("CivSystem: 人間が自律的に動き、王国の消滅で住民は難民化する", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const id = civ.foundAt(20, 20);
+  assert.ok(civ.people.length > 0, "入植者がいない");
+  // 位置を記録し、ティックで実際に移動することを確認。
+  const before = civ.people.map((p) => p.x + "," + p.y);
+  for (let t = 0; t < 30; t++) civ.tick(w);
+  let moved = 0;
+  for (let i = 0; i < Math.min(before.length, civ.people.length); i++) {
+    if (civ.people[i].x + "," + civ.people[i].y !== before[i]) moved++;
+  }
+  assert.ok(moved > 0, "人間が動いていない");
+  for (const p of civ.people) {
+    assert.equal(p.kid, id);
+    assert.ok(p.x >= 0 && p.x < 40 && p.y >= 0 && p.y < 40, "範囲外の人間");
+  }
+  // 王国が滅んでも住民は死なず、難民(無所属)として生き延びる。
+  const pop = civ.people.length;
+  civ.kingdoms[id].alive = false;
+  for (let t = 0; t < 5; t++) civ.tick(w);
+  assert.ok(civ.people.length >= pop - 2, "難民が消えてしまった");
+  for (const p of civ.people) {
+    assert.equal(p.kid, 0, "滅亡国の住民が市民のまま残っている");
+  }
+});
+
+test("WeatherSystem: 雨が湿度と植生を潤す", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.moisture.fill(0);
+  w.fertility.fill(0);
+  const weather = new Game.WeatherSystem(w, null);
+  // 中央に停止した大きな雲を1つだけ置く。
+  weather.clouds = [{ x: 20, y: 20, vx: 0, vy: 0, r: 12 }];
+  for (let t = 0; t < 200; t++) weather.tick(w);
+  // 雲の下の領域で湿度・植生が上がっている。
+  let wet = 0, fert = 0;
+  for (let y = 12; y < 28; y++) {
+    for (let x = 12; x < 28; x++) {
+      const i = y * 40 + x;
+      if (w.moisture[i] > 0) wet++;
+      if (w.fertility[i] > 0) fert++;
+    }
+  }
+  assert.ok(wet > 20, "雨で湿度が上がっていない: " + wet);
+  assert.ok(fert > 20, "雨で植生が回復していない: " + fert);
+});
+
+test("VegetationSystem: 焼け地が再成長して草原に回復する", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
+  const w = new Game.World(20, 20);
+  w.terrain.fill(Game.TERRAIN.SCORCHED);
+  w.moisture.fill(0.6);
+  w.temperature.fill(0.5);
+  const veg = new Game.VegetationSystem(w, { markDirty() {} });
+  veg.seed(w);
+  Game.state.clock.season = Game.SEASONS[1]; // 夏（成長旺盛）
+  // 十分な回数ティック（バンドが全面を何周もする）。
+  for (let t = 0; t < 200; t++) veg.tick(w);
+  let grass = 0;
+  for (let i = 0; i < w.terrain.length; i++) {
+    if (w.terrain[i] === Game.TERRAIN.GRASS || w.terrain[i] === Game.TERRAIN.FOREST) grass++;
+  }
+  assert.ok(grass > w.terrain.length * 0.5, "焼け地が回復していない: " + grass);
+});
+
+test("VegetationSystem: graze で fertility が減り、空なら 0 を返す", () => {
+  const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
+  const w = new Game.World(8, 8);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const veg = new Game.VegetationSystem(w, { markDirty() {} });
+  veg.seed(w);
+  const i = 3 * 8 + 3;
+  const before = w.fertility[i];
+  const eaten = veg.graze(i);
+  assert.ok(eaten > 0, "採食量が正");
+  assert.ok(w.fertility[i] < before, "fertility が減る");
+  // 枯らし切ると 0 を返す。
+  for (let k = 0; k < 50; k++) veg.graze(i);
+  assert.equal(veg.graze(i), 0, "枯渇時は 0");
+});
+
+test("CivSystem: 確保した土地に応じて人口が増え、stats を集計できる", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
+  const w = new Game.World(60, 60);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const id = civ.foundAt(30, 30);
+  const k = civ.kingdoms[id];
+  assert.ok(k.name && k.name.length > 0, "王国名が付く");
+  assert.equal(k.cities.length, 1, "首都が1つ");
+  assert.ok(k.cities[0].capital, "首都フラグ");
+  const pop0 = k.humanCount; // = popStart
+  // 領土が十分広がるまで動かすと、容量が増え人口も増える。
+  for (let t = 0; t < 900; t++) civ.tick(w);
+  assert.ok(k.tileCount > 100, "領土が広がっていない: " + k.tileCount);
+  assert.ok(k.humanCount > pop0, "人口が増えていない: " + k.humanCount);
+  const s = civ.stats();
+  assert.equal(s.kingdoms, 1);
+  assert.equal(s.population, k.humanCount, "総人口=人間数");
+  assert.equal(s.cities, k.cities.length);
+});
+
+test("godpowers: 災害・生態ツールが登録されている", () => {
+  const Game = loadCore();
+  for (const id of ["earthquake", "meteor", "flood", "plague", "fertilize"]) {
+    assert.ok(Game.godpowers.get(id), "ツール未登録: " + id);
+  }
+  // disaster グループに分類されている。
+  assert.equal(Game.godpowers.get("meteor").group, "disaster");
+  assert.equal(Game.godpowers.get("fertilize").group, "life");
+});
+
+test("Hud.sample: 個体数・王国・延焼を集計する", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
+  const S = Game.SPECIES;
+
+  // 生物: 草食2・肉食1、1体は kill 済みで除外される。
+  const e = new Game.Entities(10);
+  e.spawn(S.HERBIVORE, 1, 1);
+  e.spawn(S.HERBIVORE, 2, 2);
+  e.spawn(S.PREDATOR, 3, 3);
+  const dead = e.spawn(S.HERBIVORE, 4, 4);
+  e.kill(dead);
+
+  // 王国: 2国、うち1国は滅亡（alive=false）。
+  const w = new Game.World(20, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const a = civ.foundAt(2, 2);
+  const b = civ.foundAt(15, 2);
+  civ.kingdoms[b].alive = false;
+
+  // 炎: 2タイル着火。
+  const fire = new Game.FireSystem(w, { markDirty() {} });
+  fire.ignite(5, 5);
+  fire.ignite(6, 5);
+
+  Game.state.entities = e;
+  Game.state.civ = civ;
+  Game.state.fire = fire;
+
+  const s = Game.hud.sample();
+  assert.equal(s.herb, 2, "草食数");
+  assert.equal(s.pred, 1, "肉食数");
+  assert.equal(s.pop, 3, "総個体数");
+  assert.equal(s.kingdoms, 1, "生存王国数");
+  assert.equal(s.fires, 2, "延焼数");
 });

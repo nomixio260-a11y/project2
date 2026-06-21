@@ -1,15 +1,30 @@
-// ツールバー UI。godpowers registry からボタンを自動生成する。
+// ツールバー UI。godpowers registry からボタンをグループ別に自動生成する。
 (function (Game) {
   "use strict";
+
+  // グループの表示順とラベル（未指定ツールは terrain 扱い）。
+  const GROUPS = [
+    { id: "terrain", label: "地形" },
+    { id: "life", label: "生命" },
+    { id: "civ", label: "文明" },
+    { id: "disaster", label: "災害" },
+  ];
 
   Game.toolbar = {
     init: function () {
       const container = document.getElementById("tool-buttons");
       container.innerHTML = "";
       this.buttons = {};
-
       const self = this;
+
+      // グループごとに仕分け。
+      const byGroup = {};
       Game.godpowers.list.forEach(function (tool) {
+        const g = tool.group || "terrain";
+        (byGroup[g] = byGroup[g] || []).push(tool);
+      });
+
+      function addButton(grid, tool) {
         const btn = document.createElement("button");
         btn.className = "tool-btn";
         btn.dataset.toolId = tool.id;
@@ -26,9 +41,23 @@
         btn.addEventListener("click", function () {
           Game.setActiveTool(tool.id);
         });
-
-        container.appendChild(btn);
+        grid.appendChild(btn);
         self.buttons[tool.id] = btn;
+      }
+
+      GROUPS.forEach(function (grp) {
+        const tools = byGroup[grp.id];
+        if (!tools || tools.length === 0) return;
+        const header = document.createElement("div");
+        header.className = "tool-group-label";
+        header.textContent = grp.label;
+        container.appendChild(header);
+        const grid = document.createElement("div");
+        grid.className = "tool-grid";
+        container.appendChild(grid);
+        tools.forEach(function (tool) {
+          addButton(grid, tool);
+        });
       });
 
       // ブラシサイズスライダー。

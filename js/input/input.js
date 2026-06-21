@@ -115,10 +115,14 @@
   };
 
   // ===== タッチ操作 =====
-  // 1本指: 現在のツールで描画 / 2本指: パン + ピンチズーム。
+  // 1本指ドラッグ = 視点移動（パン） / 1本指タップ = ツール適用 /
+  // 2本指 = パン + ピンチズーム。
+  // 「動かそうとしただけで配置/地形変更される」を防ぐため、指が一定距離
+  // 動いたらパン扱いにし、タップ（ほぼ動かさず離す）だけツールを適用する。
   Input.prototype._bindTouch = function () {
     const self = this;
     const canvas = this.canvas;
+    const TAP_SLOP = 12; // これ以上動いたらタップではなくドラッグ
 
     function touchMid(t0, t1) {
       return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
@@ -134,17 +138,15 @@
       function (e) {
         e.preventDefault();
         if (e.touches.length === 1) {
-          // 1本指 → 描画開始。
-          self.gesture = null;
-          self.touchPainting = true;
+          // 1本指: まだ何もしない（タップかドラッグか確定するまで待つ）。
           const t = e.touches[0];
+          self.gesture = null;
+          self.touch = { sx: t.clientX, sy: t.clientY, lx: t.clientX, ly: t.clientY, moved: 0, mode: "pending" };
           self._updateMouseTile(t.clientX, t.clientY);
-          self.applyAt(t.clientX, t.clientY);
         } else if (e.touches.length === 2) {
-          // 2本指 → パン/ズーム。描画は中断。
-          self.touchPainting = false;
-          const t0 = e.touches[0];
-          const t1 = e.touches[1];
+          // 2本指: パン/ズーム。配置はしない。
+          self.touch = null;
+          const t0 = e.touches[0], t1 = e.touches[1];
           const mid = touchMid(t0, t1);
           self.gesture = { midX: mid.x, midY: mid.y, dist: touchDist(t0, t1) };
         }
@@ -156,21 +158,27 @@
       "touchmove",
       function (e) {
         e.preventDefault();
-        if (e.touches.length === 1 && self.touchPainting) {
+        if (e.touches.length === 1 && self.touch) {
           const t = e.touches[0];
-          self._updateMouseTile(t.clientX, t.clientY);
-          self.applyAt(t.clientX, t.clientY);
+          const dx = t.clientX - self.touch.lx;
+          const dy = t.clientY - self.touch.ly;
+          self.touch.lx = t.clientX;
+          self.touch.ly = t.clientY;
+          self.touch.moved += Math.abs(dx) + Math.abs(dy);
+          // 一定距離動いたら「パン」に確定。
+          if (self.touch.mode === "pending" && self.touch.moved > TAP_SLOP) {
+            self.touch.mode = "pan";
+          }
+          if (self.touch.mode === "pan") {
+            self.camera.panByScreen(dx, dy);
+            self._updateMouseTile(t.clientX, t.clientY);
+          }
         } else if (e.touches.length === 2 && self.gesture) {
-          const t0 = e.touches[0];
-          const t1 = e.touches[1];
+          const t0 = e.touches[0], t1 = e.touches[1];
           const mid = touchMid(t0, t1);
           const dist = touchDist(t0, t1);
-          // 中点の移動でパン。
           self.camera.panByScreen(mid.x - self.gesture.midX, mid.y - self.gesture.midY);
-          // 指間距離の比でズーム（中点基点）。
-          if (self.gesture.dist > 0) {
-            self.camera.zoomAt(mid.x, mid.y, dist / self.gesture.dist);
-          }
+          if (self.gesture.dist > 0) self.camera.zoomAt(mid.x, mid.y, dist / self.gesture.dist);
           self.gesture.midX = mid.x;
           self.gesture.midY = mid.y;
           self.gesture.dist = dist;
@@ -181,14 +189,18 @@
 
     function endTouch(e) {
       if (e.touches.length === 0) {
-        self.touchPainting = false;
+        // 指が全部離れた。タップ（ほぼ動かしていない）ならツールを1回適用。
+        if (self.touch && self.touch.mode === "pending" && self.touch.moved <= TAP_SLOP) {
+          self.applyAt(self.touch.sx, self.touch.sy);
+        }
+        self.touch = null;
         self.gesture = null;
         Game.state.mouseTile.x = -1;
         Game.state.mouseTile.y = -1;
-      } else if (e.touches.length === 1) {
-        // 2本指→1本指: 誤描画を避けるためジェスチャ終了のみ。
+      } else {
+        // 指が減った（2→1 等）: 誤適用を避けてジェスチャ終了のみ。
         self.gesture = null;
-        self.touchPainting = false;
+        self.touch = null;
       }
     }
     canvas.addEventListener("touchend", endTouch, { passive: false });
