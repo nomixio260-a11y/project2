@@ -6,6 +6,10 @@
 
   // 役割ごとの被り物の色（ROLE: 0=開拓者,1=農民,2=建築家,3=兵士,4=鍛冶,5=商人,6=神官）。
   const ROLE_HAT = [null, "#4fae4f", "#e08a2a", "#b9c2cc", "#6a6a72", "#d8b84a", "#ece9e0"];
+  // 個人差の肌・髪の色（人ごとに一意に選ばれ、群衆が多様に見える）。
+  const SKIN = ["#f3cd9b", "#e8b887", "#d9a066", "#c68642", "#a9764b", "#8d5524"];
+  const HAIR = ["#2a1c10", "#4a3422", "#6b4f2a", "#caa84a", "#b5482f", "#15110b"];
+  const LIFE_DEFAULT = { adult: 200, elder: 2600 }; // civ の CP と一致（フォールバック）
 
   // 都市内の家の配置オフセット（タイル単位・安定配置）。
   const CITY_PATTERN = [
@@ -336,7 +340,10 @@
       if (sprites) {
         // 進行方向で左右反転。heading 0 = 右。
         const faceLeft = Math.cos(e.heading[i] || 0) < 0;
-        const dh = Math.max(6, scale * 1.0 * gene);
+        // 仔は小さく、成長で大人サイズへ（生まれて 140 ティックで一人前）。
+        const age = e.age ? e.age[i] : 999;
+        const grow = age < 140 ? (0.5 + 0.5 * (age / 140)) : 1;
+        const dh = Math.max(5, scale * 1.0 * gene * grow);
         // 歩行: 脚の2コマ切替＋上下のバウンドで「動いてる感」を出す。
         const ph = moving ? t * 7 + i * 0.9 : 0;
         const frame = moving && Math.sin(ph) > 0 ? 1 : 0;
@@ -414,72 +421,88 @@
         continue;
       }
 
-      // 近景: ちゃんとした人型（向きに応じて顔/腕を寄せる）。
+      // 近景: 個人差（肌・髪）と年齢段階（子供は小さく成長、老人は白髪）を持つ人型。
       const faceLeft = (person.hx || 0) < -0.001;
       const fd = faceLeft ? -1 : 1;
+      // 個体の見た目を一度だけ決める（描画専用なので乱数で可）。
+      let lk = person.look;
+      if (lk === undefined) { lk = person.look = (Math.random() * 0x7fffffff) | 0; }
+      const skin = SKIN[lk % SKIN.length];
+      const LIFE = Game.lifeStages || LIFE_DEFAULT;
+      const age = person.age || 0;
+      const isChild = age < LIFE.adult;
+      const isElder = age >= LIFE.elder;
+      const hair = isElder ? "#dcdcdc" : HAIR[(lk >> 5) % HAIR.length];
+      // 年齢で体格が変わる（誕生時0.55→成人で1.0、老人は0.95）。
+      const grow = isChild ? (0.55 + 0.45 * (age / LIFE.adult)) : (isElder ? 0.95 : 1);
+      const uu = Math.max(1, Math.round(u * grow));
       // 歩行の振り（脚は前後、腕は逆位相）＋胴の小さなバウンド。
       const ph = moving ? t * 6 + p * 0.7 : 0;
-      const sw = moving ? Math.round(Math.sin(ph) * u) : 0; // -u..u
-      const ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * u * 0.5) : 0; // 上下動
+      const sw = moving ? Math.round(Math.sin(ph) * uu) : 0; // -uu..uu
+      const ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * uu * 0.5) : 0; // 上下動
       // 影。
       ctx.fillStyle = "rgba(0,0,0,0.30)";
-      ctx.fillRect(sx - 2 * u, sy + 3 * u, 4 * u, u);
+      ctx.fillRect(sx - 2 * uu, sy + 3 * uu, 4 * uu, uu);
       // 脚（暗・交互に踏み出す）。
       ctx.fillStyle = "#3a2f1e";
-      ctx.fillRect(sx - 2 * u + sw, sy + u, 2 * u, 2 * u);
-      ctx.fillRect(sx - sw, sy + u, 2 * u, 2 * u);
+      ctx.fillRect(sx - 2 * uu + sw, sy + uu, 2 * uu, 2 * uu);
+      ctx.fillRect(sx - sw, sy + uu, 2 * uu, 2 * uu);
       // 胴（王国色）。
       ctx.fillStyle = body;
-      ctx.fillRect(sx - 2 * u, sy - 2 * u + ob, 4 * u, 3 * u);
+      ctx.fillRect(sx - 2 * uu, sy - 2 * uu + ob, 4 * uu, 3 * uu);
       // 腕（肌・歩行で前後に振る＝脚と逆）。
-      ctx.fillStyle = "#e9bd8e";
-      ctx.fillRect(sx - 3 * u - sw, sy - 2 * u + ob, u, 2 * u);
-      ctx.fillRect(sx + 2 * u + sw, sy - 2 * u + ob, u, 2 * u);
+      ctx.fillStyle = skin;
+      ctx.fillRect(sx - 3 * uu - sw, sy - 2 * uu + ob, uu, 2 * uu);
+      ctx.fillRect(sx + 2 * uu + sw, sy - 2 * uu + ob, uu, 2 * uu);
       // 頭（肌）。
-      ctx.fillStyle = "#f3cd9b";
-      ctx.fillRect(sx - 2 * u, sy - 5 * u + ob, 4 * u, 3 * u);
-      // 髪（暗）。
-      ctx.fillStyle = "#4a3422";
-      ctx.fillRect(sx - 2 * u, sy - 5 * u + ob, 4 * u, u);
+      ctx.fillStyle = skin;
+      ctx.fillRect(sx - 2 * uu, sy - 5 * uu + ob, 4 * uu, 3 * uu);
+      // 髪（老人は白髪）。
+      ctx.fillStyle = hair;
+      ctx.fillRect(sx - 2 * uu, sy - 5 * uu + ob, 4 * uu, uu);
       // 目（向き側に1ドット）。
       ctx.fillStyle = "#2a1c10";
-      ctx.fillRect(sx + (fd > 0 ? u : -2 * u), sy - 4 * u + ob, u, u);
-      // 役割の帽子。
-      const hat = ROLE_HAT[person.role];
-      if (hat) {
-        ctx.fillStyle = hat;
-        ctx.fillRect(sx - 2 * u, sy - 6 * u + ob, 4 * u, u);
+      ctx.fillRect(sx + (fd > 0 ? uu : -2 * uu), sy - 4 * uu + ob, uu, uu);
+      // 役割の帽子（子供は被らない）。
+      if (!isChild) {
+        const hat = ROLE_HAT[person.role];
+        if (hat) {
+          ctx.fillStyle = hat;
+          ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, uu);
+        }
       }
 
-      // 道具・武器（役割と装備段階 gear で見た目が変わる＝実際に持って使う）。
-      const g = person.gear || 0;
-      const metal = g >= 4 ? "#e8eef4" : g >= 3 ? "#cdd6df" : g >= 2 ? "#c9a24a" : g >= 1 ? "#b98c4a" : "#9a9a9a";
-      const wood = "#6b4a2a";
-      const hxp = fd > 0 ? sx + 2 * u : sx - 3 * u; // 手の位置
-      switch (person.role) {
-        case 3: // 兵士: 槍（鋼が進むと剣に鍔がつく）
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * u + ob, u, 7 * u);
-          ctx.fillStyle = metal; ctx.fillRect(hxp, sy - 6 * u + ob, u, 2 * u);
-          if (g >= 3) { ctx.fillStyle = metal; ctx.fillRect(hxp - u, sy - 5 * u + ob, 3 * u, u); }
-          break;
-        case 1: // 農民: 鍬
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * u + ob, u, 6 * u);
-          ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? u : -u), sy - 4 * u + ob, u, u);
-          break;
-        case 2: // 建築家: 槌
-        case 4: // 鍛冶: 槌（頭は鉄黒）
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * u + ob, u, 5 * u);
-          ctx.fillStyle = person.role === 4 ? "#55585f" : metal;
-          ctx.fillRect(hxp - u, sy - 4 * u + ob, 3 * u, 2 * u);
-          break;
-        case 6: // 神官: 杖（先端が金色）
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * u + ob, u, 7 * u);
-          ctx.fillStyle = "#e8d05a"; ctx.fillRect(hxp, sy - 6 * u + ob, u, u);
-          break;
-        case 5: // 商人: 背中の荷
-          ctx.fillStyle = "#7a5a32";
-          ctx.fillRect(fd > 0 ? sx - 3 * u : sx + 2 * u, sy - 2 * u + ob, u, 3 * u);
-          break;
+      // 道具・武器（子供は持たない。役割と装備段階 gear で見た目が変わる＝実際に持って使う）。
+      if (!isChild) {
+        const g = person.gear || 0;
+        const metal = g >= 4 ? "#e8eef4" : g >= 3 ? "#cdd6df" : g >= 2 ? "#c9a24a" : g >= 1 ? "#b98c4a" : "#9a9a9a";
+        const wood = "#6b4a2a";
+        const hxp = fd > 0 ? sx + 2 * uu : sx - 3 * uu; // 手の位置
+        switch (person.role) {
+          case 3: // 兵士: 槍（鋼が進むと剣に鍔がつく）
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob, uu, 7 * uu);
+            ctx.fillStyle = metal; ctx.fillRect(hxp, sy - 6 * uu + ob, uu, 2 * uu);
+            if (g >= 3) { ctx.fillStyle = metal; ctx.fillRect(hxp - uu, sy - 5 * uu + ob, 3 * uu, uu); }
+            break;
+          case 1: // 農民: 鍬
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * uu + ob, uu, 6 * uu);
+            ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? uu : -uu), sy - 4 * uu + ob, uu, uu);
+            break;
+          case 2: // 建築家: 槌
+          case 4: // 鍛冶: 槌（頭は鉄黒）
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * uu + ob, uu, 5 * uu);
+            ctx.fillStyle = person.role === 4 ? "#55585f" : metal;
+            ctx.fillRect(hxp - uu, sy - 4 * uu + ob, 3 * uu, 2 * uu);
+            break;
+          case 6: // 神官: 杖（先端が金色）
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob, uu, 7 * uu);
+            ctx.fillStyle = "#e8d05a"; ctx.fillRect(hxp, sy - 6 * uu + ob, uu, uu);
+            break;
+          case 5: // 商人: 背中の荷
+            ctx.fillStyle = "#7a5a32";
+            ctx.fillRect(fd > 0 ? sx - 3 * uu : sx + 2 * uu, sy - 2 * uu + ob, uu, 3 * uu);
+            break;
+        }
       }
     }
   };
