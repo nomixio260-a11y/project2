@@ -11,47 +11,49 @@
 <body>
   <canvas id="game"></canvas>
 
-  <!-- 上部ステータスバー（タイトル・季節時計） -->
+  <!-- 上部バー: タイトル / 再生制御 / 季節時計 -->
   <header id="topbar" class="topbar">
-    <span class="topbar-title">🗺 Fantasy Map Simulator</span>
-    <span id="clock" class="topbar-clock">🌸 春 1年 1日</span>
-  </header>
-
-  <!-- モバイルでツールバーを開閉するトグル -->
-  <button id="toolbar-toggle" class="toolbar-toggle" aria-label="ツールバー開閉">☰</button>
-
-  <!-- ツールバー（toolbar.js が中身を生成） -->
-  <div id="toolbar" class="toolbar">
-    <div class="toolbar-title">神の力</div>
-    <div id="tool-buttons" class="tool-buttons"></div>
-    <div class="controls-row">
-      <div class="brush-control">
-        <label for="brush-size">ブラシ <span id="brush-size-label">5</span></label>
-        <input type="range" id="brush-size" min="1" max="40" value="5">
-      </div>
-      <button id="regen" class="regen-btn">新しい世界</button>
-    </div>
-    <!-- シミュレーション制御 -->
-    <div class="sim-row">
-      <button id="sim-pause" class="sim-btn" aria-pressed="false">⏸ 停止</button>
-      <div class="speed-control" id="speed-control">
-        <button class="speed-btn" data-speed="0.5">0.5×</button>
+    <div class="brand"><span class="brand-mark">🗺</span><span class="brand-name">Fantasy Map</span></div>
+    <div class="sim-cluster">
+      <button id="sim-pause" class="sim-pause" aria-pressed="false" title="再生 / 一時停止 (P)">⏸</button>
+      <div class="speed-control" id="speed-control" role="group" aria-label="速度">
+        <button class="speed-btn" data-speed="0.5">½×</button>
         <button class="speed-btn active" data-speed="1">1×</button>
         <button class="speed-btn" data-speed="2">2×</button>
         <button class="speed-btn" data-speed="4">4×</button>
       </div>
     </div>
-    <div class="hint">PC: WASD・矢印・右ドラッグで移動 / ホイールでズーム / クリックでツール<br>スマホ: 1本指ドラッグで移動・タップで配置 / 2本指でズーム<br>Kで人間を置く（集まって国を興す）/ Pで一時停止</div>
-  </div>
+    <span id="clock" class="topbar-clock">🌸 春 1年 1日</span>
+  </header>
 
-  <!-- 右サイドバー: HUD と 諸国パネルを縦に積む（重なり防止） -->
+  <!-- モバイルでツールバーを開閉するトグル -->
+  <button id="toolbar-toggle" class="toolbar-toggle" aria-label="道具">🪄</button>
+
+  <!-- ツールバー（toolbar.js が中身を生成） -->
+  <aside id="toolbar" class="toolbar panel">
+    <div class="panel-head">神の力</div>
+    <div id="tool-buttons" class="tool-buttons"></div>
+    <div id="tool-selected" class="tool-selected"><span class="ts-dot"></span><span class="ts-name">選択中…</span></div>
+    <div class="brush-control">
+      <label for="brush-size">ブラシ半径 <span id="brush-size-label">5</span></label>
+      <input type="range" id="brush-size" min="1" max="40" value="5">
+    </div>
+    <button id="regen" class="regen-btn">🌍 新しい世界</button>
+    <div class="hint">
+      <b>PC</b> WASD/矢印・右ドラッグで移動 · ホイールでズーム · クリックで使用<br>
+      <b>スマホ</b> 1本指で移動・タップで配置 · 2本指でズーム<br>
+      <b>K</b> 人間を置く（集まり国を興す） · <b>P</b> 一時停止
+    </div>
+  </aside>
+
+  <!-- 右サイドバー: HUD・諸国・年代記 -->
   <div id="sidebar" class="sidebar">
     <!-- ライブ統計 HUD（hud.js が中身を生成） -->
-    <div id="hud" class="hud"></div>
+    <div id="hud" class="hud panel"></div>
     <!-- 諸国パネル（nations.js が中身を生成） -->
-    <div id="nations" class="nations"></div>
+    <div id="nations" class="nations panel"></div>
     <!-- 年代記パネル（chronicle.js が中身を生成） -->
-    <div id="chronicle" class="nations chronicle"></div>
+    <div id="chronicle" class="nations chronicle panel"></div>
   </div>
 
   <!-- ミニマップ（minimap.js が描画） -->
