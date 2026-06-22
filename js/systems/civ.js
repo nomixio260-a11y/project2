@@ -1699,4 +1699,6 @@
 
   Game.CivSystem = CivSystem;
   Game.ROLE = ROLE;
+  // 描画の年齢段階（子供/老人）と一致させるための閾値。
+  Game.lifeStages = { adult: CP.adultAge, elder: CP.elderAge };
 })(window.Game);

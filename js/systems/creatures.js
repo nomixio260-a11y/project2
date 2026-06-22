@@ -24,6 +24,10 @@
     dehydration: 0.008, // 渇き限界でのエネルギー消耗
     thirstSeek: 0.45, // この渇きで水を探し始める
     geneMutate: 0.06, // 遺伝子の変異幅
+    fleeRadius: 3.2, // 草食が捕食者に気づいて逃げ出す距離（近づくまで気づかない）
+    fleeBoost: 1.12, // 逃走時の速度倍率（パニック）
+    chaseBoost: 1.45, // 肉食が獲物を追うときの速度倍率（しっかり捕らえる）
+    youngAge: 140, // この齢未満は「仔」（描画が小さい）
   };
 
   // 遺伝子を継承（軽い変異つき、0.7..1.3 にクランプ）。
@@ -144,6 +148,8 @@
 
       let dirX = 0;
       let dirY = 0;
+      let fleeing = false;
+      let chasing = false;
 
       // 渇きが強ければ水を最優先で探す。
       if (e.thirst[i] > P.thirstSeek) {
@@ -153,6 +159,15 @@
       }
 
       if (type === S.HERBIVORE) {
+        // 捕食者から逃げる（採食・渇きより最優先＝生存本能）。
+        const pred = this._nearest(e.x[i], e.y[i], S.PREDATOR, P.fleeRadius, -1);
+        if (pred !== -1) {
+          const dx = e.x[i] - e.x[pred];
+          const dy = e.y[i] - e.y[pred];
+          const dl = Math.hypot(dx, dy) || 1;
+          dirX = dx / dl; dirY = dy / dl;
+          fleeing = true;
+        }
         // 採食（植生 fertility を消費。未接続時はフォールバック）。
         if (tile.isEdible(here)) {
           const veg = Game.state.vegetation;
@@ -163,14 +178,14 @@
             e.energy[i] = Math.min(1, e.energy[i] + P.grazeGain);
           }
         }
-        // 空腹かつ水を探していないなら、近傍の食べられるタイルへ寄る。
-        if (dirX === 0 && dirY === 0 && e.energy[i] < 0.6) {
+        // 逃走中でなく、空腹かつ水も探していないなら、食べられるタイルへ寄る。
+        if (!fleeing && dirX === 0 && dirY === 0 && e.energy[i] < 0.6) {
           const f = this._seekFood(world, tx, ty);
           dirX = f.x;
           dirY = f.y;
         }
       } else if (dirX === 0 && dirY === 0) {
-        // 肉食: 近くの草食を捕食。
+        // 肉食: 近くの草食を追って捕食。
         const prey = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.huntRadius, i);
         if (prey !== -1) {
           const dx = e.x[prey] - e.x[i];
@@ -182,6 +197,7 @@
           } else {
             dirX = dx / dist;
             dirY = dy / dist;
+            chasing = true;
           }
         }
       }
@@ -192,7 +208,9 @@
         dirY = rand() - 0.5;
       }
       const len = Math.hypot(dirX, dirY) || 1;
-      const sp = P.speed[type] * (0.8 + 0.4 * gene); // 大型ほど速い
+      let sp = P.speed[type] * (0.8 + 0.4 * gene); // 大型ほど速い
+      if (fleeing) sp *= P.fleeBoost;   // 逃走で加速
+      if (chasing) sp *= P.chaseBoost;  // 追跡で加速（獲物を捕らえる）
       const stepX = (dirX / len) * sp;
       const stepY = (dirY / len) * sp;
       e.heading[i] = Math.atan2(stepY, stepX); // 描画の向き
