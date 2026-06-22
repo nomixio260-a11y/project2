@@ -109,6 +109,11 @@
     return best;
   };
 
+  // 外部（文明の狩り）から最寄りの動物を引く公開API。grid は creature tick で更新済み。
+  CreatureSystem.prototype.nearestAnimal = function (px, py, type, radius) {
+    return this._nearest(px, py, type, radius, -1);
+  };
+
   CreatureSystem.prototype.tick = function (world) {
     const e = this.entities;
     const rand = this.rand;

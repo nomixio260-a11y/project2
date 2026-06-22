@@ -13,6 +13,8 @@
     this.terrain = new Uint8Array(n); // TERRAIN enum
     this.owner = new Uint16Array(n); // 文明の領有（0=無所属, それ以外=王国ID）
     this.fertility = new Float32Array(n); // 0..1 植生密度（vegetation システムが管理）
+    this.resource = new Uint8Array(n); // 資源（0=なし,1=鉱石,2=漁場,3=宝石）。worldgen が配置
+    this.resourceList = []; // 資源タイルの一覧 [{x,y,t}]（描画・集計を軽くする）
   }
 
   World.prototype.idx = function (x, y) {

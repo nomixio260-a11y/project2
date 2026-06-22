@@ -22,6 +22,14 @@
     JUNGLE: 13,
   };
 
+  // 戦略資源（world.resource に格納）。文明の経済・技術・軍備に影響する。
+  Game.RESOURCE = {
+    NONE: 0,
+    ORE: 1,   // 鉱石（丘・山）: 技術と武具を強化
+    FISH: 2,  // 漁場（沿岸の浅瀬）: 食料を増やし人口扶養力を高める
+    GEMS: 3,  // 宝石（稀少な丘・山）: 富を生む
+  };
+
   const T = Game.TERRAIN;
 
   // 各地形の色。renderer がそのまま fillStyle に使う。
