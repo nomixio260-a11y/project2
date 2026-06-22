@@ -21,9 +21,9 @@
   const ROLE = { EXPLORER: 0, FARMER: 1, BUILDER: 2, SOLDIER: 3, SMITH: 4, MERCHANT: 5, PRIEST: 6 };
   const ROLE_COUNT = 7;
   // 建物タイプ（描画 sprites.building と対応）。
-  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉。
-  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7, BARRACKS: 8, GRANARY: 9 };
-  const MAX_BUILDINGS = 20; // 1都市の建物上限
+  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉,10=鉱山。
+  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7, BARRACKS: 8, GRANARY: 9, MINE: 10 };
+  const MAX_BUILDINGS = 22; // 1都市の建物上限
   // 生産施設（住居・砦以外の機能建築）。役割の職場になる。
   const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary"];
 
@@ -103,6 +103,11 @@
     maxSailRange: 40,    // 船出して到達を試みる最大距離
     minSailGap: 6,       // 目的地まで最低この距離（海を隔てた別の陸）
     sailMetab: 0.004,    // 航海中の食料消費（海難のリスク）
+    // 疫病（過密・低技術の都市で発生し、隣国へ伝播する）
+    plagueChance: 0.05,    // 過密国で外交評価ごとに発生しうる確率
+    plagueDuration: 7,     // 外交評価（diploInterval）何回ぶん続くか
+    plagueMortality: 0.0006, // 流行中の1ティックあたり病没率
+    plagueSpread: 0.25,    // 隣国へ広がる確率
   };
 
   const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
@@ -146,6 +151,7 @@
     this._tickN = 0;
     this._tcursor = 0; // 領土メンテ走査の行カーソル
     this.events = [];  // 年代記（世界の主要な出来事のログ）
+    this.marks = [];   // 戦場の痕跡（戦死地点。時間で薄れて消える）
     // 近傍探索グリッド。
     this._cap = Game.config.sim.maxPeople;
     this._next = new Int32Array(this._cap);
@@ -159,6 +165,13 @@
     const clk = Game.state.clock;
     this.events.push({ year: clk ? clk.year : 0, text: text });
     if (this.events.length > 80) this.events.shift();
+  };
+
+  // 戦場の痕跡を残す（戦死地点。描画でしばらく赤黒く残り薄れていく）。
+  CivSystem.prototype._addMark = function (x, y) {
+    const m = this.marks;
+    m.push({ x: x, y: y, ttl: 360, life: 360 });
+    if (m.length > 240) m.shift();
   };
 
   // UI 用: 直近の出来事（新しい順）。
@@ -181,6 +194,7 @@
     this.people.length = 0;
     this._births.length = 0;
     this.events.length = 0;
+    this.marks.length = 0;
     if (this.world) this.world.owner.fill(0);
   };
 
@@ -250,6 +264,8 @@
       trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
       wealth: 0,     // 富（交易・領土から蓄積）
       unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
+      plague: 0,     // 疫病の残り評価回数（>0 で流行中）
+      res: { ore: 0, fish: 0, gems: 0 }, // 領有資源（_tallyResources が更新）
       alive: true,
     };
     this.kingdoms.push(k);
@@ -384,7 +400,42 @@
 
   // 国の人口容量（確保した土地に比例。建国直後でも成長できる下限つき）。
   CivSystem.prototype._capacity = function (k) {
-    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, (k.tileCount / CP.tilesPerHuman) | 0));
+    // 漁場は食料を増やし、扶養できる人口を押し上げる。
+    const fishBonus = k.res ? k.res.fish * 4 : 0;
+    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus));
+  };
+
+  // 領有する資源タイルを集計し各国の res（鉱石/漁場/宝石）に反映する。
+  // 資源は少数なので resourceList を一巡するだけで全国まとめて数えられる。
+  CivSystem.prototype._tallyResources = function () {
+    const ks = this.kingdoms, world = this.world;
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive) continue;
+      if (!k.res) k.res = { ore: 0, fish: 0, gems: 0 };
+      else { k.res.ore = 0; k.res.fish = 0; k.res.gems = 0; }
+    }
+    const list = world.resourceList;
+    if (!list || !list.length) return;
+    const W = world.width, H = world.height, owner = world.owner;
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      const x = r.x, y = r.y;
+      let o = owner[y * W + x];
+      // 漁場は水上にあり領有されない → 隣接する自国の陸タイルの所有者に帰属させる。
+      if (r.t === 2 && o === 0) {
+        if (x > 0 && owner[y * W + x - 1]) o = owner[y * W + x - 1];
+        else if (x < W - 1 && owner[y * W + x + 1]) o = owner[y * W + x + 1];
+        else if (y > 0 && owner[(y - 1) * W + x]) o = owner[(y - 1) * W + x];
+        else if (y < H - 1 && owner[(y + 1) * W + x]) o = owner[(y + 1) * W + x];
+      }
+      if (o === 0) continue;
+      const k = ks[o];
+      if (!k || !k.alive || !k.res) continue;
+      if (r.t === 1) k.res.ore++;
+      else if (r.t === 2) k.res.fish++;
+      else k.res.gems++;
+    }
   };
 
   // (x,y) に最も近い k の都市座標 {x,y} を返す。
@@ -547,9 +598,11 @@
       this._move(h, null, world);
       this._roleTick(h, k, world, ti);
 
-      // 死亡（餓死・老衰）。
+      // 死亡（餓死・老衰・疫病）。
       if (h.food <= 0 || h.age > CP.maxAge) {
         h.alive = false;
+      } else if (k.plague > 0 && this.rand() < CP.plagueMortality) {
+        h.alive = false; // 疫病で病没
       }
     }
 
@@ -573,6 +626,16 @@
 
     // 領土メンテナンス（支配限界の収縮・亡霊領土の消去・飛び地の穴埋め）。
     this._maintainTerritory(world);
+
+    // 戦場の痕跡を時間で薄れさせ、消えたものを除く。
+    if (this.marks.length) {
+      let w2 = 0;
+      const marks = this.marks;
+      for (let m = 0; m < marks.length; m++) {
+        if (--marks[m].ttl > 0) marks[w2++] = marks[m];
+      }
+      marks.length = w2;
+    }
 
     // 外交（間引いて評価）。
     if ((tN % CP.diploInterval) === 0) this._diplomacy();
@@ -773,6 +836,9 @@
   CivSystem.prototype._diplomacy = function () {
     const ks = this.kingdoms;
 
+    // 領有資源を集計（鉱石・漁場・宝石）。
+    this._tallyResources();
+
     // --- 国家ごと: 経済(富・技術) と 社会(不満) ---
     for (let a = 1; a < ks.length; a++) {
       const ka = ks[a];
@@ -786,16 +852,18 @@
       // 機能建築の数を集計（市場・鍛冶場・神殿などの効果に使う）。
       this._recountFacilities(ka);
       const fac = ka.facilities;
-      // 富: 領土・都市・市場から収入（商才・政体で増す）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5) * this._eff(ka, "trade");
-      // 技術: 都市・人口・富・鍛冶場で進歩（賢明・政体で加速）。
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6) * this._eff(ka, "tech");
+      const res = ka.res || { ore: 0, fish: 0, gems: 0 };
+      // 富: 領土・都市・市場・宝石から収入（商才・政体で増す）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0) * this._eff(ka, "trade");
+      // 技術: 都市・人口・富・鍛冶場・鉱石で進歩（賢明・政体で加速）。
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5) * this._eff(ka, "tech");
+      // 鉱石は武具の備蓄を増やす。備蓄は人口を上限に飽和（武装度の指標）。
+      ka.tools += res.ore * 0.3;
+      if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
       // 時代の進歩を年代記に記録（初到達のみ）。
       const eidx = Math.min(ERAS.length - 1, (ka.tech / TECH_PER_ERA) | 0);
       if (ka._eraIdx === undefined) ka._eraIdx = eidx;
       else if (eidx > ka._eraIdx) { ka._eraIdx = eidx; this._logEvent("✦ " + ka.name + " が" + ERAS[eidx] + "を迎えた"); }
-      // 道具・武具の備蓄は人口を上限に飽和（武装度の指標）。
-      if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
 
       // 不満: 戦争・過密・貧困で上昇、平和・繁栄・神殿・穀倉で低下（性格・政体で変調）。
       const cap = this._capacity(ka);
@@ -804,9 +872,25 @@
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
-      dU -= fac.temple * 0.7 + fac.granary * 0.4; // 信仰と食料安全保障で安定
+      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3; // 信仰・食料・漁場で安定
       dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
+
+      // 疫病: 過密で技術・衛生（神殿）が乏しい国に発生し、社会を動揺させやがて収束する。
+      if (ka.plague > 0) {
+        ka.plague--;
+        ka.unrest = Math.min(100, ka.unrest + 6);
+        if (ka.plague === 0) this._logEvent("✚ " + ka.name + " の疫病が収束した");
+      } else {
+        const crowd = ka.humanCount / Math.max(1, cap);
+        const resist = 1 + Math.min(1.5, ka.tech * 0.004) + fac.temple * 0.4; // 技術・神殿で抵抗
+        if (crowd > 0.6 && this.rand() < CP.plagueChance * crowd / resist) {
+          ka.plague = CP.plagueDuration;
+          this._plagues = (this._plagues || 0) + 1;
+          this._logEvent("☣ " + ka.name + " で疫病が発生した");
+        }
+      }
+
       // 反乱: 不満が高く、複数都市を持つ国は地方が独立しうる。
       if (ka.unrest > 80 && ka.cities.length >= 2 &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < 0.18) {
@@ -829,6 +913,15 @@
         if (ka.religion !== kb.religion) {
           if (ka.humanCount > kb.humanCount * 1.6 && this.rand() < 0.1 * this._eff(ka, "faith")) kb.religion = ka.religion;
           else if (kb.humanCount > ka.humanCount * 1.6 && this.rand() < 0.1 * this._eff(kb, "faith")) ka.religion = kb.religion;
+        }
+
+        // 疫病の伝播: 流行国に国境を接する隣国へ広がる。
+        if (this._isNeighbor(ka, b)) {
+          if (ka.plague > 0 && !(kb.plague > 0) && this.rand() < CP.plagueSpread) {
+            kb.plague = CP.plagueDuration; this._logEvent("☣ " + kb.name + " にも疫病が広がった");
+          } else if (kb.plague > 0 && !(ka.plague > 0) && this.rand() < CP.plagueSpread) {
+            ka.plague = CP.plagueDuration; this._logEvent("☣ " + ka.name + " にも疫病が広がった");
+          }
         }
 
         // 交易: 戦争でなければ双方が富む（同盟は倍。商才・政体で増す）。少し友好も育む。
@@ -931,7 +1024,7 @@
       relations: {}, borders: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, religion: parent.religion,
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
-      wealth: 0, unrest: 30, alive: true,
+      wealth: 0, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
     parent.cities.splice(idx, 1);
@@ -1247,6 +1340,23 @@
       const t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 1; return; }
     }
+    // 1.2) 狩り: 開拓者・兵士は近くの野生動物を仕留めて食料にする（人と動物の関わり）。
+    if ((h.role === ROLE.EXPLORER || h.role === ROLE.SOLDIER) && h.food < 0.75) {
+      const cr = Game.state.creatures, ents = Game.state.entities;
+      if (cr && ents && cr.nearestAnimal) {
+        const prey = cr.nearestAnimal(h.x, h.y, Game.SPECIES.HERBIVORE, 5);
+        if (prey !== -1 && ents.alive[prey]) {
+          const dx = ents.x[prey] - h.x, dy = ents.y[prey] - h.y;
+          if (dx * dx + dy * dy < 1.8) {
+            ents.kill(prey);                       // 仕留めた
+            h.food = h.food + 0.5 > 1 ? 1 : h.food + 0.5; // 肉で回復
+            h.state = 16;
+          } else {
+            h.gx = ents.x[prey] | 0; h.gy = ents.y[prey] | 0; h.state = 16; return; // 追跡
+          }
+        }
+      }
+    }
     // 1.5) 夜は帰宅して休む（戦時の兵士は夜も戦う）。昼は働き夜は静まる生活リズムを作る。
     if (this._night && !(h.role === ROLE.SOLDIER && this._count(k.wars) > 0)) {
       if (hd2 > 9) { h.gx = hcx; h.gy = hcy; }            // 町へ帰る
@@ -1450,6 +1560,16 @@
       has[t] = (has[t] || 0) + 1;
     }
 
+    // 鉱山: 領内に未採掘の鉱石があれば、そのタイルに鉱山を建てて採掘する。
+    if (!has[BUILDING.MINE] && bs.length >= 2) {
+      const ore = this._oreSpotNear(world, k, city);
+      if (ore) {
+        bs.push({ x: ore.x, y: ore.y, t: BUILDING.MINE });
+        city.level = 1 + ((bs.length / 3) | 0);
+        return;
+      }
+    }
+
     // 必要な建物を優先順位で選ぶ。基幹施設（工房・倉・市・兵舎）は原始的な形で早期から
     // 建ち、産物は技術で増える。神殿は社会が成熟してから。最後は住居で人口増に対応。
     const n = bs.length;
@@ -1482,6 +1602,30 @@
       const t = bs[i].t;
       if ((t === BUILDING.HUT || t === BUILDING.HOUSE || t === BUILDING.MANOR) && t < tier) { bs[i].t = tier; return; }
     }
+  };
+
+  // 都市の近くにある、自国領の未採掘の鉱石タイルを探す（鉱山の建設地）。
+  CivSystem.prototype._oreSpotNear = function (world, k, city) {
+    if (!world.resource) return null;
+    const W = world.width, H = world.height, owner = world.owner, res = world.resource;
+    const R = 7;
+    const cx = city.x, cy = city.y;
+    let bx = -1, by = -1, bd = 1e9;
+    for (let dy = -R; dy <= R; dy++) {
+      const y = cy + dy; if (y < 0 || y >= H) continue;
+      for (let dx = -R; dx <= R; dx++) {
+        const x = cx + dx; if (x < 0 || x >= W) continue;
+        const i = y * W + x;
+        if (res[i] !== Game.RESOURCE.ORE || owner[i] !== k.id) continue;
+        let occupied = false;
+        const bs = city.buildings;
+        for (let bi = 0; bi < bs.length; bi++) { if (bs[bi].x === x && bs[bi].y === y) { occupied = true; break; } }
+        if (occupied) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; bx = x; by = y; }
+      }
+    }
+    return bx < 0 ? null : { x: bx, y: by };
   };
 
   // 都市の近くで建設可能な空きタイル（自国の陸地・建物が未設置）を探す。
@@ -1644,7 +1788,7 @@
           const m1 = this._military(k), m2 = other ? this._military(other) : 1;
           const edge = m1 / (m1 + m2);
           e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12);
-          if (e.food <= 0) { e.food = 0; e.alive = false; } // 戦死
+          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); } // 戦死
         }
       } else {
         h._enemy = null;

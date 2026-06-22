@@ -247,6 +247,9 @@
     ctx.drawImage(this.borderCanvas, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
 
+    // 戦略資源（鉱石・漁場・宝石）。
+    this.drawResources(camera);
+
     // 街道（首都と各都市を結ぶ）。
     this.drawRoads(camera);
 
@@ -258,6 +261,9 @@
 
     // 都市マーカー（領土の上）。
     this.drawCities(camera);
+
+    // 戦場の痕跡（戦死地点。生物・市民の下）。
+    this.drawMarks(camera);
 
     // 生物オーバーレイ。
     this.drawEntities(camera);
@@ -596,6 +602,40 @@
     ctx.restore();
   };
 
+  // 戦略資源を地図上に小さなアイコンで描く（一定以上ズーム時）。
+  Renderer.prototype.drawResources = function (camera) {
+    const world = this.world;
+    const list = world.resourceList;
+    if (!list || !list.length) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 3) return; // 小さすぎる時は省略
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const s = Math.max(3, scale * 0.5);
+    for (let k = 0; k < list.length; k++) {
+      const r = list[k];
+      if (r.x < range.x0 || r.x > range.x1 || r.y < range.y0 || r.y > range.y1) continue;
+      const cx = camera.worldToScreenX((r.x + 0.5) * tile);
+      const cy = camera.worldToScreenY((r.y + 0.5) * tile);
+      if (r.t === 1) { // 鉱石: 岩塊＋鉱脈の粒
+        ctx.fillStyle = "#574f47"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+        ctx.fillStyle = "#c9a24a"; ctx.fillRect(cx - s * 0.22, cy - s * 0.12, s * 0.26, s * 0.26);
+        ctx.fillStyle = "#e7decb"; ctx.fillRect(cx + s * 0.05, cy + s * 0.04, s * 0.2, s * 0.2);
+      } else if (r.t === 2) { // 漁場: 波と魚影
+        ctx.fillStyle = "rgba(190,230,248,0.85)"; ctx.fillRect(cx - s * 0.5, cy + s * 0.15, s, s * 0.18);
+        ctx.fillStyle = "#34637e"; ctx.fillRect(cx - s * 0.28, cy - s * 0.22, s * 0.5, s * 0.22);
+        ctx.fillStyle = "#34637e"; ctx.fillRect(cx + s * 0.22, cy - s * 0.16, s * 0.14, s * 0.1);
+      } else { // 宝石: きらめく結晶
+        ctx.fillStyle = "#46d6c8";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - s * 0.5); ctx.lineTo(cx + s * 0.4, cy);
+        ctx.lineTo(cx, cy + s * 0.5); ctx.lineTo(cx - s * 0.4, cy); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fillRect(cx - s * 0.08, cy - s * 0.25, s * 0.16, s * 0.22);
+      }
+    }
+  };
+
   // 街道: 各国の首都と都市を結ぶ線。
   Renderer.prototype.drawRoads = function (camera) {
     const civ = Game.state.civ;
@@ -756,6 +796,30 @@
       }
     }
     ctx.restore();
+  };
+
+  // 戦場の痕跡（戦死地点）を、時間で薄れる赤黒い染みで描く。
+  Renderer.prototype.drawMarks = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.marks || !civ.marks.length) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 2) return;
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const marks = civ.marks;
+    const s = Math.max(2, scale * 0.5);
+    for (let m = 0; m < marks.length; m++) {
+      const mk = marks[m];
+      if (mk.x < range.x0 || mk.x > range.x1 || mk.y < range.y0 || mk.y > range.y1) continue;
+      const a = (mk.ttl / mk.life) * 0.6; // 時間で薄れる
+      const cx = camera.worldToScreenX((mk.x + 0.5) * tile);
+      const cy = camera.worldToScreenY((mk.y + 0.5) * tile);
+      ctx.fillStyle = "rgba(110,18,16," + a.toFixed(3) + ")";
+      ctx.fillRect(cx - s * 0.5, cy - s * 0.35, s, s * 0.7);
+      ctx.fillStyle = "rgba(60,10,10," + a.toFixed(3) + ")";
+      ctx.fillRect(cx - s * 0.2, cy - s * 0.12, s * 0.4, s * 0.28);
+    }
   };
 
   // 燃焼中タイルを可視範囲だけ揺らぐグローで描画。

@@ -74,6 +74,43 @@
 
       // 川を刻む（湿った高地→海への最急降下）。
       this.carveRivers(world, seed);
+
+      // 戦略資源を配置（地形に応じた鉱石・漁場・宝石）。
+      this.placeResources(world, seed);
+    },
+
+    // 戦略資源を地形に応じて散布する（seed で再現可能）。
+    // 鉱石=丘/山、宝石=稀な丘/山、漁場=陸に隣接する浅瀬。
+    placeResources: function (world, seed) {
+      const W = world.width, H = world.height;
+      const R = Game.RESOURCE, T = Game.TERRAIN;
+      const rand = Game.utils.mulberry32((seed ^ 0x6b43a9f5) >>> 0);
+      const res = world.resource;
+      res.fill(0);
+      const list = [];
+      const tile = Game.tile;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const ter = world.terrain[i];
+          let r = 0;
+          if (ter === T.HILL || ter === T.MOUNTAIN) {
+            const v = rand();
+            if (v < 0.012) r = R.GEMS;        // 宝石（稀）
+            else if (v < 0.10) r = R.ORE;     // 鉱石
+          } else if (ter === T.SHALLOW_WATER) {
+            // 陸に隣接する浅瀬＝沿岸の漁場。
+            let coast = false;
+            if (x > 0 && tile.isLand(world.terrain[i - 1])) coast = true;
+            else if (x < W - 1 && tile.isLand(world.terrain[i + 1])) coast = true;
+            else if (y > 0 && tile.isLand(world.terrain[i - W])) coast = true;
+            else if (y < H - 1 && tile.isLand(world.terrain[i + W])) coast = true;
+            if (coast && rand() < 0.06) r = R.FISH;
+          }
+          if (r) { res[i] = r; list.push({ x: x, y: y, t: r }); }
+        }
+      }
+      world.resourceList = list;
     },
 
     // 湿った高地を水源に、最急降下で水まで川を引く。seed で再現可能。
