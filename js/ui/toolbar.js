@@ -10,11 +10,19 @@
     { id: "disaster", label: "災害" },
   ];
 
+  // ツールの絵文字アイコン（id 対応）。視認性のため文字より図像で示す。
+  const ICONS = {
+    raise: "⬆️", lower: "⬇️", water: "💧", sand: "🏜️", grass: "🌱", forest: "🌲", mountain: "⛰️",
+    ignite: "🔥", herbivore: "🦌", predator: "🐺", human: "🧑", fertilize: "🌾",
+    earthquake: "💥", meteor: "☄️", flood: "🌊", plague: "☣️", inspect: "🔍",
+  };
+
   Game.toolbar = {
     init: function () {
       const container = document.getElementById("tool-buttons");
       container.innerHTML = "";
       this.buttons = {};
+      this.toolMeta = {};
       const self = this;
 
       // グループごとに仕分け。
@@ -28,21 +36,30 @@
         const btn = document.createElement("button");
         btn.className = "tool-btn";
         btn.dataset.toolId = tool.id;
+        btn.title = tool.hotkey.toUpperCase() + " · " + tool.label;
+        btn.style.setProperty("--tool-color", tool.swatch);
 
-        const swatch = document.createElement("div");
-        swatch.className = "swatch";
-        swatch.style.background = tool.swatch;
+        const key = document.createElement("span");
+        key.className = "tb-key";
+        key.textContent = tool.hotkey.toUpperCase();
+
+        const icon = document.createElement("span");
+        icon.className = "tb-icon";
+        icon.textContent = ICONS[tool.id] || "✷";
 
         const label = document.createElement("span");
-        label.textContent = tool.hotkey + " " + tool.label;
+        label.className = "tb-label";
+        label.textContent = tool.label;
 
-        btn.appendChild(swatch);
+        btn.appendChild(key);
+        btn.appendChild(icon);
         btn.appendChild(label);
         btn.addEventListener("click", function () {
           Game.setActiveTool(tool.id);
         });
         grid.appendChild(btn);
         self.buttons[tool.id] = btn;
+        self.toolMeta[tool.id] = { label: tool.label, swatch: tool.swatch, icon: ICONS[tool.id] || "✷" };
       }
 
       GROUPS.forEach(function (grp) {
@@ -59,6 +76,10 @@
           addButton(grid, tool);
         });
       });
+
+      // 選択中ツール表示。
+      this.selDot = document.querySelector("#tool-selected .ts-dot");
+      this.selName = document.querySelector("#tool-selected .ts-name");
 
       // ブラシサイズスライダー。
       const slider = document.getElementById("brush-size");
@@ -112,6 +133,12 @@
     setActive: function (toolId) {
       for (const id in this.buttons) {
         this.buttons[id].classList.toggle("active", id === toolId);
+      }
+      // 選択中ツールの表示を更新。
+      const meta = this.toolMeta && this.toolMeta[toolId];
+      if (meta && this.selName) {
+        this.selName.textContent = (meta.icon ? meta.icon + " " : "") + meta.label;
+        if (this.selDot) this.selDot.style.background = meta.swatch;
       }
     },
 

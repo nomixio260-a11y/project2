@@ -103,12 +103,13 @@
         "\n富: " + n.wealth + " / 不満: " + n.unrest +
         (n.wars.length ? "\n交戦: " + n.wars.join(", ") : "") +
         (n.allies.length ? "\n同盟: " + n.allies.join(", ") : "");
-      (function (cap) {
+      (function (cap, id) {
         row.addEventListener("click", function () {
           const cam = Game.state.camera;
           if (cam && cap) cam.centerOnTile(cap.x, cap.y);
+          if (Game.inspector) Game.inspector.selectNation(id); // 詳細を開く
         });
-      })(n.capital);
+      })(n.capital, n.id);
 
       body.appendChild(row);
     }

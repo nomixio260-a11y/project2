@@ -81,6 +81,9 @@
     // 年代記パネル（内部で間引いて更新）。
     if (Game.chronicle) Game.chronicle.tick(dt);
 
+    // インスペクタ（選択中の対象を毎フレーム更新・追従）。
+    if (Game.inspector) Game.inspector.tick(dt);
+
     // ミニマップ（内部で間引いて描画）。
     if (Game.minimap) Game.minimap.draw(dt, this.camera);
 

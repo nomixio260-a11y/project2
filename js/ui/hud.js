@@ -27,15 +27,16 @@
     this.el = el;
     this.rows = {};
     this.history = [];
+    // [key, アイコン, 説明（ツールチップ）]
     const defs = [
-      ["pop", "総個体数"],
-      ["herb", "草食"],
-      ["pred", "肉食"],
-      ["kingdoms", "王国"],
-      ["civpop", "人口"],
-      ["nomads", "放浪"],
-      ["fires", "延焼"],
-      ["fps", "FPS"],
+      ["civpop", "👥", "人口"],
+      ["kingdoms", "🏰", "王国数"],
+      ["nomads", "🚶", "放浪者"],
+      ["pop", "🐾", "総個体数"],
+      ["herb", "🦌", "草食動物"],
+      ["pred", "🐺", "肉食動物"],
+      ["fires", "🔥", "延焼"],
+      ["fps", "⚡", "FPS"],
     ];
     el.innerHTML = "";
 
@@ -48,21 +49,26 @@
     this.spark = spark;
     this.sctx = spark.getContext("2d");
 
+    // チップ（アイコン＋値）のグリッド。
+    const chips = document.createElement("div");
+    chips.className = "hud-chips";
     for (let i = 0; i < defs.length; i++) {
       const key = defs[i][0];
-      const row = document.createElement("div");
-      row.className = "hud-row";
-      const l = document.createElement("span");
-      l.className = "hud-label";
-      l.textContent = defs[i][1];
+      const chip = document.createElement("div");
+      chip.className = "hud-chip";
+      chip.title = defs[i][2];
+      const ic = document.createElement("span");
+      ic.className = "hc-ic";
+      ic.textContent = defs[i][1];
       const v = document.createElement("span");
-      v.className = "hud-value";
+      v.className = "hc-val";
       v.textContent = "0";
-      row.appendChild(l);
-      row.appendChild(v);
-      el.appendChild(row);
+      chip.appendChild(ic);
+      chip.appendChild(v);
+      chips.appendChild(chip);
       this.rows[key] = v;
     }
+    el.appendChild(chips);
 
     this.clockEl = document.getElementById("clock");
   };
