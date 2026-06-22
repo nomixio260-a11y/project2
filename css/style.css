@@ -338,6 +338,61 @@ html, body {
   z-index: 11; pointer-events: none;
 }
 
+/* ===== インスペクタ（調べる） ===== */
+.inspector {
+  position: fixed;
+  left: 50%; bottom: 14px;
+  transform: translateX(-50%) translateY(8px);
+  width: min(340px, calc(100vw - 24px));
+  padding: 0;
+  z-index: 14;
+  display: none;
+  opacity: 0;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.inspector.show { display: block; opacity: 1; transform: translateX(-50%) translateY(0); }
+.insp-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 11px; border-bottom: 1px solid var(--border);
+}
+.insp-title {
+  font-size: 13px; font-weight: 800; color: #eef3fc;
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.insp-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.insp-follow, .insp-close {
+  border: 1px solid var(--border); background: var(--panel-2);
+  color: var(--text-dim); border-radius: 7px; cursor: pointer;
+  font-size: 11px; font-weight: 700; padding: 4px 8px;
+  transition: background 0.12s, color 0.12s;
+}
+.insp-follow:hover, .insp-close:hover { color: #eaf0fb; background: rgba(86,108,162,0.4); }
+.insp-follow.on { background: linear-gradient(180deg, var(--accent), #3f6fd0); color: #fff; border-color: transparent; }
+.insp-body { padding: 9px 11px 11px; }
+.insp-row {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12px; line-height: 1.7; color: #d6deef;
+}
+.insp-k { flex: 0 0 46px; color: var(--text-dim); font-size: 11px; }
+.insp-v { flex: 1 1 auto; min-width: 0; color: #eaf0fb; font-weight: 600; font-variant-numeric: tabular-nums; }
+.insp-bar {
+  flex: 1 1 auto; height: 8px; border-radius: 999px;
+  background: rgba(8,14,26,0.7); overflow: hidden; max-width: 150px;
+}
+.insp-bar i { display: block; height: 100%; border-radius: 999px; transition: width 0.2s; }
+.insp-sw {
+  display: inline-block; width: 12px; height: 12px; border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.4); vertical-align: -1px;
+}
+.insp-tag { font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 999px; }
+.insp-tag.bad { background: rgba(224,89,74,0.22); color: #ffb3a6; border: 1px solid rgba(224,89,74,0.5); }
+.insp-dead { font-size: 12px; color: var(--text-faint); font-style: italic; padding: 4px 0; }
+
+@media (max-width: 680px) {
+  .inspector { bottom: auto; top: 56px; }
+}
+
 /* ===== ミニマップ ===== */
 .minimap {
   position: fixed; bottom: 12px; right: 12px;

@@ -239,6 +239,16 @@
         }
       },
     },
+    {
+      // 調べる: クリックで人や国を選んで詳細を見る（地形には作用しない）。
+      // 実際の選択は input.applyAt が inspect を検知して Game.inspector に委ねる。
+      id: "inspect",
+      label: "調べる",
+      hotkey: "i",
+      group: "civ",
+      swatch: "#8fd0ff",
+      apply: function () { /* no-op: 選択は inspector が処理 */ },
+    },
   ];
 
   // id → ツールの索引。

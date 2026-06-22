@@ -271,6 +271,9 @@
     // 市民（人間）エージェント。
     this.drawPeople(camera);
 
+    // 選択ハイライト（インスペクタで選んだ対象）。
+    this.drawSelection(camera);
+
     // 天候（雲の影・雨・落雷）。
     this.drawWeather(camera);
 
@@ -798,6 +801,35 @@
     ctx.restore();
   };
 
+  // インスペクタで選択した対象に、脈打つ輪のハイライトを描く。
+  Renderer.prototype.drawSelection = function (camera) {
+    const sel = Game.state.selection;
+    if (!sel) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    const ctx = this.ctx;
+    const sx = camera.worldToScreenX(sel.x * tile);
+    const sy = camera.worldToScreenY(sel.y * tile);
+    const base = sel.kind === "nation" ? Math.max(14, scale * 1.6) : Math.max(9, scale * 0.9);
+    const pulse = 1 + 0.16 * Math.sin(this._t * 4);
+    const r = base * pulse;
+    ctx.save();
+    ctx.lineWidth = Math.max(1.5, scale * 0.08);
+    ctx.strokeStyle = sel.color || "#8fd0ff";
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    // 内側に薄い白で視認性を上げる。
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = Math.max(1, scale * 0.04);
+    ctx.beginPath();
+    ctx.arc(sx, sy, r - Math.max(2, scale * 0.08), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  };
+
   // 戦場の痕跡（戦死地点）を、時間で薄れる赤黒い染みで描く。
   Renderer.prototype.drawMarks = function (camera) {
     const civ = Game.state.civ;
@@ -858,6 +890,7 @@
   Renderer.prototype.drawBrushPreview = function (camera) {
     const mt = Game.state.mouseTile;
     if (!Game.state.brush || mt.x < 0) return;
+    if (Game.state.activeToolId === "inspect") return; // 調べるツールはブラシ円を出さない
     const cfg = Game.config;
     const tile = cfg.tilePx;
     const r = Game.state.brush.size;

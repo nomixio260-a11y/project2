@@ -14,7 +14,7 @@
   const ICONS = {
     raise: "⬆️", lower: "⬇️", water: "💧", sand: "🏜️", grass: "🌱", forest: "🌲", mountain: "⛰️",
     ignite: "🔥", herbivore: "🦌", predator: "🐺", human: "🧑", fertilize: "🌾",
-    earthquake: "💥", meteor: "☄️", flood: "🌊", plague: "☣️",
+    earthquake: "💥", meteor: "☄️", flood: "🌊", plague: "☣️", inspect: "🔍",
   };
 
   Game.toolbar = {

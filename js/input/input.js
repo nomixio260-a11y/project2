@@ -218,6 +218,11 @@
   Input.prototype.applyAt = function (sx, sy) {
     const t = this.camera.screenToTile(sx, sy);
     if (!this.world.inBounds(t.x, t.y)) return;
+    // 「調べる」ツールは地形に作用せず、人/国を選択する。
+    if (Game.state.activeToolId === "inspect") {
+      if (Game.inspector) Game.inspector.pickAt(t.x, t.y);
+      return;
+    }
     const tool = Game.godpowers.get(Game.state.activeToolId);
     const brush = Game.state.brush;
     const world = this.world;
