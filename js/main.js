@@ -51,6 +51,10 @@
     const civ = new Game.CivSystem(world, renderer);
     engine.systems.push(civ);
 
+    // 自然災害（噴火・地震・干ばつ）。civ の後に評価。
+    const disasters = new Game.DisasterSystem(world, renderer);
+    engine.systems.push(disasters);
+
     // 共有状態へ格納。
     Game.state.world = world;
     Game.state.camera = camera;
@@ -65,6 +69,7 @@
     Game.state.climate = climate;
     Game.state.weather = weather;
     Game.state.vegetation = vegetation;
+    Game.state.disasters = disasters;
     Game.state.activeToolId = "raise";
 
     // UI からも呼べる公開 API。
@@ -111,6 +116,7 @@
       fire.setWorld(w);
       civ.setWorld(w);
       civ.clear();
+      disasters.setWorld(w);
       camera.fitTiles(cfg.initialFitTiles || 130);
       if (Game.minimap) Game.minimap._fit();
     };

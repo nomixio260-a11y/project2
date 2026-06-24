@@ -91,19 +91,39 @@
     // 領土オーバーレイ。
     ctx.globalAlpha = 0.5;
     ctx.drawImage(renderer.territoryCanvas, 0, 0, W, H);
+    // 国境（くっきり）。
+    if (renderer.borderCanvas) {
+      ctx.globalAlpha = 0.9;
+      ctx.drawImage(renderer.borderCanvas, 0, 0, W, H);
+    }
     ctx.globalAlpha = 1;
 
-    // ビューポート矩形。
-    const r = camera.visibleTileRange();
+    // 首都マーカー（生存国の首都を小さな点で示す）。
+    const civ = Game.state.civ;
     const s = this.scale;
-    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    if (civ && civ.kingdoms) {
+      const ks = civ.kingdoms;
+      for (let id = 1; id < ks.length; id++) {
+        const k = ks[id];
+        if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+        const cap = k.cities[0];
+        const x = cap.x * s, y = cap.y * s;
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(x - 0.5, y - 0.5, 1.5, 1.5);
+      }
+    }
+
+    // ビューポート矩形（半透明の塗り＋明るい枠）。
+    const r = camera.visibleTileRange();
+    const vx = r.x0 * s, vy = r.y0 * s;
+    const vw = Math.max(2, (r.x1 - r.x0) * s), vh = Math.max(2, (r.y1 - r.y0) * s);
+    ctx.fillStyle = "rgba(150,190,255,0.14)";
+    ctx.fillRect(vx, vy, vw, vh);
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
     ctx.lineWidth = 1;
-    ctx.strokeRect(
-      r.x0 * s + 0.5,
-      r.y0 * s + 0.5,
-      Math.max(2, (r.x1 - r.x0) * s),
-      Math.max(2, (r.y1 - r.y0) * s)
-    );
+    ctx.strokeRect(vx + 0.5, vy + 0.5, vw, vh);
   };
 
   Game.minimap = Minimap;
