@@ -90,6 +90,40 @@
     }
     panel.appendChild(legend);
 
+    // 資源・建物・生き物・人物のアイコン凡例。
+    function iconLegend(title, items) {
+      const h = document.createElement("div");
+      h.className = "help-title";
+      h.textContent = title;
+      panel.appendChild(h);
+      const grid = document.createElement("div");
+      grid.className = "help-legend";
+      for (let i = 0; i < items.length; i++) {
+        const item = document.createElement("div");
+        item.className = "legend-item";
+        const ic = document.createElement("span");
+        ic.className = "legend-ico";
+        ic.textContent = items[i][0];
+        const lbl = document.createElement("span");
+        lbl.textContent = items[i][1];
+        item.appendChild(ic);
+        item.appendChild(lbl);
+        grid.appendChild(item);
+      }
+      panel.appendChild(grid);
+    }
+    iconLegend("戦略資源", [["⛏", "鉱石（技術・武具）"], ["🐟", "漁場（食料）"], ["💎", "宝石（富）"]]);
+    iconLegend("建物（人間が建設）", [
+      ["🏠", "住居（時代で進化）"], ["🏯", "砦（首都）"], ["⛩️", "神殿（信仰）"],
+      ["🌾", "農場"], ["🔨", "工房（道具）"], ["🏪", "市場（富）"],
+      ["🛡️", "兵舎（軍）"], ["🏚️", "穀倉"], ["⛏️", "鉱山"],
+    ]);
+    iconLegend("生き物・人物", [
+      ["🦌", "草食動物"], ["🐺", "肉食動物（仔は小さい）"],
+      ["🧑", "開拓者"], ["🌾", "農民"], ["🔨", "建築家"], ["🗡️", "兵士"],
+      ["⚒️", "鍛冶"], ["💰", "商人"], ["✝️", "神官"],
+    ]);
+
     const hint = document.createElement("div");
     hint.className = "help-foot";
     hint.textContent = "閉じる: もう一度「?」/ Esc / 背景をタップ";
