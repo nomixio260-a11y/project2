@@ -17,6 +17,8 @@
   DisasterSystem.prototype.tick = function (world) {
     this._t++;
     if (this._t % 50 !== 0) return; // 評価は50ティックごと（=低頻度）
+    const st = Game.config.settings;
+    if (st && st.disasters === false) return; // 設定で無効化
     const rand = this.rand;
     if (rand() < 0.03) this._eruption(world);
     if (rand() < 0.03) this._earthquake(world);

@@ -256,6 +256,9 @@
     // 交易路（同盟国の首都を結ぶ金色の線）。
     this.drawTradeRoutes(camera);
 
+    // 街道・交易路を行き交う荷馬車（経済が見える）。
+    this.drawCaravans(camera);
+
     // 炎オーバーレイ（地形の上、生物の下）。
     this.drawFire(camera);
 
@@ -518,6 +521,7 @@
 
   // 天候: 雲の影を地表に落とし、雨域を青く翳らせ、落雷を白く閃かせる。
   Renderer.prototype.drawWeather = function (camera) {
+    if (Game.config.settings && Game.config.settings.weather === false) return;
     const weather = Game.state.weather;
     if (!weather || !weather.clouds || weather.clouds.length === 0) return;
     const tile = Game.config.tilePx;
@@ -554,6 +558,7 @@
   // 昼夜の環境光オーバーレイ。夜は青く暗く、朝夕は暖色。夜は都市が灯る。
   Renderer.prototype.drawDayNight = function (camera) {
     if (!Game.lighting) return;
+    if (Game.config.settings && Game.config.settings.dayNight === false) return;
     const L = Game.lighting(Game.state.clock);
     const ctx = this.ctx;
     const W = this.cssW;
@@ -607,6 +612,7 @@
 
   // 戦略資源を地図上に小さなアイコンで描く（一定以上ズーム時）。
   Renderer.prototype.drawResources = function (camera) {
+    if (Game.config.settings && Game.config.settings.resources === false) return;
     const world = this.world;
     const list = world.resourceList;
     if (!list || !list.length) return;
@@ -635,6 +641,59 @@
         ctx.moveTo(cx, cy - s * 0.5); ctx.lineTo(cx + s * 0.4, cy);
         ctx.lineTo(cx, cy + s * 0.5); ctx.lineTo(cx - s * 0.4, cy); ctx.closePath(); ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fillRect(cx - s * 0.08, cy - s * 0.25, s * 0.16, s * 0.22);
+      }
+    }
+  };
+
+  // 街道・交易路を行き交う荷馬車。経済の流れを可視化する（一定以上ズーム時）。
+  Renderer.prototype.drawCaravans = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 2.5) return;
+    const ctx = this.ctx;
+    const ks = civ.kingdoms;
+    const t = this._t;
+    const range = camera.visibleTileRange();
+    const size = Math.max(3, scale * 0.5);
+    const self = this;
+    function wagon(ax, ay, bx, by, frac, col) {
+      const x = ax + (bx - ax) * frac, y = ay + (by - ay) * frac;
+      if (x < range.x0 - 1 || x > range.x1 + 1 || y < range.y0 - 1 || y > range.y1 + 1) return;
+      const sx = camera.worldToScreenX((x + 0.5) * tile);
+      const sy = camera.worldToScreenY((y + 0.5) * tile);
+      ctx.fillStyle = "rgba(0,0,0,0.3)";
+      ctx.fillRect(sx - size * 0.5, sy + size * 0.32, size, size * 0.18); // 影
+      ctx.fillStyle = col || "#7a5230";
+      ctx.fillRect(sx - size * 0.5, sy - size * 0.3, size, size * 0.6);   // 荷台
+      ctx.fillStyle = "#d8c49a";
+      ctx.fillRect(sx - size * 0.42, sy - size * 0.5, size * 0.84, size * 0.28); // 幌
+      ctx.fillStyle = "#15100a"; // 車輪
+      ctx.fillRect(sx - size * 0.4, sy + size * 0.28, size * 0.2, size * 0.2);
+      ctx.fillRect(sx + size * 0.2, sy + size * 0.28, size * 0.2, size * 0.2);
+    }
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      const cap = k.cities[0];
+      // 街道: 首都⇄各都市をゆっくり往復。
+      for (let c = 1; c < k.cities.length; c++) {
+        const city = k.cities[c];
+        const frac = Math.sin(t * 0.35 + id * 1.3 + c * 2.1) * 0.5 + 0.5;
+        wagon(cap.x, cap.y, city.x, city.y, frac);
+      }
+      // 交易路: 同盟首都間を金色寄りの荷馬車が往来。
+      if (k.allies) {
+        for (const bStr in k.allies) {
+          const b = +bStr;
+          if (b <= id) continue;
+          const kb = ks[b];
+          if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+          const cap2 = kb.cities[0];
+          const frac = (t * 0.06 + id * 0.7 + b * 0.37) % 1;
+          wagon(cap.x, cap.y, cap2.x, cap2.y, frac, "#9a7a3a");
+        }
       }
     }
   };
@@ -708,6 +767,7 @@
 
   // 国名ラベルを首都の上に描画。
   Renderer.prototype.drawLabels = function (camera) {
+    if (Game.config.settings && Game.config.settings.labels === false) return;
     const civ = Game.state.civ;
     if (!civ || !civ.kingdoms) return;
     const tile = Game.config.tilePx;

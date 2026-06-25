@@ -7,6 +7,15 @@ window.Game = window.Game || {};
 
   // 既定設定。worldgen / renderer / camera から参照される。
   Game.config = {
+    // 表示・挙動の設定（設定パネルから切替）
+    settings: {
+      disasters: true, // 自然災害（噴火・地震・干ばつ）
+      dayNight: true,  // 昼夜サイクル（照明＋生活リズム）
+      labels: true,    // 国名ラベル
+      resources: true, // 資源アイコン
+      weather: true,   // 天候（雲・雨・雷）
+    },
+
     // マップサイズ（タイル数）
     mapWidth: 640,
     mapHeight: 640,
