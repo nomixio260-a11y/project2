@@ -842,8 +842,8 @@
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
             const img = sprites.building(bd.t);
-            // 砦・神殿・兵舎は街のランドマークとして大きめに描く。
-            const bw = bd.t === 3 ? size * 1.4 : (bd.t === 4 || bd.t === 8) ? size * 1.2 : size;
+            // 記念碑・砦・神殿・兵舎は街のランドマークとして大きめに描く。
+            const bw = bd.t === 11 ? size * 1.8 : bd.t === 3 ? size * 1.4 : (bd.t === 4 || bd.t === 8) ? size * 1.2 : size;
             const bh = bw * (img.height / img.width);
             const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
             const by = camera.worldToScreenY((bd.y + 0.5) * tile);

@@ -21,8 +21,8 @@
   const ROLE = { EXPLORER: 0, FARMER: 1, BUILDER: 2, SOLDIER: 3, SMITH: 4, MERCHANT: 5, PRIEST: 6 };
   const ROLE_COUNT = 7;
   // 建物タイプ（描画 sprites.building と対応）。
-  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉,10=鉱山。
-  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7, BARRACKS: 8, GRANARY: 9, MINE: 10 };
+  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉,10=鉱山,11=大記念碑。
+  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7, BARRACKS: 8, GRANARY: 9, MINE: 10, WONDER: 11 };
   const MAX_BUILDINGS = 22; // 1都市の建物上限
   // 生産施設（住居・砦以外の機能建築）。役割の職場になる。
   const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary"];
@@ -88,6 +88,7 @@
     borderWindow: 400,   // この tick 数以内に接触があれば「隣国」とみなす
     warPressure: 0.55,   // 土地不足の隣国どうしは領土紛争で開戦しやすい
     maxAllies: 3,        // 1国が結べる同盟の上限（同盟の乱立を防ぐ）
+    reignSpan: 1500,     // 君主の標準的な治世（これを超えると代替わりしうる）
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
@@ -245,6 +246,7 @@
       id: id,
       name: makeName(this.rand),
       ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
+      reign: 0,      // 現君主の在位（ティック）。継承で 0 に戻る
       gov: GOV_TYPES[govIdx],
       govMod: GOV_MODS[govIdx], // 政体の振る舞い補正
       color: makeColor(this.rand),
@@ -252,7 +254,7 @@
       tileCount: 1,
       humanCount: 0,
       roleCount: [0, 0, 0, 0, 0, 0, 0],
-      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0 }, // 機能建築の総数
+      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 }, // 機能建築の総数
       tools: 0,      // 道具・武具の備蓄（鍛冶が生産・住民が装備）
       clanSeq: 0,
       relations: {}, // 既知の他国 id → 関係値(-100..100)
@@ -328,8 +330,8 @@
 
   // 全都市の建物から機能建築の数を集計する（建設・占領・反乱で変動するため）。
   CivSystem.prototype._recountFacilities = function (k) {
-    const f = k.facilities || (k.facilities = { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0 });
-    f.temple = f.farm = f.smithy = f.market = f.barracks = f.granary = 0;
+    const f = k.facilities || (k.facilities = { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 });
+    f.temple = f.farm = f.smithy = f.market = f.barracks = f.granary = f.wonder = 0;
     for (let c = 0; c < k.cities.length; c++) {
       const bs = k.cities[c].buildings;
       if (!bs) continue;
@@ -341,6 +343,7 @@
           case BUILDING.MARKET: f.market++; break;
           case BUILDING.BARRACKS: f.barracks++; break;
           case BUILDING.GRANARY: f.granary++; break;
+          case BUILDING.WONDER: f.wonder++; break;
         }
       }
     }
@@ -854,10 +857,10 @@
       this._recountFacilities(ka);
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0 };
-      // 富: 領土・都市・市場・宝石から収入（商才・政体で増す）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0) * this._eff(ka, "trade");
-      // 技術: 都市・人口・富・鍛冶場・鉱石で進歩（賢明・政体で加速）。
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5) * this._eff(ka, "tech");
+      // 富: 領土・都市・市場・宝石・記念碑（観光）から収入（商才・政体で増す）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3) * this._eff(ka, "trade");
+      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体で加速）。
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech");
       // 鉱石は武具の備蓄を増やす。備蓄は人口を上限に飽和（武装度の指標）。
       ka.tools += res.ore * 0.3;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
@@ -873,9 +876,20 @@
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
-      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3; // 信仰・食料・漁場で安定
+      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5; // 信仰・食料・漁場・記念碑で安定
       dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
+
+      // 君主の継承（王朝）: 長い治世の末に代替わりし、ときに新王の気質に変わる。
+      ka.reign += CP.diploInterval;
+      if (ka.reign > CP.reignSpan && this.rand() < 0.2) {
+        const old = ka.ruler;
+        ka.ruler = RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0];
+        ka.reign = 0;
+        if (this.rand() < 0.35) ka.trait = TRAITS[(this.rand() * TRAITS.length) | 0];
+        ka.unrest = Math.min(100, ka.unrest + 8); // 継承の動揺
+        this._logEvent("👑 " + ka.name + "：" + old + "王が崩御し " + ka.ruler + "王が即位");
+      }
 
       // 疫病: 過密で技術・衛生（神殿）が乏しい国に発生し、社会を動揺させやがて収束する。
       if (ka.plague > 0) {
@@ -1019,8 +1033,9 @@
       govMod: GOV_MODS[govIdx],
       color: makeColor(this.rand),
       cities: [{ x: city.x, y: city.y, capital: true, level: city.level || 1, buildings: (city.buildings || []) }],
+      reign: 0,
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
-      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0 },
+      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 },
       tools: parent.tools * 0.3,
       relations: {}, borders: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, religion: parent.religion,
@@ -1547,6 +1562,23 @@
   CivSystem.prototype._construct = function (k, city, world) {
     if (!city.buildings) city.buildings = [];
     const bs = city.buildings;
+
+    // 大記念碑（ワンダー）: 発展した大国が首都に建立する誇りの大建造物（稀）。
+    // 上限とは別枠で、満杯の首都でも建てられるよう最優先で判定する。
+    if (city.capital && (k.tech / TECH_PER_ERA | 0) >= 2 && k.wealth > 400 && k.humanCount > 45 &&
+        this.rand() < 0.04) {
+      let hasWonder = false;
+      for (let i = 0; i < bs.length; i++) if (bs[i].t === BUILDING.WONDER) { hasWonder = true; break; }
+      if (!hasWonder) {
+        const spot = this._buildSpot(world, k, city);
+        if (spot) {
+          bs.push({ x: spot.x, y: spot.y, t: BUILDING.WONDER });
+          this._logEvent("🏛 " + k.name + " が大記念碑を建立した");
+          return;
+        }
+      }
+    }
+
     // 上限に達したら建て替え（時代遅れの住居を更新）のみ。
     if (bs.length >= MAX_BUILDINGS) { this._rebuild(k, city); return; }
     // 建設は緩やかに進める。建てない番は古い住居の更新に充てる。
