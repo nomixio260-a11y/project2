@@ -12,6 +12,7 @@
   ];
 
   const Settings = { panel: null, btn: null, open: false };
+  const STORE_KEY = "fms_settings";
 
   Settings.init = function () {
     const btn = document.getElementById("settings-toggle");
@@ -20,6 +21,11 @@
     this.panel = panel;
     this.btn = btn;
     const s = Game.config.settings || (Game.config.settings = {});
+    // 保存済み設定を読み込んで反映（再読込でも維持）。
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+      if (saved) for (const k in saved) if (k in s) s[k] = !!saved[k];
+    } catch (e) { /* localStorage 不可なら既定値 */ }
 
     let html = '<div class="panel-head">設定</div>';
     for (let i = 0; i < OPTS.length; i++) {
@@ -35,6 +41,7 @@
     panel.querySelectorAll(".set-toggle").forEach(function (cb) {
       cb.addEventListener("change", function () {
         Game.config.settings[cb.dataset.key] = cb.checked;
+        self._save();
       });
     });
     btn.addEventListener("click", function (e) { e.stopPropagation(); self.toggle(); });
@@ -44,6 +51,10 @@
     window.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && self.open) self.toggle(false);
     });
+  };
+
+  Settings._save = function () {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(Game.config.settings)); } catch (e) { /* ignore */ }
   };
 
   Settings.toggle = function (force) {

@@ -294,6 +294,23 @@
     O: [44, 40, 36], K: [104, 98, 90], W: [78, 64, 44], T: [92, 74, 50], B: [26, 22, 20], R: [60, 50, 40], C: [150, 120, 70],
   };
 
+  // 大記念碑（金色の大尖塔。国の誇りのランドマーク）。
+  const WONDER = [
+    "...OO...",
+    "...GG...",
+    "...GG...",
+    "...GG...",
+    "..GGGG..",
+    "..GWWG..",
+    ".GGGGGG.",
+    ".GWGGWG.",
+    "GGGGGGGG",
+    "OOOOOOOO",
+  ];
+  const WONDER_PAL = {
+    G: [228, 202, 110], W: [122, 92, 40], O: [86, 72, 44],
+  };
+
   const _b = {};
   function bget(key, grid, pal) { return _b[key] || (_b[key] = build(grid, pal)); }
   Game.sprites.house = function () { return bget("house", HOUSE, HOUSE_PAL); };
@@ -307,6 +324,7 @@
   Game.sprites.barracks = function () { return bget("barracks", BARRACKS, BARRACKS_PAL); };
   Game.sprites.granary = function () { return bget("granary", GRANARY, GRANARY_PAL); };
   Game.sprites.mine = function () { return bget("mine", MINE, MINE_PAL); };
+  Game.sprites.wonder = function () { return bget("wonder", WONDER, WONDER_PAL); };
 
   // 建物タイプID → スプライト（civ の Game.BUILDING と対応）。
   // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉。
@@ -322,6 +340,7 @@
       case 8: return Game.sprites.barracks();
       case 9: return Game.sprites.granary();
       case 10: return Game.sprites.mine();
+      case 11: return Game.sprites.wonder();
       default: return Game.sprites.house(); // 1
     }
   };
