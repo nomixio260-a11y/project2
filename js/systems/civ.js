@@ -531,7 +531,8 @@
     // 昼夜の判定（夜は人々が帰宅して休む）。描画の昼夜と同じ周期を tick 数から算出し、
     // 気候時計が進まないヘッドレス環境でも正しく循環する。
     const tpd = (Game.config.sim && Game.config.sim.ticksPerDay) || 0;
-    if (tpd > 0) {
+    const dnOn = !Game.config.settings || Game.config.settings.dayNight !== false;
+    if (tpd > 0 && dnOn) {
       const tod = (tN % tpd) / tpd;
       this._night = Math.sin((tod - 0.25) * Math.PI * 2) < -0.12;
     } else {

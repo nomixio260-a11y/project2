@@ -23,8 +23,14 @@
         <button class="speed-btn" data-speed="4">4×</button>
       </div>
     </div>
-    <span id="clock" class="topbar-clock">🌸 春 1年 1日</span>
+    <div class="topbar-right">
+      <span id="clock" class="topbar-clock">🌸 春 1年 1日</span>
+      <button id="settings-toggle" class="topbar-btn" title="設定" aria-label="設定">⚙</button>
+    </div>
   </header>
+
+  <!-- 設定パネル（settings.js が中身を生成） -->
+  <div id="settings-panel" class="settings-panel panel"></div>
 
   <!-- モバイルでツールバーを開閉するトグル -->
   <button id="toolbar-toggle" class="toolbar-toggle" aria-label="道具">🪄</button>
@@ -89,6 +95,7 @@
   <script src="js/ui/nations.js"></script>
   <script src="js/ui/chronicle.js"></script>
   <script src="js/ui/inspector.js"></script>
+  <script src="js/ui/settings.js"></script>
   <script src="js/ui/help.js"></script>
   <script src="js/engine/engine.js"></script>
   <!-- シミュレーションシステム（engine の後、main の前） -->
