@@ -147,6 +147,31 @@ html, body {
 .topbar-btn:hover { color: #fff; background: rgba(86,108,162,0.4); }
 .topbar-btn.on { background: linear-gradient(180deg, var(--accent), #3f6fd0); color: #fff; border-color: transparent; }
 
+/* 世界の概観パネル */
+.overview-panel {
+  position: fixed; top: 54px; right: 12px; width: 330px;
+  padding: 10px 12px 12px; z-index: 19;
+  display: none; opacity: 0; transform: translateY(-6px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.overview-panel.show { display: block; opacity: 1; transform: translateY(0); }
+.ov-chart {
+  width: 100%; height: 104px; display: block;
+  border-radius: 8px; background: rgba(8, 14, 26, 0.5); margin-bottom: 6px;
+}
+.ov-legend { display: flex; gap: 14px; font-size: 10.5px; margin-bottom: 10px; }
+.ov-k-pop { color: #8fe08f; }
+.ov-k-nat { color: #6fa8ff; }
+.ov-rank-title { font-size: 11px; font-weight: 800; color: #b6c6e8; letter-spacing: 0.08em; margin-bottom: 6px; }
+.ov-rank { display: flex; flex-direction: column; gap: 4px; }
+.ov-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; }
+.ov-sw { width: 11px; height: 11px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.4); flex: 0 0 auto; }
+.ov-name { flex: 0 0 78px; color: #eaf0fb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-bar { flex: 1 1 auto; height: 8px; border-radius: 999px; background: rgba(8,14,26,0.7); overflow: hidden; }
+.ov-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), #7c6cf0); }
+.ov-num { flex: 0 0 auto; color: #cdd8ee; font-variant-numeric: tabular-nums; font-size: 11px; min-width: 30px; text-align: right; }
+.ov-empty { color: var(--text-faint); font-style: italic; font-size: 11.5px; }
+
 /* 設定パネル */
 .settings-panel {
   position: fixed; top: 54px; right: 12px; width: 218px;

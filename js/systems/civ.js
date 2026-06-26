@@ -153,6 +153,7 @@
     this._tcursor = 0; // 領土メンテ走査の行カーソル
     this.events = [];  // 年代記（世界の主要な出来事のログ）
     this.marks = [];   // 戦場の痕跡（戦死地点。時間で薄れて消える）
+    this.statsHist = []; // 世界統計の履歴（人口・国数・領土の推移。概観パネル用）
     // 近傍探索グリッド。
     this._cap = Game.config.sim.maxPeople;
     this._next = new Int32Array(this._cap);
@@ -634,6 +635,16 @@
     // 領土メンテナンス（支配限界の収縮・亡霊領土の消去・飛び地の穴埋め）。
     this._maintainTerritory(world);
 
+    // 街道網を集落から定期的に敷設し直す（移動を速める交通インフラ）。
+    if ((tN % 150) === 0) this._rebuildRoads(world);
+
+    // 世界統計の履歴をサンプリング（概観パネルの推移グラフ用）。
+    if ((tN % 60) === 0) {
+      const s = this.stats();
+      this.statsHist.push({ pop: s.population, nomads: s.nomads, nations: s.kingdoms, year: Game.state.clock ? Game.state.clock.year : 0 });
+      if (this.statsHist.length > 240) this.statsHist.shift();
+    }
+
     // 戦場の痕跡を時間で薄れさせ、消えたものを除く。
     if (this.marks.length) {
       let w2 = 0;
@@ -702,6 +713,46 @@
       }
     }
     this._tcursor = y1 >= H ? 0 : y1;
+  };
+
+  // 集落網（首都⇄都市、同盟首都間）を直線でラスタライズして街道を敷く。
+  // 街道タイルは移動を速めるインフラとして機能する。定期的に再構築する。
+  CivSystem.prototype._rebuildRoads = function (world) {
+    if (!world.road) return;
+    const W = world.width, H = world.height, road = world.road;
+    road.fill(0);
+    const list = [];
+    const ks = this.kingdoms;
+    function line(x0, y0, x1, y1) {
+      let dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+      let sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      let err = dx - dy, x = x0, y = y0, guard = 0;
+      const lim = W + H + 4;
+      while (guard++ < lim) {
+        if (x >= 0 && y >= 0 && x < W && y < H) {
+          const i = y * W + x;
+          if (tile.isLand(world.terrain[i]) && road[i] === 0 && list.length < 24000) { road[i] = 1; list.push(i); }
+        }
+        if (x === x1 && y === y1) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+      }
+    }
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      const cap = k.cities[0];
+      for (let c = 1; c < k.cities.length; c++) line(cap.x, cap.y, k.cities[c].x, k.cities[c].y);
+      if (k.allies) {
+        for (const b in k.allies) {
+          const bi = +b; if (bi <= id) continue;
+          const kb = ks[bi];
+          if (kb && kb.alive && kb.cities && kb.cities.length) line(cap.x, cap.y, kb.cities[0].x, kb.cities[0].y);
+        }
+      }
+    }
+    world.roadList = list;
   };
 
   // ===== 外交（国システム）=====
@@ -1778,6 +1829,8 @@
     let duy = h.gy + 0.5 - h.y;
     const dist = Math.hypot(dux, duy);
     let speed = CP.speed;
+    // 街道の上では速く移動できる（交通インフラの効果）。
+    if (world.road && world.road[(h.y | 0) * W + (h.x | 0)]) speed *= 1.5;
     if (dist < 0.6) {
       // 目標到達 → 直前の向きを保ちつつ緩やかに彷徨う（カクつき防止）。
       dux = (h.hx || 0) * 6 + (this.rand() - 0.5) * 0.5;

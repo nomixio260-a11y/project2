@@ -89,6 +89,9 @@
     // イベント通知トースト。
     if (Game.toasts) Game.toasts.tick(dt);
 
+    // 世界の概観パネル（開いている間だけ更新）。
+    if (Game.overview) Game.overview.tick(dt);
+
     // ミニマップ（内部で間引いて描画）。
     if (Game.minimap) Game.minimap.draw(dt, this.camera);
 
