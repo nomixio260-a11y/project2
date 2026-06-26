@@ -6,6 +6,9 @@
 
   // 役割ごとの被り物の色（ROLE: 0=開拓者,1=農民,2=建築家,3=兵士,4=鍛冶,5=商人,6=神官）。
   const ROLE_HAT = [null, "#4fae4f", "#e08a2a", "#b9c2cc", "#6a6a72", "#d8b84a", "#ece9e0"];
+  // 建物タイプごとの相対サイズ（実世界の規模感に合わせる。index=建物タイプ）。
+  // 0小屋 1家 2邸宅 3砦 4神殿 5農場 6工房 7市場 8兵舎 9穀倉 10鉱山 11大記念碑
+  const BUILD_SIZE = [0.78, 1.0, 1.28, 1.55, 1.4, 0.95, 1.02, 0.88, 1.2, 1.0, 0.85, 2.1];
   // 個人差の肌・髪の色（人ごとに一意に選ばれ、群衆が多様に見える）。
   const SKIN = ["#f3cd9b", "#e8b887", "#d9a066", "#c68642", "#a9764b", "#8d5524"];
   const HAIR = ["#2a1c10", "#4a3422", "#6b4f2a", "#caa84a", "#b5482f", "#15110b"];
@@ -325,12 +328,12 @@
     const n = e.count;
 
     if (scale < 6) {
-      // 遠景: 種別ごとに一括（fillStyle 切替を最小化）。
-      const px = Math.max(1, scale * 0.55);
-      const half = px * 0.5;
+      // 遠景: 種別ごとに一括（fillStyle 切替を最小化）。肉食は小さめの点。
       const colors = ["#f2e3b0", "#e0473a"]; // [草食, 肉食]
+      const pxBy = [Math.max(1, scale * 0.52), Math.max(1, scale * 0.4)]; // [草食, 肉食]
       for (let sp = 0; sp < 2; sp++) {
         ctx.fillStyle = colors[sp];
+        const px = pxBy[sp], half = px * 0.5;
         for (let i = 0; i < n; i++) {
           if (!e.alive[i] || e.type[i] !== sp) continue;
           const x = e.x[i];
@@ -375,7 +378,9 @@
         // 仔は小さく、成長で大人サイズへ（生まれて 140 ティックで一人前）。
         const age = e.age ? e.age[i] : 999;
         const grow = age < 140 ? (0.5 + 0.5 * (age / 140)) : 1;
-        const dh = Math.max(5, scale * 1.0 * gene * grow);
+        // 種別で実寸が違う: 草食(鹿)は人よりやや大きく、肉食(狼)は人より小さい。
+        const species = type === SP.PREDATOR ? 0.66 : 0.96;
+        const dh = Math.max(5, scale * species * gene * grow);
         // 歩行: 脚の2コマ切替＋上下のバウンドで「動いてる感」を出す。
         const ph = moving ? t * 7 + i * 0.9 : 0;
         const frame = moving && Math.sin(ph) > 0 ? 1 : 0;
@@ -862,13 +867,13 @@
         // 近景: 人間が建てた実際の建物を描く。
         const bs = city.buildings;
         if (bs && bs.length) {
-          // 建物は人物より明確に大きく（世界が小さく見えないように）。
-          const size = Math.max(10, scale * 1.95);
+          // 建物は人物より明確に大きく（家で約2タイル幅を基準に、種別で増減）。
+          const size = Math.max(10, scale * 1.6);
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
             const img = sprites.building(bd.t);
-            // 記念碑・砦・神殿・兵舎は街のランドマークとして大きめに描く。
-            const bw = bd.t === 11 ? size * 1.8 : bd.t === 3 ? size * 1.4 : (bd.t === 4 || bd.t === 8) ? size * 1.2 : size;
+            // 種別ごとの相対サイズ: 小屋は小さく、邸宅・砦・神殿・記念碑は大きく。
+            const bw = size * (BUILD_SIZE[bd.t] || 1);
             const bh = bw * (img.height / img.width);
             const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
             const by = camera.worldToScreenY((bd.y + 0.5) * tile);
