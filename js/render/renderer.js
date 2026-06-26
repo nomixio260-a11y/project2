@@ -152,23 +152,43 @@
     this.territoryDirty.length = 0;
   };
 
+  // 1タイルの陰影係数。標高＋北西から当たる光による起伏の立体感（レリーフ）＋
+  // タイルごとの微細なテクスチャゆらぎを掛け合わせ、平坦な塗りに質感を与える。
+  Renderer.prototype._tileShade = function (world, i, x, y) {
+    const elev = world.elevation, W = world.width;
+    const e = elev[i];
+    const elevShade = 0.80 + 0.20 * e;
+    // 北・西の標高との差で斜面を擬似ライティング（尾根は明るく谷は暗く）。
+    const west = x > 0 ? elev[i - 1] : e;
+    const north = y > 0 ? elev[i - W] : e;
+    let relief = 1 + ((e - west) + (e - north)) * 3.0;
+    if (relief < 0.70) relief = 0.70; else if (relief > 1.36) relief = 1.36;
+    // ハッシュ由来の微細なゆらぎ（同一バイオームの広い面の単調さを崩す。高所では控えめ）。
+    const hsh = (((x * 374761393) + (y * 668265263)) ^ (x * 19349663)) >>> 0 & 255;
+    const amp = e > 0.7 ? 0.04 : 0.066; // 雪・山頂など明るい高所はテクスチャを抑える
+    const tex = (1 - amp * 0.5) + (hsh / 255) * amp;
+    return elevShade * relief * tex;
+  };
+
   // world.terrain 全体を ImageData に書き出してオフスクリーンへ。
   Renderer.prototype.fullRedraw = function () {
     const world = this.world;
     const data = this.imageData.data;
     const rgb = Game.TERRAIN_RGB;
     const terrain = world.terrain;
-    const elev = world.elevation;
-    const n = world.width * world.height;
-    for (let i = 0; i < n; i++) {
-      const c = rgb[terrain[i]];
-      // 標高で軽くシェーディングして起伏を見せる。
-      const shade = 0.78 + 0.22 * elev[i];
-      const o = i * 4;
-      data[o] = c[0] * shade;
-      data[o + 1] = c[1] * shade;
-      data[o + 2] = c[2] * shade;
-      data[o + 3] = 255;
+    const W = world.width, H = world.height;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const c = rgb[terrain[i]];
+        let s = this._tileShade(world, i, x, y);
+        const o = i * 4;
+        let r = c[0] * s, g = c[1] * s, b = c[2] * s;
+        data[o] = r > 255 ? 255 : r;
+        data[o + 1] = g > 255 ? 255 : g;
+        data[o + 2] = b > 255 ? 255 : b;
+        data[o + 3] = 255;
+      }
     }
     this.terrainCtx.putImageData(this.imageData, 0, 0);
   };
@@ -189,9 +209,9 @@
       const y = this.dirty[k + 1];
       const i = y * world.width + x;
       const c = rgb[world.terrain[i]];
-      const shade = 0.78 + 0.22 * world.elevation[i];
-      tctx.fillStyle =
-        "rgb(" + ((c[0] * shade) | 0) + "," + ((c[1] * shade) | 0) + "," + ((c[2] * shade) | 0) + ")";
+      const shade = this._tileShade(world, i, x, y);
+      const r = Math.min(255, (c[0] * shade) | 0), g = Math.min(255, (c[1] * shade) | 0), b = Math.min(255, (c[2] * shade) | 0);
+      tctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
       tctx.fillRect(x, y, 1, 1);
     }
     this.dirty.length = 0;
@@ -362,6 +382,11 @@
         const bob = moving ? Math.abs(Math.sin(ph)) * dh * 0.10 : 0;
         const spr = sprites.get(type, faceLeft, frame);
         const dw = dh * (spr.width / spr.height);
+        // 接地影（地面に落として立体感を出す。バウンドしても影は地面に固定）。
+        ctx.fillStyle = "rgba(0,0,0,0.22)";
+        ctx.beginPath();
+        ctx.ellipse(sx, sy + dh * 0.34, dw * 0.36, dh * 0.12, 0, 0, Math.PI * 2);
+        ctx.fill();
         ctx.drawImage(spr, sx - dw * 0.5, sy - dh * 0.5 - bob, dw, dh);
       } else {
         // フォールバック（スプライト未ロード時）。
@@ -847,6 +872,11 @@
             const bh = bw * (img.height / img.width);
             const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
             const by = camera.worldToScreenY((bd.y + 0.5) * tile);
+            // 接地影（建物の足元に落として街に立体感を出す）。
+            ctx.fillStyle = "rgba(0,0,0,0.26)";
+            ctx.beginPath();
+            ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
+            ctx.fill();
             ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
           }
         }
