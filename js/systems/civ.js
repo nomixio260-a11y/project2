@@ -541,6 +541,8 @@
     } else {
       this._night = false;
     }
+    // 火災が世界に存在するか（人々の火災回避を発動させるかの判定）。
+    this._fireNear = !!(Game.state.fire && Game.state.fire.active && Game.state.fire.active.length > 0);
 
     this._buildGrid();
 
@@ -1337,6 +1339,38 @@
     const hdx = hcx + 0.5 - h.x, hdy = hcy + 0.5 - h.y;
     const hd2 = hdx * hdx + hdy * hdy;
 
+    // 0.4) 火災回避（最優先・全員）: 近くに火があれば離れる方向へ逃げる。
+    if (this._fireNear) {
+      const fr = this._nearestFireTile(world, h.x | 0, h.y | 0, 4);
+      if (fr) {
+        const ax = h.x - (fr.x + 0.5), ay = h.y - (fr.y + 0.5);
+        h.gx = Game.utils.clamp((h.x + ax * 1.6) | 0, 0, world.width - 1);
+        h.gy = Game.utils.clamp((h.y + ay * 1.6) | 0, 0, world.height - 1);
+        h.state = 8; return;
+      }
+    }
+
+    // 0.45) 野生の捕食者への対応（脅威判断）: 武装者は狩り、丸腰は逃げる。
+    {
+      const cr = Game.state.creatures, ents = Game.state.entities;
+      if (cr && ents && cr.nearestAnimal) {
+        const pi = cr.nearestAnimal(h.x, h.y, Game.SPECIES.PREDATOR, 4);
+        if (pi !== -1 && ents.alive[pi]) {
+          const dx = ents.x[pi] - h.x, dy = ents.y[pi] - h.y, d2 = dx * dx + dy * dy;
+          const armed = h.role === ROLE.SOLDIER || (h.gear || 0) > 0;
+          if (armed) {
+            if (d2 < 2.2) { ents.kill(pi); h.food = h.food + 0.3 > 1 ? 1 : h.food + 0.3; } // 撃退・狩り
+            else { h.gx = ents.x[pi] | 0; h.gy = ents.y[pi] | 0; h.state = 16; return; }
+          } else {
+            if (d2 < 2.5) h.food = h.food - 0.05 > 0 ? h.food - 0.05 : 0; // 襲われ負傷
+            h.gx = Game.utils.clamp((h.x - dx * 1.4) | 0, 0, world.width - 1);
+            h.gy = Game.utils.clamp((h.y - dy * 1.4) | 0, 0, world.height - 1);
+            h.state = 8; return;
+          }
+        }
+      }
+    }
+
     // 0.5) 戦時の民間人は侵入してきた敵兵から逃げる（賢い回避行動）。
     if (h.role !== ROLE.SOLDIER && this._count(k.wars) > 0) {
       const foe = this._scan(h.x, h.y, 6, function (o) {
@@ -1351,9 +1385,17 @@
       }
     }
 
-    // 1) 強い空腹 → 近くの可食地へ。
+    // 1) 強い空腹 → 記憶した食料地、無ければ近くの可食地を探す（空間記憶＝賢い採食）。
     if (h.food < 0.4) {
-      const t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
+      let t = null;
+      if (h.memFood) {
+        const mi = h.memFood.y * world.width + h.memFood.x;
+        if (tile.isEdible(world.terrain[mi])) t = h.memFood; else h.memFood = null;
+      }
+      if (!t) {
+        t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
+        if (t) h.memFood = { x: t.x, y: t.y };
+      }
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 1; return; }
     }
     // 1.2) 狩り: 開拓者・兵士は近くの野生動物を仕留めて食料にする（人と動物の関わり）。
@@ -1750,19 +1792,45 @@
     let bx = pux * 0.55 + dux * 0.45;
     let by = puy * 0.55 + duy * 0.45;
     const bl = Math.hypot(bx, by) || 1;
-    const stepx = (bx / bl) * speed;
-    const stepy = (by / bl) * speed;
-    const nxp = h.x + stepx;
-    const nyp = h.y + stepy;
-    const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
-    const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
-    if (tile.isLand(world.terrain[nty * W + ntx])) {
-      h.hx = stepx; h.hy = stepy;
-      h.x = nxp; h.y = nyp;
-    } else {
-      // 水際で反転気味に減衰（壁に張り付かない）。
-      h.hx *= -0.4; h.hy *= -0.4;
+    // 進路が塞がれていたら、向きを少しずつ振って障害物を回り込む（賢い経路選択）。
+    // 直進→±約35°→±約70°の順に通れる方向を探す。火・水・山は避ける。
+    const baseAng = Math.atan2(by, bx);
+    const OFF = [0, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9];
+    let moved = false;
+    for (let di = 0; di < OFF.length; di++) {
+      const a = baseAng + OFF[di];
+      const sxv = Math.cos(a) * speed, syv = Math.sin(a) * speed;
+      const nxp = h.x + sxv, nyp = h.y + syv;
+      const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
+      const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
+      const ni = nty * W + ntx;
+      if (tile.isLand(world.terrain[ni]) && !this._onFire(world, ni)) {
+        h.hx = sxv; h.hy = syv; h.x = nxp; h.y = nyp; moved = true; break;
+      }
     }
+    if (!moved) { h.hx *= -0.4; h.hy *= -0.4; } // 完全に囲まれたら減衰
+  };
+
+  // タイル index が燃えているか（火災回避用）。
+  CivSystem.prototype._onFire = function (world, i) {
+    const fire = Game.state.fire;
+    return !!(fire && fire.burn && fire.burn[i] > 0);
+  };
+
+  // (cx,cy) 半径 r 内で最も近い燃焼タイルを返す（無ければ null）。
+  CivSystem.prototype._nearestFireTile = function (world, cx, cy, r) {
+    const fire = Game.state.fire;
+    if (!fire || !fire.burn) return null;
+    const W = world.width, H = world.height, burn = fire.burn;
+    let bx = -1, by = -1, bd = 1e9;
+    for (let dy = -r; dy <= r; dy++) {
+      const y = cy + dy; if (y < 0 || y >= H) continue;
+      for (let dx = -r; dx <= r; dx++) {
+        const x = cx + dx; if (x < 0 || x >= W) continue;
+        if (burn[y * W + x] > 0) { const d = dx * dx + dy * dy; if (d < bd) { bd = d; bx = x; by = y; } }
+      }
+    }
+    return bx < 0 ? null : { x: bx, y: by };
   };
 
   // 施設で就労中（職場座標に十分近い）か。
