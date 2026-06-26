@@ -136,6 +136,20 @@
     { name: "賢明", war: 0.8, ally: 1.2, trade: 1.1, tech: 1.6, unrest: 0.7, faith: 1.0 },
   ];
 
+  // 個別の技術発見。tech 値が閾値 at を超えると獲得し、具体的な恩恵を得る。
+  const TECHS = [
+    { id: "agri", name: "農耕", at: 20 },     // 食料・人口扶養力
+    { id: "writing", name: "文字", at: 48 },  // 技術の進歩を加速
+    { id: "wheel", name: "車輪", at: 80 },    // 交易・富
+    { id: "bronze", name: "青銅器", at: 120 }, // 軍事
+    { id: "sail", name: "航海術", at: 150 },  // 海を越える植民
+    { id: "iron", name: "鉄器", at: 185 },    // 軍事
+    { id: "law", name: "法典", at: 215 },     // 社会の安定（不満減）
+    { id: "gunpowder", name: "火薬", at: 290 }, // 軍事（大）
+    { id: "printing", name: "印刷", at: 340 },  // 技術の進歩を大きく加速
+  ];
+  function hasTech(k, id) { return !!(k.techBits && k.techBits[id]); }
+
   function eraOf(tech) {
     let i = (tech / TECH_PER_ERA) | 0;
     if (i >= ERAS.length) i = ERAS.length - 1;
@@ -153,6 +167,7 @@
     this._tcursor = 0; // 領土メンテ走査の行カーソル
     this.events = [];  // 年代記（世界の主要な出来事のログ）
     this.marks = [];   // 戦場の痕跡（戦死地点。時間で薄れて消える）
+    this.statsHist = []; // 世界統計の履歴（人口・国数・領土の推移。概観パネル用）
     // 近傍探索グリッド。
     this._cap = Game.config.sim.maxPeople;
     this._next = new Int32Array(this._cap);
@@ -164,7 +179,8 @@
   // 年代記に出来事を記録する（新しいものを末尾に、上限つき）。
   CivSystem.prototype._logEvent = function (text) {
     const clk = Game.state.clock;
-    this.events.push({ year: clk ? clk.year : 0, text: text });
+    this._evSeq = (this._evSeq || 0) + 1;
+    this.events.push({ year: clk ? clk.year : 0, text: text, seq: this._evSeq });
     if (this.events.length > 80) this.events.shift();
   };
 
@@ -262,6 +278,8 @@
       wars: {},      // 交戦中の id → 開戦 tick
       allies: {},    // 同盟中の id → true
       tech: 0,       // 技術力（時代の指標）
+      techBits: {},  // 獲得済みの個別技術（id→true）
+      discovered: [], // 発見順の技術名（表示用）
       religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
       trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
       wealth: 0,     // 富（交易・領土から蓄積）
@@ -403,9 +421,10 @@
 
   // 国の人口容量（確保した土地に比例。建国直後でも成長できる下限つき）。
   CivSystem.prototype._capacity = function (k) {
-    // 漁場は食料を増やし、扶養できる人口を押し上げる。
+    // 漁場と農耕は食料を増やし、扶養できる人口を押し上げる。
     const fishBonus = k.res ? k.res.fish * 4 : 0;
-    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus));
+    const agriBonus = hasTech(k, "agri") ? 8 : 0;
+    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus + agriBonus));
   };
 
   // 領有する資源タイルを集計し各国の res（鉱石/漁場/宝石）に反映する。
@@ -541,6 +560,8 @@
     } else {
       this._night = false;
     }
+    // 火災が世界に存在するか（人々の火災回避を発動させるかの判定）。
+    this._fireNear = !!(Game.state.fire && Game.state.fire.active && Game.state.fire.active.length > 0);
 
     this._buildGrid();
 
@@ -631,6 +652,16 @@
     // 領土メンテナンス（支配限界の収縮・亡霊領土の消去・飛び地の穴埋め）。
     this._maintainTerritory(world);
 
+    // 街道網を集落から定期的に敷設し直す（移動を速める交通インフラ）。
+    if ((tN % 150) === 0) this._rebuildRoads(world);
+
+    // 世界統計の履歴をサンプリング（概観パネルの推移グラフ用）。
+    if ((tN % 60) === 0) {
+      const s = this.stats();
+      this.statsHist.push({ pop: s.population, nomads: s.nomads, nations: s.kingdoms, year: Game.state.clock ? Game.state.clock.year : 0 });
+      if (this.statsHist.length > 240) this.statsHist.shift();
+    }
+
     // 戦場の痕跡を時間で薄れさせ、消えたものを除く。
     if (this.marks.length) {
       let w2 = 0;
@@ -701,6 +732,46 @@
     this._tcursor = y1 >= H ? 0 : y1;
   };
 
+  // 集落網（首都⇄都市、同盟首都間）を直線でラスタライズして街道を敷く。
+  // 街道タイルは移動を速めるインフラとして機能する。定期的に再構築する。
+  CivSystem.prototype._rebuildRoads = function (world) {
+    if (!world.road) return;
+    const W = world.width, H = world.height, road = world.road;
+    road.fill(0);
+    const list = [];
+    const ks = this.kingdoms;
+    function line(x0, y0, x1, y1) {
+      let dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+      let sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      let err = dx - dy, x = x0, y = y0, guard = 0;
+      const lim = W + H + 4;
+      while (guard++ < lim) {
+        if (x >= 0 && y >= 0 && x < W && y < H) {
+          const i = y * W + x;
+          if (tile.isLand(world.terrain[i]) && road[i] === 0 && list.length < 24000) { road[i] = 1; list.push(i); }
+        }
+        if (x === x1 && y === y1) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+      }
+    }
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      const cap = k.cities[0];
+      for (let c = 1; c < k.cities.length; c++) line(cap.x, cap.y, k.cities[c].x, k.cities[c].y);
+      if (k.allies) {
+        for (const b in k.allies) {
+          const bi = +b; if (bi <= id) continue;
+          const kb = ks[bi];
+          if (kb && kb.alive && kb.cities && kb.cities.length) line(cap.x, cap.y, kb.cities[0].x, kb.cities[0].y);
+        }
+      }
+    }
+    world.roadList = list;
+  };
+
   // ===== 外交（国システム）=====
   CivSystem.prototype._contact = function (a, b) {
     if (a === b || a === 0 || b === 0) return;
@@ -734,7 +805,9 @@
     const soldiers = k.roleCount[ROLE.SOLDIER] + 1;
     const barracks = k.facilities ? k.facilities.barracks : 0;
     const armed = 1 + Math.min(1, (k.tools || 0) / soldiers) * 0.6; // 武装した兵ほど強い
-    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed;
+    // 軍事技術（青銅器→鉄器→火薬）で戦力が段階的に増す。
+    const techMul = 1 + (hasTech(k, "bronze") ? 0.15 : 0) + (hasTech(k, "iron") ? 0.2 : 0) + (hasTech(k, "gunpowder") ? 0.5 : 0);
+    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -857,13 +930,23 @@
       this._recountFacilities(ka);
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0 };
-      // 富: 領土・都市・市場・宝石・記念碑（観光）から収入（商才・政体で増す）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3) * this._eff(ka, "trade");
-      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体で加速）。
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech");
+      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体で増す）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade");
+      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体・文字・印刷で加速）。
+      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0);
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate;
       // 鉱石は武具の備蓄を増やす。備蓄は人口を上限に飽和（武装度の指標）。
       ka.tools += res.ore * 0.3;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
+      // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
+      for (let ti = 0; ti < TECHS.length; ti++) {
+        const T = TECHS[ti];
+        if (ka.tech >= T.at && !ka.techBits[T.id]) {
+          ka.techBits[T.id] = true;
+          ka.discovered.push(T.name);
+          this._logEvent("🔬 " + ka.name + " が「" + T.name + "」を発見した");
+        }
+      }
       // 時代の進歩を年代記に記録（初到達のみ）。
       const eidx = Math.min(ERAS.length - 1, (ka.tech / TECH_PER_ERA) | 0);
       if (ka._eraIdx === undefined) ka._eraIdx = eidx;
@@ -876,7 +959,7 @@
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
-      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5; // 信仰・食料・漁場・記念碑で安定
+      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0); // 信仰・食料・漁場・記念碑・法典で安定
       dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
 
@@ -1038,7 +1121,7 @@
       facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 },
       tools: parent.tools * 0.3,
       relations: {}, borders: {}, wars: {}, allies: {},
-      tech: parent.tech * 0.7, religion: parent.religion,
+      tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
       wealth: 0, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0 }, alive: true,
     };
@@ -1102,6 +1185,8 @@
         religion: k.religion, era: eraOf(k.tech), tech: Math.round(k.tech),
         trait: k.trait.name, wealth: Math.round(k.wealth), unrest: Math.round(k.unrest),
         tools: Math.round(k.tools || 0), facilities: k.facilities,
+        techCount: k.discovered ? k.discovered.length : 0,
+        latestTechs: k.discovered ? k.discovered.slice(-3) : [],
       });
     }
     out.sort(function (x, y) { return y.pop - x.pop; });
@@ -1337,6 +1422,38 @@
     const hdx = hcx + 0.5 - h.x, hdy = hcy + 0.5 - h.y;
     const hd2 = hdx * hdx + hdy * hdy;
 
+    // 0.4) 火災回避（最優先・全員）: 近くに火があれば離れる方向へ逃げる。
+    if (this._fireNear) {
+      const fr = this._nearestFireTile(world, h.x | 0, h.y | 0, 4);
+      if (fr) {
+        const ax = h.x - (fr.x + 0.5), ay = h.y - (fr.y + 0.5);
+        h.gx = Game.utils.clamp((h.x + ax * 1.6) | 0, 0, world.width - 1);
+        h.gy = Game.utils.clamp((h.y + ay * 1.6) | 0, 0, world.height - 1);
+        h.state = 8; return;
+      }
+    }
+
+    // 0.45) 野生の捕食者への対応（脅威判断）: 武装者は狩り、丸腰は逃げる。
+    {
+      const cr = Game.state.creatures, ents = Game.state.entities;
+      if (cr && ents && cr.nearestAnimal) {
+        const pi = cr.nearestAnimal(h.x, h.y, Game.SPECIES.PREDATOR, 4);
+        if (pi !== -1 && ents.alive[pi]) {
+          const dx = ents.x[pi] - h.x, dy = ents.y[pi] - h.y, d2 = dx * dx + dy * dy;
+          const armed = h.role === ROLE.SOLDIER || (h.gear || 0) > 0;
+          if (armed) {
+            if (d2 < 2.2) { ents.kill(pi); h.food = h.food + 0.3 > 1 ? 1 : h.food + 0.3; } // 撃退・狩り
+            else { h.gx = ents.x[pi] | 0; h.gy = ents.y[pi] | 0; h.state = 16; return; }
+          } else {
+            if (d2 < 2.5) h.food = h.food - 0.05 > 0 ? h.food - 0.05 : 0; // 襲われ負傷
+            h.gx = Game.utils.clamp((h.x - dx * 1.4) | 0, 0, world.width - 1);
+            h.gy = Game.utils.clamp((h.y - dy * 1.4) | 0, 0, world.height - 1);
+            h.state = 8; return;
+          }
+        }
+      }
+    }
+
     // 0.5) 戦時の民間人は侵入してきた敵兵から逃げる（賢い回避行動）。
     if (h.role !== ROLE.SOLDIER && this._count(k.wars) > 0) {
       const foe = this._scan(h.x, h.y, 6, function (o) {
@@ -1351,9 +1468,17 @@
       }
     }
 
-    // 1) 強い空腹 → 近くの可食地へ。
+    // 1) 強い空腹 → 記憶した食料地、無ければ近くの可食地を探す（空間記憶＝賢い採食）。
     if (h.food < 0.4) {
-      const t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
+      let t = null;
+      if (h.memFood) {
+        const mi = h.memFood.y * world.width + h.memFood.x;
+        if (tile.isEdible(world.terrain[mi])) t = h.memFood; else h.memFood = null;
+      }
+      if (!t) {
+        t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
+        if (t) h.memFood = { x: t.x, y: t.y };
+      }
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 1; return; }
     }
     // 1.2) 狩り: 開拓者・兵士は近くの野生動物を仕留めて食料にする（人と動物の関わり）。
@@ -1421,7 +1546,9 @@
       const t = this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow) { return ow === 0 && tile.isLand(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 4; return; }
       // 近くに未開の陸が無い → 海を越える植民を試みる（時代1以降・沿岸・確率）。
-      if (k.tech >= TECH_PER_ERA && this.rand() < CP.embarkChance && this._coastal(world, h.x | 0, h.y | 0)) {
+      // 航海術を持つ国は積極的に海へ進出する。
+      const embChance = CP.embarkChance * (hasTech(k, "sail") ? 2 : 1);
+      if (k.tech >= TECH_PER_ERA && this.rand() < embChance && this._coastal(world, h.x | 0, h.y | 0)) {
         const tgt = this._findOverseasLand(world, h.x | 0, h.y | 0);
         if (tgt) {
           h.sailing = true; h.sea = tgt; h.gx = tgt.x; h.gy = tgt.y; h.state = 15;
@@ -1735,6 +1862,8 @@
     let duy = h.gy + 0.5 - h.y;
     const dist = Math.hypot(dux, duy);
     let speed = CP.speed;
+    // 街道の上では速く移動できる（交通インフラの効果）。
+    if (world.road && world.road[(h.y | 0) * W + (h.x | 0)]) speed *= 1.5;
     if (dist < 0.6) {
       // 目標到達 → 直前の向きを保ちつつ緩やかに彷徨う（カクつき防止）。
       dux = (h.hx || 0) * 6 + (this.rand() - 0.5) * 0.5;
@@ -1750,19 +1879,45 @@
     let bx = pux * 0.55 + dux * 0.45;
     let by = puy * 0.55 + duy * 0.45;
     const bl = Math.hypot(bx, by) || 1;
-    const stepx = (bx / bl) * speed;
-    const stepy = (by / bl) * speed;
-    const nxp = h.x + stepx;
-    const nyp = h.y + stepy;
-    const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
-    const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
-    if (tile.isLand(world.terrain[nty * W + ntx])) {
-      h.hx = stepx; h.hy = stepy;
-      h.x = nxp; h.y = nyp;
-    } else {
-      // 水際で反転気味に減衰（壁に張り付かない）。
-      h.hx *= -0.4; h.hy *= -0.4;
+    // 進路が塞がれていたら、向きを少しずつ振って障害物を回り込む（賢い経路選択）。
+    // 直進→±約35°→±約70°の順に通れる方向を探す。火・水・山は避ける。
+    const baseAng = Math.atan2(by, bx);
+    const OFF = [0, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9];
+    let moved = false;
+    for (let di = 0; di < OFF.length; di++) {
+      const a = baseAng + OFF[di];
+      const sxv = Math.cos(a) * speed, syv = Math.sin(a) * speed;
+      const nxp = h.x + sxv, nyp = h.y + syv;
+      const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
+      const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
+      const ni = nty * W + ntx;
+      if (tile.isLand(world.terrain[ni]) && !this._onFire(world, ni)) {
+        h.hx = sxv; h.hy = syv; h.x = nxp; h.y = nyp; moved = true; break;
+      }
     }
+    if (!moved) { h.hx *= -0.4; h.hy *= -0.4; } // 完全に囲まれたら減衰
+  };
+
+  // タイル index が燃えているか（火災回避用）。
+  CivSystem.prototype._onFire = function (world, i) {
+    const fire = Game.state.fire;
+    return !!(fire && fire.burn && fire.burn[i] > 0);
+  };
+
+  // (cx,cy) 半径 r 内で最も近い燃焼タイルを返す（無ければ null）。
+  CivSystem.prototype._nearestFireTile = function (world, cx, cy, r) {
+    const fire = Game.state.fire;
+    if (!fire || !fire.burn) return null;
+    const W = world.width, H = world.height, burn = fire.burn;
+    let bx = -1, by = -1, bd = 1e9;
+    for (let dy = -r; dy <= r; dy++) {
+      const y = cy + dy; if (y < 0 || y >= H) continue;
+      for (let dx = -r; dx <= r; dx++) {
+        const x = cx + dx; if (x < 0 || x >= W) continue;
+        if (burn[y * W + x] > 0) { const d = dx * dx + dy * dy; if (d < bd) { bd = d; bx = x; by = y; } }
+      }
+    }
+    return bx < 0 ? null : { x: bx, y: by };
   };
 
   // 施設で就労中（職場座標に十分近い）か。
@@ -1833,8 +1988,12 @@
         if (other && other.alive) {
           const tx = h.x | 0, ty = h.y | 0;
           // 征服成功率は相対的な軍事力で決まる（強国が前線を押す）。
+          // 防御に有利な地形（丘・森・密林・湿地）は奪いにくい（地形の戦術効果）。
           const m1 = this._military(k), m2 = this._military(other);
-          const chance = CP.conflictChance * 2 * (m1 / (m1 + m2));
+          const T = Game.TERRAIN, dter = world.terrain[ti];
+          const defMul = (dter === T.HILL || dter === T.FOREST) ? 0.55
+            : (dter === T.JUNGLE || dter === T.SWAMP) ? 0.7 : 1;
+          const chance = CP.conflictChance * 2 * (m1 / (m1 + m2)) * defMul;
           if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < chance) {
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
             if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);

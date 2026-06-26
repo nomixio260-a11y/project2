@@ -128,6 +128,8 @@
     if (Game.chronicle) Game.chronicle.init();
     if (Game.inspector) Game.inspector.init();
     if (Game.settings) Game.settings.init();
+    if (Game.overview) Game.overview.init();
+    if (Game.toasts) Game.toasts.init();
     if (Game.help) Game.help.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。

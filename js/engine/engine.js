@@ -41,6 +41,8 @@
 
     // 入力（カメラのパン）は常に毎フレーム。
     this.input.update(dt);
+    // カメラのスムーズ移動（パネルクリック等の「飛ぶ」操作）。
+    if (this.camera.update) this.camera.update(dt);
 
     const world = Game.state.world;
     const sim = Game.config.sim;
@@ -84,6 +86,12 @@
     // インスペクタ（選択中の対象を毎フレーム更新・追従）。
     if (Game.inspector) Game.inspector.tick(dt);
 
+    // イベント通知トースト。
+    if (Game.toasts) Game.toasts.tick(dt);
+
+    // 世界の概観パネル（開いている間だけ更新）。
+    if (Game.overview) Game.overview.tick(dt);
+
     // ミニマップ（内部で間引いて描画）。
     if (Game.minimap) Game.minimap.draw(dt, this.camera);
 
@@ -103,12 +111,17 @@
         " 気温" + world.temperature[i].toFixed(2) +
         " 湿度" + world.moisture[i].toFixed(2);
       if (world.fertility) txt += " 植生" + world.fertility[i].toFixed(2);
+      // 資源（鉱石・漁場・宝石）。
+      if (world.resource && world.resource[i]) {
+        const r = world.resource[i];
+        txt += "  " + (r === 1 ? "⛏鉱石" : r === 2 ? "🐟漁場" : "💎宝石");
+      }
       // 領有国（国名）。
       const civ = Game.state.civ;
       if (civ && world.owner) {
         const id = world.owner[i];
         const k = id > 0 ? civ.kingdoms[id] : null;
-        if (k) txt += "  " + k.name + "（" + (k.religion || "") + "）";
+        if (k) txt += "  ▣ " + k.name + "（" + (k.religion || "") + "）";
       }
       el.textContent = txt;
     } else {

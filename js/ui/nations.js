@@ -106,7 +106,7 @@
       (function (cap, id) {
         row.addEventListener("click", function () {
           const cam = Game.state.camera;
-          if (cam && cap) cam.centerOnTile(cap.x, cap.y);
+          if (cam && cap) (cam.glideToTile ? cam.glideToTile(cap.x, cap.y) : cam.centerOnTile(cap.x, cap.y)); // 滑らかに移動
           if (Game.inspector) Game.inspector.selectNation(id); // 詳細を開く
         });
       })(n.capital, n.id);

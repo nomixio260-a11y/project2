@@ -47,7 +47,7 @@
     this.cell = 4; // 1セル=4タイル
     this.gw = Math.ceil(world.width / this.cell);
     this.gh = Math.ceil(world.height / this.cell);
-    this.head = new Int32Array(this.gw * this.gh);
+    this.head = new Int32Array(this.gw * this.gh).fill(-1); // 空セルは -1（未構築でも安全）
     this.nextLink = new Int32Array(entities.capacity);
   }
 
@@ -55,7 +55,7 @@
     this.world = world;
     this.gw = Math.ceil(world.width / this.cell);
     this.gh = Math.ceil(world.height / this.cell);
-    this.head = new Int32Array(this.gw * this.gh);
+    this.head = new Int32Array(this.gw * this.gh).fill(-1);
   };
 
   // 生存個体をグリッドに登録。
