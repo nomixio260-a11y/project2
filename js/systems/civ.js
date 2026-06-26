@@ -136,6 +136,20 @@
     { name: "賢明", war: 0.8, ally: 1.2, trade: 1.1, tech: 1.6, unrest: 0.7, faith: 1.0 },
   ];
 
+  // 個別の技術発見。tech 値が閾値 at を超えると獲得し、具体的な恩恵を得る。
+  const TECHS = [
+    { id: "agri", name: "農耕", at: 20 },     // 食料・人口扶養力
+    { id: "writing", name: "文字", at: 48 },  // 技術の進歩を加速
+    { id: "wheel", name: "車輪", at: 80 },    // 交易・富
+    { id: "bronze", name: "青銅器", at: 120 }, // 軍事
+    { id: "sail", name: "航海術", at: 150 },  // 海を越える植民
+    { id: "iron", name: "鉄器", at: 185 },    // 軍事
+    { id: "law", name: "法典", at: 215 },     // 社会の安定（不満減）
+    { id: "gunpowder", name: "火薬", at: 290 }, // 軍事（大）
+    { id: "printing", name: "印刷", at: 340 },  // 技術の進歩を大きく加速
+  ];
+  function hasTech(k, id) { return !!(k.techBits && k.techBits[id]); }
+
   function eraOf(tech) {
     let i = (tech / TECH_PER_ERA) | 0;
     if (i >= ERAS.length) i = ERAS.length - 1;
@@ -264,6 +278,8 @@
       wars: {},      // 交戦中の id → 開戦 tick
       allies: {},    // 同盟中の id → true
       tech: 0,       // 技術力（時代の指標）
+      techBits: {},  // 獲得済みの個別技術（id→true）
+      discovered: [], // 発見順の技術名（表示用）
       religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
       trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
       wealth: 0,     // 富（交易・領土から蓄積）
@@ -405,9 +421,10 @@
 
   // 国の人口容量（確保した土地に比例。建国直後でも成長できる下限つき）。
   CivSystem.prototype._capacity = function (k) {
-    // 漁場は食料を増やし、扶養できる人口を押し上げる。
+    // 漁場と農耕は食料を増やし、扶養できる人口を押し上げる。
     const fishBonus = k.res ? k.res.fish * 4 : 0;
-    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus));
+    const agriBonus = hasTech(k, "agri") ? 8 : 0;
+    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus + agriBonus));
   };
 
   // 領有する資源タイルを集計し各国の res（鉱石/漁場/宝石）に反映する。
@@ -788,7 +805,9 @@
     const soldiers = k.roleCount[ROLE.SOLDIER] + 1;
     const barracks = k.facilities ? k.facilities.barracks : 0;
     const armed = 1 + Math.min(1, (k.tools || 0) / soldiers) * 0.6; // 武装した兵ほど強い
-    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed;
+    // 軍事技術（青銅器→鉄器→火薬）で戦力が段階的に増す。
+    const techMul = 1 + (hasTech(k, "bronze") ? 0.15 : 0) + (hasTech(k, "iron") ? 0.2 : 0) + (hasTech(k, "gunpowder") ? 0.5 : 0);
+    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -911,13 +930,23 @@
       this._recountFacilities(ka);
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0 };
-      // 富: 領土・都市・市場・宝石・記念碑（観光）から収入（商才・政体で増す）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3) * this._eff(ka, "trade");
-      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体で加速）。
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech");
+      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体で増す）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade");
+      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体・文字・印刷で加速）。
+      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0);
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate;
       // 鉱石は武具の備蓄を増やす。備蓄は人口を上限に飽和（武装度の指標）。
       ka.tools += res.ore * 0.3;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
+      // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
+      for (let ti = 0; ti < TECHS.length; ti++) {
+        const T = TECHS[ti];
+        if (ka.tech >= T.at && !ka.techBits[T.id]) {
+          ka.techBits[T.id] = true;
+          ka.discovered.push(T.name);
+          this._logEvent("🔬 " + ka.name + " が「" + T.name + "」を発見した");
+        }
+      }
       // 時代の進歩を年代記に記録（初到達のみ）。
       const eidx = Math.min(ERAS.length - 1, (ka.tech / TECH_PER_ERA) | 0);
       if (ka._eraIdx === undefined) ka._eraIdx = eidx;
@@ -930,7 +959,7 @@
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
-      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5; // 信仰・食料・漁場・記念碑で安定
+      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0); // 信仰・食料・漁場・記念碑・法典で安定
       dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
 
@@ -1092,7 +1121,7 @@
       facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 },
       tools: parent.tools * 0.3,
       relations: {}, borders: {}, wars: {}, allies: {},
-      tech: parent.tech * 0.7, religion: parent.religion,
+      tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
       wealth: 0, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0 }, alive: true,
     };
@@ -1156,6 +1185,8 @@
         religion: k.religion, era: eraOf(k.tech), tech: Math.round(k.tech),
         trait: k.trait.name, wealth: Math.round(k.wealth), unrest: Math.round(k.unrest),
         tools: Math.round(k.tools || 0), facilities: k.facilities,
+        techCount: k.discovered ? k.discovered.length : 0,
+        latestTechs: k.discovered ? k.discovered.slice(-3) : [],
       });
     }
     out.sort(function (x, y) { return y.pop - x.pop; });
@@ -1515,7 +1546,9 @@
       const t = this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow) { return ow === 0 && tile.isLand(terr); });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 4; return; }
       // 近くに未開の陸が無い → 海を越える植民を試みる（時代1以降・沿岸・確率）。
-      if (k.tech >= TECH_PER_ERA && this.rand() < CP.embarkChance && this._coastal(world, h.x | 0, h.y | 0)) {
+      // 航海術を持つ国は積極的に海へ進出する。
+      const embChance = CP.embarkChance * (hasTech(k, "sail") ? 2 : 1);
+      if (k.tech >= TECH_PER_ERA && this.rand() < embChance && this._coastal(world, h.x | 0, h.y | 0)) {
         const tgt = this._findOverseasLand(world, h.x | 0, h.y | 0);
         if (tgt) {
           h.sailing = true; h.sea = tgt; h.gx = tgt.x; h.gy = tgt.y; h.state = 15;
@@ -1955,8 +1988,12 @@
         if (other && other.alive) {
           const tx = h.x | 0, ty = h.y | 0;
           // 征服成功率は相対的な軍事力で決まる（強国が前線を押す）。
+          // 防御に有利な地形（丘・森・密林・湿地）は奪いにくい（地形の戦術効果）。
           const m1 = this._military(k), m2 = this._military(other);
-          const chance = CP.conflictChance * 2 * (m1 / (m1 + m2));
+          const T = Game.TERRAIN, dter = world.terrain[ti];
+          const defMul = (dter === T.HILL || dter === T.FOREST) ? 0.55
+            : (dter === T.JUNGLE || dter === T.SWAMP) ? 0.7 : 1;
+          const chance = CP.conflictChance * 2 * (m1 / (m1 + m2)) * defMul;
           if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < chance) {
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
             if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
