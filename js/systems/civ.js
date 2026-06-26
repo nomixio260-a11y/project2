@@ -164,7 +164,8 @@
   // 年代記に出来事を記録する（新しいものを末尾に、上限つき）。
   CivSystem.prototype._logEvent = function (text) {
     const clk = Game.state.clock;
-    this.events.push({ year: clk ? clk.year : 0, text: text });
+    this._evSeq = (this._evSeq || 0) + 1;
+    this.events.push({ year: clk ? clk.year : 0, text: text, seq: this._evSeq });
     if (this.events.length > 80) this.events.shift();
   };
 

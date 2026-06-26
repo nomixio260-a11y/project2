@@ -9,7 +9,35 @@
     this.zoom = 1;
     this.viewW = viewW;
     this.viewH = viewH;
+    this.gliding = false; // スムーズ移動中か
+    this._gx = 0;
+    this._gy = 0;
   }
+
+  // 指定タイルへ滑らかに移動する（パネルクリック等の「飛ぶ」操作を心地よく）。
+  Camera.prototype.glideToTile = function (tx, ty) {
+    const cfg = Game.config;
+    const tile = cfg.tilePx;
+    const mapW = cfg.mapWidth * tile, mapH = cfg.mapHeight * tile;
+    const visW = this.viewW / this.zoom, visH = this.viewH / this.zoom;
+    let gx = (tx + 0.5) * tile - visW / 2;
+    let gy = (ty + 0.5) * tile - visH / 2;
+    this._gx = mapW <= visW ? (mapW - visW) / 2 : Game.utils.clamp(gx, 0, mapW - visW);
+    this._gy = mapH <= visH ? (mapH - visH) / 2 : Game.utils.clamp(gy, 0, mapH - visH);
+    this.gliding = true;
+  };
+
+  // 毎フレーム呼ばれ、スムーズ移動を進める（engine から）。
+  Camera.prototype.update = function (dt) {
+    if (!this.gliding) return;
+    const k = 1 - Math.pow(0.004, (dt || 16) / 1000); // 時間基準のイージング
+    this.x += (this._gx - this.x) * k;
+    this.y += (this._gy - this.y) * k;
+    if (Math.abs(this._gx - this.x) < 0.4 && Math.abs(this._gy - this.y) < 0.4) {
+      this.x = this._gx; this.y = this._gy; this.gliding = false;
+    }
+    this.clamp();
+  };
 
   Camera.prototype.resize = function (viewW, viewH) {
     this.viewW = viewW;
@@ -44,6 +72,7 @@
 
   // ワールドpx 単位でパン（zoom は考慮しない呼び出し側で割る）。
   Camera.prototype.panByWorld = function (dwx, dwy) {
+    this.gliding = false;
     this.x += dwx;
     this.y += dwy;
     this.clamp();
@@ -51,6 +80,7 @@
 
   // スクリーンpx のドラッグ量でパン。
   Camera.prototype.panByScreen = function (dsx, dsy) {
+    this.gliding = false;
     this.x -= dsx / this.zoom;
     this.y -= dsy / this.zoom;
     this.clamp();
@@ -58,6 +88,7 @@
 
   // カーソル(sx,sy)を基点にズーム。
   Camera.prototype.zoomAt = function (sx, sy, factor) {
+    this.gliding = false;
     const cfg = Game.config;
     const wx = this.screenToWorldX(sx);
     const wy = this.screenToWorldY(sy);
