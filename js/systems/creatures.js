@@ -36,6 +36,8 @@
     youngAge: 140, // この齢未満は「仔」（描画が小さい）
     herdRadius: 5,   // 草食が群れの仲間を探す距離
     herdSpacing: 1.6, // これより近ければ寄らない（密集しすぎない）
+    mateRadius: 4,   // 繁殖時に配偶者を探す距離（有性生殖）
+    mateMinEnergy: 0.5, // 配偶者がこのエネルギー以上なら繁殖できる
   };
 
   // 遺伝子を継承（軽い変異つき、0.7..1.3 にクランプ）。
@@ -284,10 +286,20 @@
       // 草食は局所の食料(fertility)が乏しいと繁殖を控える（密度依存で暴走を防ぐ）。
       if (canRepro && type === S.HERBIVORE && vegOK && fertArr[idx] < P.herbReproFert) canRepro = false;
       if (canRepro) {
-        // 4つの遺伝子をそれぞれ継承＋変異させて子に渡す（多形質の進化）。
-        const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy,
-          mutate(rand, gene), mutate(rand, gSpd), mutate(rand, gSense), mutate(rand, e.geneFert[i] || 1));
-        if (child !== -1) e.energy[i] -= P.reproCost[type];
+        // 有性生殖: 近くに繁殖可能な同種の配偶者が要る（無ければ繁殖しない＝個体が
+        // 散ると増えにくいアリー効果）。子の遺伝子は両親の中間＋変異＝遺伝的組換え。
+        const mate = this._nearest(e.x[i], e.y[i], type, P.mateRadius, i);
+        if (mate !== -1 && e.energy[mate] > P.mateMinEnergy) {
+          const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy,
+            mutate(rand, (gene + (e.gene[mate] || 1)) * 0.5),
+            mutate(rand, (gSpd + (e.geneSpd[mate] || 1)) * 0.5),
+            mutate(rand, (gSense + (e.geneSense[mate] || 1)) * 0.5),
+            mutate(rand, ((e.geneFert[i] || 1) + (e.geneFert[mate] || 1)) * 0.5));
+          if (child !== -1) {
+            e.energy[i] -= P.reproCost[type];
+            e.energy[mate] -= P.reproCost[type] * 0.5; // 配偶者も子育ての負担を分かつ
+          }
+        }
       }
 
       // 死亡判定。

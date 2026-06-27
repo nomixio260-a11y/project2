@@ -2033,6 +2033,9 @@
   // AI: 欲求と役割を勘案して目標(gx,gy)を決める「熟考」。thinkInterval 毎にのみ実行。
   CivSystem.prototype._think = function (h, k, world) {
     const self = this;
+    // 知性(wit)が判断の質を左右する: 賢い者ほど脅威に早く気づき、状況に応じて
+    // 適切に立ち回り（転職）、肥沃な農地を選ぶ。これにより wit に選択圧がかかる。
+    const wit = h.wit || 1;
     // 近傍の土地を確保（足下は毎ティック）。
     this._claimNeighbors(h, k, world);
     // 社会的な交わり（会話）と機嫌の更新。人々が互いに影響し合い社会を形づくる。
@@ -2049,10 +2052,10 @@
     // 0.2) 適応: 慢性的な飢えで農民が手薄なら食料生産へ転職。戦時に兵が手薄なら民間人が
     //      武器を取る（緊急徴募）。状況に応じて職を変える＝賢い集団としての振る舞い。
     if (h.role !== ROLE.FARMER && h.food < 0.25 &&
-        k.roleCount[ROLE.FARMER] < k.humanCount * 0.3 && this.rand() < 0.12) {
+        k.roleCount[ROLE.FARMER] < k.humanCount * 0.3 && this.rand() < 0.12 * wit) {
       this._switchRole(h, k, ROLE.FARMER);
     } else if ((h.role === ROLE.EXPLORER || h.role === ROLE.BUILDER) && this._count(k.wars) > 0 &&
-        k.roleCount[ROLE.SOLDIER] < k.humanCount * 0.12 && this.rand() < 0.06) {
+        k.roleCount[ROLE.SOLDIER] < k.humanCount * 0.12 && this.rand() < 0.06 * wit) {
       this._switchRole(h, k, ROLE.SOLDIER);
     }
 
@@ -2077,7 +2080,7 @@
     {
       const cr = Game.state.creatures, ents = Game.state.entities;
       if (cr && ents && cr.nearestAnimal) {
-        const pi = cr.nearestAnimal(h.x, h.y, Game.SPECIES.PREDATOR, 4);
+        const pi = cr.nearestAnimal(h.x, h.y, Game.SPECIES.PREDATOR, 3 + 1.6 * wit); // 賢いほど早く察知
         if (pi !== -1 && ents.alive[pi]) {
           const dx = ents.x[pi] - h.x, dy = ents.y[pi] - h.y, d2 = dx * dx + dy * dy;
           const armed = h.role === ROLE.SOLDIER || (h.gear || 0) > 0;
@@ -2094,9 +2097,9 @@
       }
     }
 
-    // 0.5) 戦時の民間人は侵入してきた敵兵から逃げる（賢い回避行動）。
+    // 0.5) 戦時の民間人は侵入してきた敵兵から逃げる（賢いほど早く危険を察知して逃げる）。
     if (h.role !== ROLE.SOLDIER && this._count(k.wars) > 0) {
-      const foe = this._scan(h.x, h.y, 6, function (o) {
+      const foe = this._scan(h.x, h.y, 4 + 2.5 * wit, function (o) {
         return (o.kid !== h.kid && o.kid !== 0 && o.role === ROLE.SOLDIER && self._atWar(h.kid, o.kid)) ? 2 : 0;
       }).best;
       if (foe) {
@@ -2231,13 +2234,19 @@
       h.state = 12; return;
     }
     // FARMER（既定）: 町の周りに自分の畑を持ち、出勤して耕し、たまに帰宅する（職住近接）。
+    // 賢い農夫は数か所を見比べて最も肥沃な土地を選ぶ（知性→食料生産の質）。
     if (!h.farm) {
-      const ang = this.rand() * Math.PI * 2;
-      const dr = 3 + this.rand() * (CP.tetherSettled - 3);
-      h.farm = {
-        x: Game.utils.clamp((hcx + Math.cos(ang) * dr) | 0, 0, world.width - 1),
-        y: Game.utils.clamp((hcy + Math.sin(ang) * dr) | 0, 0, world.height - 1),
-      };
+      const samples = world.fertility ? (1 + Math.round(wit * 2)) : 1; // wit~1で約3か所
+      let bx = 0, by = 0, bf = -1;
+      for (let s = 0; s < samples; s++) {
+        const ang = this.rand() * Math.PI * 2;
+        const dr = 3 + this.rand() * (CP.tetherSettled - 3);
+        const fx = Game.utils.clamp((hcx + Math.cos(ang) * dr) | 0, 0, world.width - 1);
+        const fy = Game.utils.clamp((hcy + Math.sin(ang) * dr) | 0, 0, world.height - 1);
+        const f = world.fertility ? world.fertility[fy * world.width + fx] : 0;
+        if (f > bf) { bf = f; bx = fx; by = fy; }
+      }
+      h.farm = { x: bx, y: by };
     }
     if (this.rand() < 0.25) { h.gx = hcx; h.gy = hcy; } // 帰宅
     else { h.gx = h.farm.x; h.gy = h.farm.y; }          // 畑へ出勤
