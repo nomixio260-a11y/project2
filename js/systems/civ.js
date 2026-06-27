@@ -183,17 +183,18 @@
   function ageFactor(age) {
     if (age < CP.adultAge) return 0.55 + 0.45 * (age / CP.adultAge); // 子供: 0.55→1.0
     if (age <= CP.elderAge) {
-      // 成人期はわずかに山なり（中年で最盛 ~1.06、若年・初老で ~1.0）。
+      // 成人期はわずかに山なり（中年で最盛 ~1.03、若年・初老で ~1.0）。
       const t = (age - CP.adultAge) / (CP.elderAge - CP.adultAge); // 0..1
-      return 1.0 + 0.12 * Math.sin(Math.PI * t);
+      return 1.0 + 0.06 * Math.sin(Math.PI * t);
     }
     const t = Math.min(1, (age - CP.elderAge) / (CP.maxAge - CP.elderAge)); // 0..1
     return 1.0 - 0.45 * t; // 老人: 1.0→0.55
   }
   // 練度(0..1)→係数（0.78〜1.22、平均練度~0.5で~1.0）。
   function skillFactor(s) { return 0.78 + 0.44 * (s || 0); }
-  // 機嫌(0..1)→係数（0.74〜1.14、既定機嫌0.6で~1.0）。
-  function moodFactor(m) { return 0.74 + 0.5 * (m == null ? 0.6 : m); }
+  // 機嫌(0..1)→係数。社会的なつながりで人々の機嫌は平時 ~0.65 に落ち着くため、
+  // その均衡で ~1.0 になるよう中央化（経済バランスを壊さない）。
+  function moodFactor(m) { return 0.71 + 0.45 * (m == null ? 0.6 : m); }
   // 実効能力。性格×加齢×練度×機嫌。traitKey 省略時は勤勉さ(dili)を用いる。
   function ability(h, traitKey) {
     const t = traitKey ? (h[traitKey] || 1) : (h.dili || 1);
@@ -220,6 +221,33 @@
   function practice(h) {
     if (h.skill < 1) { h.skill += (1 - h.skill) * 0.0007 * (h.wit || 1); if (h.skill > 1) h.skill = 1; }
   }
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+  // ===== 社会・人間関係（会話で結びつき、影響し合い、社会を形づくる）=====
+  // 人名: 音節を組み合わせて固有名を作る（年代記・インスペクタで個人を指す）。
+  const PERSON_A = ["Al", "Bre", "Cas", "Dor", "El", "Fen", "Gar", "Hel", "Ir", "Jor", "Ka", "Lo", "Mar", "Ned", "Or", "Pol", "Rin", "Sel", "Tor", "Ul", "Ven", "Wyn", "Yas", "Zel", "Ash", "Bryn", "Cor", "Dag"];
+  const PERSON_B = ["a", "e", "i", "o", "ae", "ia", "or", "an", "en", "wyn", "ric", "mund", "gar", "dis", "wen", "far", "lin", "eth", "ulf", "win"];
+  function personName(rand) { return PERSON_A[(rand() * PERSON_A.length) | 0] + PERSON_B[(rand() * PERSON_B.length) | 0]; }
+
+  // 名声(prestige)→社会的影響力。名士の言葉ほど人を動かす（機嫌・文化・技を伝える力）。
+  function influence(h) {
+    const p = h.prestige || 0;
+    return 1 + (p > 12 ? 12 : p) * 0.12; // 1.0〜2.44
+  }
+  // その人にふさわしい称号を、最も秀でた点から定める（名声が高まった時に名乗る）。
+  function titleOf(h) {
+    if (h.role === ROLE.SOLDIER) return "英雄";
+    if (h.role === ROLE.PRIEST) return "聖人";
+    if (h.role === ROLE.MERCHANT) return "豪商";
+    if (h.role === ROLE.SMITH) return "名工";
+    if (h.role === ROLE.FARMER) return "篤農";
+    if ((h.wit || 1) >= 1.18) return "賢者";
+    if ((h.age || 0) >= CP.elderAge) return "古老";
+    return "名士";
+  }
+  const FAME_THRESHOLD = 6; // この名声を超えると「名のある人物」として歴史に刻まれる
+  // 親友関係の上限（1人が深く結びつく相手の数）。
+  const MAX_BONDS = 4;
 
   function CivSystem(world, renderer) {
     this.world = world;
@@ -227,6 +255,7 @@
     this.rand = Game.utils.mulberry32((Game.config.seed ^ 0x5bd1e995) >>> 0);
     this.kingdoms = [null];
     this.people = [];   // 人間エージェント
+    this._pidSeq = 0;   // 個人ID採番（個体識別・人間関係に用いる）
     this._births = [];  // 当ティックに生まれた子（次ティックから処理）
     this._tickN = 0;
     this._tcursor = 0; // 領土メンテ走査の行カーソル
@@ -387,7 +416,7 @@
       gx: x, gy: y, work: null, gear: 0,
       repro: CP.reproCooldown, social: 0, alive: true,
     };
-    endow(h, this.rand);
+    this._endow(h);
     this.people.push(h);
     return true;
   };
@@ -465,6 +494,24 @@
     return t !== undefined && (this._tickN - t) <= CP.borderWindow;
   };
 
+  // 人に内面と社会的アイデンティティを授ける（個性＋固有名・名声・人間関係・文化）。
+  // 親(pa,pb)があれば性格・文化を遺伝する。
+  CivSystem.prototype._endow = function (h, pa, pb) {
+    if (h.dili === undefined) endow(h, this.rand, pa, pb); // 性格・練度・機嫌
+    if (h.pid === undefined) {
+      h.pid = ++this._pidSeq;
+      h.name = personName(this.rand);
+      h.prestige = 0;       // 名声（功・徳・齢で高まり、人を動かす）
+      h.partner = null;     // 伴侶（繁殖で結ばれ、死別で深く悲しむ）
+      h.bonds = null;       // 親友（会話を重ねて結ばれる。最大 MAX_BONDS）
+      // 文化的気質（会話で伝播し、地域・国ごとの文化を創発させる）。
+      h.culture = pa
+        ? clamp01(((pa.culture == null ? 0.5 : pa.culture) + (pb ? (pb.culture == null ? 0.5 : pb.culture) : (pa.culture == null ? 0.5 : pa.culture))) / 2 + (this.rand() - 0.5) * 0.08)
+        : this.rand();
+    }
+    return h;
+  };
+
   CivSystem.prototype._spawnHuman = function (k, x, y, clan, role, food, pa, pb) {
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return null;
     if (k.humanCount >= CP.perKingdomCap) return null;
@@ -483,7 +530,7 @@
       social: 0,
       alive: true,
     };
-    endow(h, this.rand, pa, pb); // 個性・練度・機嫌（親があれば遺伝）
+    this._endow(h, pa, pb); // 個性・固有名・名声・人間関係・文化（親があれば遺伝）
     k.humanCount++;
     k.roleCount[role]++;
     return h;
@@ -657,7 +704,7 @@
     for (let i = 0; i < people.length; i++) {
       const h = people[i];
       if (!h.alive) continue;
-      if (h.dili === undefined) endow(h, this.rand); // 旧セーブ等の互換: 内面を補う
+      if (h.pid === undefined) this._endow(h); // 旧セーブ等の互換: 内面・素性を補う
 
       // 放浪者（無所属）: 集まり、やがて国を興す。
       if (h.kid === 0) { this._tickNomad(h, world, tN, i); continue; }
@@ -678,6 +725,10 @@
       h.food -= CP.metab;
       h.social += CP.socialRise;
       if (h.repro > 0) h.repro--;
+      // 民心の集計（社会→国家の因果: 平均的な機嫌が不満に跳ね返る）。
+      k._moodS = (k._moodS || 0) + h.mood; k._moodN = (k._moodN || 0) + 1;
+      // 最も名高い人物を追う（国を代表する英傑・賢人）。
+      if ((h.prestige || 0) > (k._topP || 0)) { k._topP = h.prestige; k._topRef = h; }
 
       const tx = h.x | 0, ty = h.y | 0;
       const ti = ty * world.width + tx;
@@ -729,9 +780,31 @@
       else {
         const k = kingdoms[p.kid];
         if (k) { k.humanCount--; k.roleCount[p.role]--; }
+        // 名のある人物の死は歴史に刻む。
+        if (p._famed) this._logEvent("† " + p.name + (k ? "（" + k.name + "）" : "") + " が世を去った");
       }
     }
     people.length = w;
+
+    // 民心 → 国家の不満（社会→国家の因果）。満ち足りた民は国を安んじ、
+    // 不満を抱えた民は不穏を募らせる。基準=0.55（やや満ち足りた状態で中立）。
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive) continue;
+      if (k._moodN) {
+        const avg = k._moodS / k._moodN;
+        k.moodAvg = avg;
+        k.unrest = (k.unrest || 0) + (0.55 - avg) * 0.05;
+        if (k.unrest < 0) k.unrest = 0; else if (k.unrest > 100) k.unrest = 100;
+      }
+      // 国を代表する英傑（名声が一定以上のときのみ掲げる）。
+      if (k._topRef && k._topRef.alive && (k._topP || 0) >= FAME_THRESHOLD) {
+        k.figure = { name: k._topRef.name, title: titleOf(k._topRef) };
+      } else if (k.figure && (!k._topRef || !k._topRef.alive)) {
+        k.figure = null;
+      }
+      k._moodS = 0; k._moodN = 0; k._topP = 0; k._topRef = null;
+    }
 
     // 出生を追加。
     if (this._births.length) {
@@ -1324,6 +1397,8 @@
         food: Math.round(k.food || 0), famine: !!k.famine,
         techCount: k.discovered ? k.discovered.length : 0,
         latestTechs: k.discovered ? k.discovered.slice(-3) : [],
+        morale: k.moodAvg != null ? Math.round(k.moodAvg * 100) : null,
+        figure: k.figure || null,
       });
     }
     out.sort(function (x, y) { return y.pop - x.pop; });
@@ -1484,7 +1559,8 @@
       role: ROLE.EXPLORER, state: 0, gx: h.x | 0, gy: h.y | 0,
       repro: CP.reproCooldown, social: 0, alive: true,
     };
-    endow(child, this.rand, h, partner); // 両親から個性を遺伝
+    this._endow(child, h, partner); // 両親から個性・文化を遺伝
+    this._bond(h, partner);         // 伴侶として結ばれる
     this._births.push(child);
   };
 
@@ -1533,37 +1609,100 @@
     return { dx: dx, dy: dy, d2: d2 };
   };
 
-  // 会話・交流と機嫌の更新（thinkInterval 毎・低負荷）。人と人が影響し合い社会を作る。
-  //  - 近くの同胞と言葉を交わせば孤独が癒え、機嫌が上向く（社交欲の充足）。
-  //  - 同じ職の腕利きが近くにいれば、技を見て学び練度が伸びる（知識の伝播）。
-  //  - 機嫌は暮らし向き（食料・社交・戦争・飢饉・国の不満）へ向けてゆっくり推移し、
-  //    その人の実効能力（生産・戦闘）に効く。良い社会ほど人が活き、社会が栄える。
+  // 二人を伴侶として結ぶ（独身どうしのみ。一夫一妻的な家族の核を作る）。
+  CivSystem.prototype._bond = function (a, b) {
+    if (a === b) return;
+    if (!a.partner && !b.partner) { a.partner = b; b.partner = a; }
+  };
+
+  // a の親友リストに b を加える/絆を深める（会話の積み重ねで友誼が育つ。上限あり）。
+  CivSystem.prototype._befriend = function (a, b, amount) {
+    let list = a.bonds;
+    if (!list) list = a.bonds = [];
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].ref === b) { list[i].aff = Math.min(1, list[i].aff + amount); return; }
+    }
+    if (list.length < MAX_BONDS) { list.push({ ref: b, aff: amount }); return; }
+    // 満杯なら最も希薄な絆を、新しい相手が上回るとき置き換える（関係の新陳代謝）。
+    let wi = 0, wv = list[0].aff;
+    for (let i = 1; i < list.length; i++) if (list[i].aff < wv) { wv = list[i].aff; wi = i; }
+    if (amount > wv * 0.5) list[wi] = { ref: b, aff: amount };
+  };
+
+  // 親友・伴侶の死を悼む（絆の相手が世を去っていたら悲嘆し、リストを整理する）。
+  // grief は機嫌を下げ、社会の喪失が個人に影を落とす。
+  CivSystem.prototype._mournLost = function (h) {
+    let grief = 0;
+    if (h.partner && !h.partner.alive) { grief += 0.28; h.partner = null; }
+    const list = h.bonds;
+    if (list && list.length) {
+      let w = 0;
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].ref.alive) list[w++] = list[i];
+        else grief += 0.1 * list[i].aff;
+      }
+      list.length = w;
+    }
+    return grief;
+  };
+
+  // 会話・交流・機嫌の更新（thinkInterval 毎・低負荷）。社会の核となる処理。
+  // 近くの同胞ひとりと「言葉を交わし」、互いに影響を及ぼし合う:
+  //  - 孤独が癒え、機嫌が伝染する（名士ほど強く人心を動かす＝influence）。
+  //  - 腕利きから技を学び練度が伝播する（知識の社会的伝達）。
+  //  - 食料地の知らせを分かち合う（資源の知識が口伝えに広まる）。
+  //  - 文化的気質が混ざり合う（地域・国ごとの文化が創発する）。
+  //  - 語らいを重ねた相手とは親友になる。伴侶・親友の死は深く悼む。
+  // 機嫌は暮らし向き（食料・社交・戦争・飢饉・絆の喪失）へ向けて推移し、実効能力に効く。
   CivSystem.prototype._socialize = function (h, k) {
     const self = this;
-    // 近傍の同胞を見る。mentor = 近くの同職で自分より熟練した者（best）。
-    const scan = this._scan(h.x, h.y, CP.socialRadius, function (o) {
-      if (o === h || o.kid !== h.kid) return 0;
-      if (o.role === h.role && (o.skill || 0) > (h.skill || 0) + 0.02) return 2; // 師
-      return 1; // 同胞
-    });
-    const company = scan.count + scan.count2;
-    if (company > 0) {
-      h.social = 0; // 語らいで孤独が癒える
-      // 知識の伝播: 腕利きの所作を見て学び、練度が縮まる（賢い者ほど速く学ぶ）。
-      const mentor = scan.best;
-      if (mentor) {
-        const gap = (mentor.skill || 0) - (h.skill || 0);
-        if (gap > 0) { h.skill += gap * 0.06 * (h.wit || 1); if (h.skill > 1) h.skill = 1; }
-      }
+    // 喪失を悼む（伴侶・親友の死）。
+    const grief = this._mournLost(h);
+    // 名声: 練度・齢・徳がにじみ出て、ゆっくり高まる（功績＝武功・普請は別途加算）。
+    // 熟達し齢を重ねた者ほど周囲に一目置かれ、やがて名のある人物となる（ごく一部）。
+    h.prestige = (h.prestige || 0) + 0.05 * (0.2 + (h.skill || 0)) * (h.age > CP.elderAge ? 1.6 : h.age > CP.adultAge ? 1 : 0.2);
+    // 名のある人物として歴史に登場（初めて閾値を超えたとき）。
+    if (!h._famed && h.prestige >= FAME_THRESHOLD) {
+      h._famed = true;
+      this._logEvent("◆ " + h.name + "（" + k.name + "）が" + titleOf(h) + "として名を馳せた");
     }
-    // 機嫌の目標値: 普通(0.5)を基準に、満腹・社交・国情で上下する。
+
+    // 近傍の同胞を数え、最寄りの一人を「会話相手」とする。
+    const scan = this._scan(h.x, h.y, CP.socialRadius, function (o) {
+      return (o !== h && o.kid === h.kid) ? 2 : 0;
+    });
+    const company = scan.count2;
+    const other = scan.best;
+    if (company > 0) h.social = 0; // 語らいで孤独が癒える
+
+    if (other) {
+      const infl = influence(other); // 相手の社会的影響力
+      // 機嫌の伝染（名士の上機嫌・不機嫌は周囲に強く広がる）。
+      h.mood += (other.mood - h.mood) * 0.06 * infl;
+      // 知識の伝播: 相手の方が熟練していれば技を学ぶ（賢い者ほど速い）。
+      const gap = (other.skill || 0) - (h.skill || 0);
+      if (gap > 0.02) { h.skill += gap * 0.05 * (h.wit || 1) * infl; if (h.skill > 1) h.skill = 1; }
+      // 食料地の知らせを分かち合う（自分が知らず相手が知っていれば教わる）。
+      if (!h.memFood && other.memFood) h.memFood = { x: other.memFood.x, y: other.memFood.y };
+      // 文化の混交（相手の気質に少し近づく。名士の文化ほど伝播力が強い）。
+      h.culture = clamp01((h.culture == null ? 0.5 : h.culture) + (((other.culture == null ? 0.5 : other.culture)) - (h.culture == null ? 0.5 : h.culture)) * 0.04 * infl);
+      // 友誼: 同氏族・近距離・気の合う（文化が近い）相手とは絆が深まる。
+      const akin = (h.clan && other.clan === h.clan) ? 1.6 : 1;
+      const cultSim = 1 - Math.abs((h.culture || 0.5) - (other.culture || 0.5));
+      this._befriend(h, other, 0.06 * akin * cultSim);
+    }
+
+    // 機嫌の目標値: 普通(0.5)を基準に、満腹・社交・親友・国情で上下する。
     let target = 0.5 + (h.food - 0.5) * 0.4;
     if (company >= CP.socialNeed) target += 0.08; else if (company === 0) target -= 0.12;
+    const friends = h.bonds ? h.bonds.length : 0;
+    if (friends > 0) target += 0.012 * (friends > 3 ? 3 : friends); // 親しい仲間がいると心安らか
+    if (h.partner && h.partner.alive) target += 0.03;   // 伴侶の支え
     if (k.famine) target -= 0.22;
     if (this._count(k.wars) > 0) target -= 0.12;
-    target += (40 - (k.unrest || 0)) * 0.0015; // 安定した国は人心も穏やか
+    target += (40 - (k.unrest || 0)) * 0.0015;          // 安定した国は人心も穏やか
     if (target < 0) target = 0; else if (target > 1) target = 1;
-    h.mood += (target - h.mood) * 0.15; // ゆっくり推移
+    h.mood += (target - h.mood) * 0.15 - grief;         // ゆっくり推移＋喪失の悲嘆
     if (h.mood < 0) h.mood = 0; else if (h.mood > 1) h.mood = 1;
   };
 
@@ -1743,7 +1882,7 @@
       // 町に居れば実際に建設・建て替え。遠地に出たら新集落を興す。
       if (hd2 < 36) {
         const city = this._cityAt(k, hcx, hcy);
-        if (city) this._construct(k, city, world);
+        if (city) { this._construct(k, city, world); practice(h); h.prestige = (h.prestige || 0) + 0.06; } // 普請で腕と名を上げる
       } else {
         this._maybeFoundTown(h, k);
       }
@@ -2025,13 +2164,32 @@
     const capacity = this._capacity(k);
     if (k.humanCount >= capacity) return;
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return;
-    // 近くの同王国の成人をパートナーに。
-    const partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
-      return (o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.food >= CP.reproFood && o.repro <= 0) ? 2 : 0;
-    }).best;
+    // パートナー選び: 伴侶が近くにいて適齢なら添い遂げる（家族の継続）。
+    // いなければ近くの同王国の成人を新たな伴侶に（配偶者の選好）。
+    let partner = null;
+    const sp = h.partner;
+    if (sp && sp.alive && sp.kid === h.kid && sp.age >= CP.adultAge && sp.age <= CP.elderAge &&
+        sp.food >= CP.reproFood && sp.repro <= 0) {
+      const dx = sp.x - h.x, dy = sp.y - h.y;
+      if (dx * dx + dy * dy <= CP.reproRadius * CP.reproRadius) partner = sp;
+    }
+    if (!partner) {
+      // 独身者を優先しつつ、近くの適齢の同胞を伴侶に。
+      partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
+        return (o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.age <= CP.elderAge &&
+          o.food >= CP.reproFood && o.repro <= 0 && !o.partner) ? 2 : 0;
+      }).best;
+      if (!partner) {
+        partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
+          return (o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.age <= CP.elderAge &&
+            o.food >= CP.reproFood && o.repro <= 0) ? 2 : 0;
+        }).best;
+      }
+    }
     if (!partner) return;
     h.repro = CP.reproCooldown; partner.repro = CP.reproCooldown;
     h.food -= CP.reproCost; partner.food -= CP.reproCost;
+    this._bond(h, partner); // 伴侶として結ばれる
     const child = this._spawnHuman(k, h.x, h.y, h.clan, this._assignRole(k), 0.7, h, partner);
     if (child) this._births.push(child);
   };
@@ -2162,7 +2320,7 @@
           // 個の武勇: 勇敢で歴戦（高練度）の壮年兵ほど大きな損害を与える。
           e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) * (0.55 + 0.45 * ability(h, "brave"));
           practice(h); // 実戦で武を磨く
-          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); } // 戦死
+          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); h.prestige = (h.prestige || 0) + 1.2; } // 戦死させ武功を上げる
         }
       } else {
         h._enemy = null;
