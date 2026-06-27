@@ -136,6 +136,8 @@
     const W = world.width;
     const H = world.height;
     const maxEntities = Game.config.sim.maxEntities;
+    // ホットループで繰り返す world のフィールド参照を局所化（プロパティ解決を削減）。
+    const terrain = world.terrain, fertArr = world.fertility;
 
     this._buildGrid();
 
@@ -154,14 +156,16 @@
       if (!e.alive[i]) continue;
       const type = e.type[i];
 
-      const gene = e.gene[i] || 1;
+      const gene = e.gene[i] || 1;       // 体格
+      const gSpd = e.geneSpd[i] || 1;    // 俊敏
+      const gSense = e.geneSense[i] || 1; // 感覚
       e.age[i] += 1;
       e.energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * coldF; // 大型ほど・寒冷ほど燃費が悪い
 
       const tx = e.x[i] | 0;
       const ty = e.y[i] | 0;
       const idx = ty * W + tx;
-      const here = world.terrain[idx];
+      const here = terrain[idx];
 
       // 溺死（陸生が深海に出た）。
       if (here === Game.TERRAIN.DEEP_WATER) {
@@ -191,8 +195,8 @@
       }
 
       if (type === S.HERBIVORE) {
-        // 捕食者から逃げる（採食・渇きより最優先＝生存本能）。
-        const pred = this._nearest(e.x[i], e.y[i], S.PREDATOR, P.fleeRadius, -1);
+        // 捕食者から逃げる（採食・渇きより最優先＝生存本能）。感覚が鋭いほど早く気づく。
+        const pred = this._nearest(e.x[i], e.y[i], S.PREDATOR, P.fleeRadius * (0.6 + 0.4 * gSense), -1);
         if (pred !== -1) {
           const dx = e.x[i] - e.x[pred];
           const dy = e.y[i] - e.y[pred];
@@ -226,9 +230,9 @@
           }
         }
       } else if (dirX === 0 && dirY === 0 && e.energy[i] < P.satiation) {
-        // 肉食: 満腹でないときだけ近くの草食を追って捕食する。
+        // 肉食: 満腹でないときだけ近くの草食を追って捕食する。感覚が鋭いほど遠くの獲物に気づく。
         // 飽食した捕食者は獲物を見過ごす＝捕食を必要分に抑え、被食者の乱獲・崩壊を防ぐ。
-        const prey = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.huntRadius, i);
+        const prey = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.huntRadius * (0.6 + 0.4 * gSense), i);
         if (prey !== -1) {
           const dx = e.x[prey] - e.x[i];
           const dy = e.y[prey] - e.y[i];
@@ -236,7 +240,8 @@
           if (dist <= P.eatRadius) {
             // 多くの狩りは失敗する（獲物の警戒・逃げ足＝避難の余地）。これが
             // 捕食圧を和らげ、被食者を絶滅させずに捕食者と共存させる安定化要素。
-            if (rand() < P.catchChance) {
+            // 体格の大きな捕食者ほど仕留めやすい（体格遺伝子への選択圧）。
+            if (rand() < P.catchChance * (0.6 + 0.4 * gene)) {
               e.kill(prey);
               e.energy[i] = Math.min(1, e.energy[i] + P.preyGain);
             }
@@ -254,7 +259,7 @@
         dirY = rand() - 0.5;
       }
       const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-      let sp = P.speed[type] * (0.8 + 0.4 * gene); // 大型ほど速い
+      let sp = P.speed[type] * (0.7 + 0.3 * gene) * (0.7 + 0.3 * gSpd); // 体格＋俊敏で速度が決まる
       if (fleeing) sp *= P.fleeBoost;   // 逃走で加速
       if (chasing) sp *= P.chaseBoost;  // 追跡で加速（獲物を捕らえる）
       const stepX = (dirX / len) * sp;
@@ -265,7 +270,7 @@
       // 水へ踏み込まない（陸生）。境界もクランプ。
       const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
       const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
-      if (!tile.isWater(world.terrain[nty * W + ntx])) {
+      if (!tile.isWater(terrain[nty * W + ntx])) {
         e.x[i] = Game.utils.clamp(nxp, 0, W - 1);
         e.y[i] = Game.utils.clamp(nyp, 0, H - 1);
       }
@@ -273,11 +278,15 @@
       // 繁殖。新個体は次ティックの _buildGrid で登録される
       // （ここでグリッドへ挿し込むと、解放スロット再利用時に
       //  リンクリストが循環し _nearest が無限ループするため挿さない）。
-      let canRepro = e.energy[i] > P.reproduceAt[type] && e.live < maxEntities && rand() < P.reproduceChance[type];
+      // 多産遺伝子(geneFert)が高いほど繁殖しやすい（多産戦略への選択圧）。
+      let canRepro = e.energy[i] > P.reproduceAt[type] && e.live < maxEntities &&
+        rand() < P.reproduceChance[type] * (0.6 + 0.4 * (e.geneFert[i] || 1));
       // 草食は局所の食料(fertility)が乏しいと繁殖を控える（密度依存で暴走を防ぐ）。
-      if (canRepro && type === S.HERBIVORE && vegOK && world.fertility[idx] < P.herbReproFert) canRepro = false;
+      if (canRepro && type === S.HERBIVORE && vegOK && fertArr[idx] < P.herbReproFert) canRepro = false;
       if (canRepro) {
-        const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy, mutate(rand, gene));
+        // 4つの遺伝子をそれぞれ継承＋変異させて子に渡す（多形質の進化）。
+        const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy,
+          mutate(rand, gene), mutate(rand, gSpd), mutate(rand, gSense), mutate(rand, e.geneFert[i] || 1));
         if (child !== -1) e.energy[i] -= P.reproCost[type];
       }
 
