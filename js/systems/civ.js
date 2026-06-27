@@ -215,6 +215,15 @@
     const t = traitKey ? (h[traitKey] || 1) : (h.dili || 1);
     return t * ageFactor(h.age) * skillFactor(h.skill) * moodFactor(h.mood);
   }
+  // シナプスの可塑性: 現在値を目標へ近づける。身につく(up)のは速く、抜ける(down)のは
+  // 遅い＝一度刻まれた用心・習い性は長く残る（経験が気質を恒久的に形づくる）。
+  // 学習後の値は繁殖時に子へ受け継がれるため、危険な地の集団は世代を経て用心深くなる。
+  function learn(v, target, up, down) {
+    const cur = v == null ? 1 : v;
+    const rate = target > cur ? up : down;
+    const n = cur + (target - cur) * rate;
+    return n < 0.65 ? 0.65 : n > 1.35 ? 1.35 : n;
+  }
   // 親があれば中間値を、無ければランダムに継承する1形質。
   function heritTrait(rand, a, b) {
     if (a != null && b != null) return inheritTrait(rand, (a + b) / 2);
@@ -2010,6 +2019,11 @@
       const infl = influence(other); // 相手の社会的影響力
       // 機嫌の伝染（名士の上機嫌・不機嫌は周囲に強く広がる）。
       h.mood += (other.mood - h.mood) * 0.06 * infl;
+      // 感情の伝染: 恐怖は群れに燃え移りパニックに（上向きに強く伝わる）、喜びも分かち合う。
+      // これにより一頭の猛獣が群衆の将棋倒し的な逃走を引き起こす等の創発が生まれる。
+      const of = other.fear || 0;
+      if (of > (h.fear || 0)) h.fear = Math.min(1, (h.fear || 0) + (of - (h.fear || 0)) * 0.35);
+      h.joy = clamp01((h.joy || 0) + (((other.joy || 0)) - (h.joy || 0)) * 0.12);
       // 知識の伝播: 相手の方が熟練していれば技を学ぶ（賢い者ほど速い）。
       const gap = (other.skill || 0) - (h.skill || 0);
       if (gap > 0.02) { h.skill += gap * 0.05 * (h.wit || 1) * infl; if (h.skill > 1) h.skill = 1; }
@@ -2053,13 +2067,27 @@
     // 適切に立ち回り（転職）、肥沃な農地を選ぶ。これにより wit に選択圧がかかる。
     const wit = h.wit || 1;
     // 視野: その人が世界をどれだけ見渡せるか。知性で広く、夜は狭く、幼少・老齢では
-    // やや狭い。以降の脅威察知・採餌はこの視野の内側だけを「知覚」する。
+    // やや狭い。さらに地形が効く: 森・密林は見通しを奪い(隠れ場所＝待ち伏せ)、丘・山は
+    // 物見の高所として視界を広げる。以降の脅威察知・採餌はこの視野の内側だけを知覚する。
     const ageF = h.age < CP.adultAge ? 0.78 : (h.age >= CP.elderAge ? 0.85 : 1);
-    const sight = h.sight = CP.sightBase * (0.7 + 0.3 * wit) * (this._night ? 0.62 : 1) * ageF;
+    const T = Game.TERRAIN;
+    const hereT = world.terrain[(h.y | 0) * world.width + (h.x | 0)];
+    const terrSight = (hereT === T.FOREST || hereT === T.JUNGLE || hereT === T.SWAMP) ? 0.6
+      : (hereT === T.HILL || hereT === T.MOUNTAIN) ? 1.4 : 1;
+    const sight = h.sight = CP.sightBase * (0.7 + 0.3 * wit) * (this._night ? 0.62 : 1) * ageF * terrSight;
     // 感情の自然減衰（時間とともに落ち着く）。出来事が以下で高ぶらせる。
     h.fear = (h.fear || 0) * 0.7;
     h.anger = (h.anger || 0) * 0.72;
     h.joy = (h.joy || 0) * 0.8;
+    // シナプス可塑性（経験からの学習＝氏より育ち）: 直近の経験で脳の配線が少しずつ変わる。
+    //   恐ろしい目に遭えば用心深く(synSafe↑)、飢えれば食を優先するよう(synFood↑)に。
+    //   危険も飢えも無く穏やかなら配線は中庸へ緩む。子供ほど・賢いほど学習が速い。
+    if (h.synSafe !== undefined) {
+      const up = (h.age < CP.adultAge ? 0.02 : 0.008) * (0.6 + 0.4 * wit); // 子供ほど・賢いほど速く学ぶ
+      const down = up * 0.22; // 習い性はゆっくりしか抜けない（経験が永く残る）
+      h.synSafe = learn(h.synSafe, (h.fear || 0) > 0.4 ? 1.3 : 1.0, up, down);
+      h.synFood = learn(h.synFood, h.food < 0.3 ? 1.3 : 1.0, up, down);
+    }
     // 近傍の土地を確保（足下は毎ティック）。
     this._claimNeighbors(h, k, world);
     // 社会的な交わり（会話）と機嫌の更新。人々が互いに影響し合い社会を形づくる。
