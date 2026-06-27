@@ -45,11 +45,13 @@
     this.renderer = renderer;
     this.rand = Game.utils.mulberry32((Game.config.seed ^ 0x1234abcd) >>> 0);
 
-    // 空間グリッド（近傍探索用）。
+    // 空間グリッド（近傍探索用）。種別ごとに別の連結リストを持つことで、
+    // 「捕食者を探す」走査が密集した草食の鎖を辿らずに済む（探索コストを大幅に削減）。
     this.cell = 4; // 1セル=4タイル
     this.gw = Math.ceil(world.width / this.cell);
     this.gh = Math.ceil(world.height / this.cell);
-    this.head = new Int32Array(this.gw * this.gh).fill(-1); // 空セルは -1（未構築でも安全）
+    this.ncells = this.gw * this.gh;
+    this.head = new Int32Array(this.ncells * 2).fill(-1); // [type0 セル..., type1 セル...]
     this.nextLink = new Int32Array(entities.capacity);
   }
 
@@ -57,54 +59,60 @@
     this.world = world;
     this.gw = Math.ceil(world.width / this.cell);
     this.gh = Math.ceil(world.height / this.cell);
-    this.head = new Int32Array(this.gw * this.gh).fill(-1);
+    this.ncells = this.gw * this.gh;
+    this.head = new Int32Array(this.ncells * 2).fill(-1);
   };
 
-  // 生存個体をグリッドに登録。
+  // 生存個体を種別ごとのグリッドに登録。
   CreatureSystem.prototype._buildGrid = function () {
     const e = this.entities;
     const head = this.head;
     head.fill(-1);
     const cell = this.cell;
     const gw = this.gw;
+    const nc = this.ncells;
     const next = this.nextLink;
+    const ex = e.x, ey = e.y, et = e.type, alive = e.alive;
     for (let i = 0; i < e.count; i++) {
-      if (!e.alive[i]) continue;
-      const cx = (e.x[i] / cell) | 0;
-      const cy = (e.y[i] / cell) | 0;
-      const c = cy * gw + cx;
+      if (!alive[i]) continue;
+      const cx = (ex[i] / cell) | 0;
+      const cy = (ey[i] / cell) | 0;
+      const c = (et[i] === 0 ? 0 : nc) + cy * gw + cx; // 種別でオフセット
       next[i] = head[c];
       head[c] = i;
     }
   };
 
   // (px,py) 近傍で type に一致する最も近い個体を radius 内で探す。除外 self。
+  // type の連結リストのみを辿るため、対象種が少なければ非常に速い。
   CreatureSystem.prototype._nearest = function (px, py, type, radius, self) {
     const e = this.entities;
     const cell = this.cell;
     const gw = this.gw;
     const gh = this.gh;
-    const r = Math.ceil(radius / cell);
+    const r = (radius / cell + 0.999) | 0;
     const cx = (px / cell) | 0;
     const cy = (py / cell) | 0;
+    const base = type === 0 ? 0 : this.ncells;
+    const head = this.head, next = this.nextLink, ex = e.x, ey = e.y, alive = e.alive;
     let best = -1;
     let bestD = radius * radius;
-    for (let gy = cy - r; gy <= cy + r; gy++) {
-      if (gy < 0 || gy >= gh) continue;
-      for (let gx = cx - r; gx <= cx + r; gx++) {
-        if (gx < 0 || gx >= gw) continue;
-        let i = this.head[gy * gw + gx];
+    let gy0 = cy - r; if (gy0 < 0) gy0 = 0;
+    let gy1 = cy + r; if (gy1 >= gh) gy1 = gh - 1;
+    let gx0 = cx - r; if (gx0 < 0) gx0 = 0;
+    let gx1 = cx + r; if (gx1 >= gw) gx1 = gw - 1;
+    for (let gy = gy0; gy <= gy1; gy++) {
+      const row = base + gy * gw;
+      for (let gx = gx0; gx <= gx1; gx++) {
+        let i = head[row + gx];
         while (i !== -1) {
-          if (i !== self && e.alive[i] && e.type[i] === type) {
-            const dx = e.x[i] - px;
-            const dy = e.y[i] - py;
+          if (i !== self && alive[i]) { // 種別はリスト分離済み。途中で死んだ個体だけ除外
+            const dx = ex[i] - px;
+            const dy = ey[i] - py;
             const d = dx * dx + dy * dy;
-            if (d < bestD) {
-              bestD = d;
-              best = i;
-            }
+            if (d < bestD) { bestD = d; best = i; }
           }
-          i = this.nextLink[i];
+          i = next[i];
         }
       }
     }
@@ -128,6 +136,12 @@
     // 長期気候: 寒冷な時代は基礎代謝が上がり（寒さに耐えるため）個体数が抑えられる。
     const clk = Game.state.clock;
     const coldF = 1 + Math.max(0, -(clk ? (clk.warmth || 0) : 0)) * 0.5;
+    // 群れ凝集を間引くための位相（4ティックで一巡）。
+    this._tickN = (this._tickN || 0) + 1;
+    const herdPhase = this._tickN & 3;
+    // 植生システムの参照をループ外で1回だけ解決（毎個体の lookup を避ける）。
+    const veg = Game.state.vegetation;
+    const vegOK = !!(veg && veg.world === world);
 
     const n = e.count; // 今ティックの個体のみ処理（新生は次ティック）
     for (let i = 0; i < n; i++) {
@@ -149,8 +163,9 @@
       }
 
       // 渇き: 進行し、岸（浅瀬隣接）で飲んでリセット。限界で消耗。
+      // 渇きの進行は緩やかなので、岸の確認（3x3走査）は4ティックに1回に間引く。
       e.thirst[i] += P.thirstRate;
-      if (this._nearWater(world, tx, ty)) {
+      if (((i + this._tickN) & 3) === 0 && this._nearWater(world, tx, ty)) {
         e.thirst[i] = 0;
       } else if (e.thirst[i] > 0.85) {
         e.energy[i] -= P.dehydration;
@@ -175,14 +190,13 @@
         if (pred !== -1) {
           const dx = e.x[i] - e.x[pred];
           const dy = e.y[i] - e.y[pred];
-          const dl = Math.hypot(dx, dy) || 1;
+          const dl = Math.sqrt(dx * dx + dy * dy) || 1;
           dirX = dx / dl; dirY = dy / dl;
           fleeing = true;
         }
         // 採食（植生 fertility を消費。未接続時はフォールバック）。
         if (tile.isEdible(here)) {
-          const veg = Game.state.vegetation;
-          if (veg && veg.world === world) {
+          if (vegOK) {
             const eaten = veg.graze(idx);
             if (eaten > 0) e.energy[i] = Math.min(1, e.energy[i] + eaten * P.grazeGainScale);
           } else {
@@ -196,12 +210,12 @@
           dirY = f.y;
         }
         // 群れ行動: 逃走・採食でなく満ち足りているときは仲間に寄り集まる
-        // （数の安全。捕食者に対し群れで身を守る＝創発的な草食獣の群れ）。
-        if (!fleeing && dirX === 0 && dirY === 0) {
+        // （数の安全）。緩やかな凝集なので個体ごとに4ティックに1回だけ評価して負荷を抑える。
+        if (!fleeing && dirX === 0 && dirY === 0 && ((e.age[i] + i) & 3) === herdPhase) {
           const mate = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.herdRadius, i);
           if (mate !== -1) {
             const dx = e.x[mate] - e.x[i], dy = e.y[mate] - e.y[i];
-            const dl = Math.hypot(dx, dy) || 1;
+            const dl = Math.sqrt(dx * dx + dy * dy) || 1;
             if (dl > P.herdSpacing) { dirX = dx / dl * 0.6; dirY = dy / dl * 0.6; }
           }
         }
@@ -228,7 +242,7 @@
         dirX = rand() - 0.5;
         dirY = rand() - 0.5;
       }
-      const len = Math.hypot(dirX, dirY) || 1;
+      const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
       let sp = P.speed[type] * (0.8 + 0.4 * gene); // 大型ほど速い
       if (fleeing) sp *= P.fleeBoost;   // 逃走で加速
       if (chasing) sp *= P.chaseBoost;  // 追跡で加速（獲物を捕らえる）
@@ -250,10 +264,7 @@
       //  リンクリストが循環し _nearest が無限ループするため挿さない）。
       let canRepro = e.energy[i] > P.reproduceAt && e.live < maxEntities && rand() < P.reproduceChance[type];
       // 草食は局所の食料(fertility)が乏しいと繁殖を控える（密度依存で暴走を防ぐ）。
-      if (canRepro && type === S.HERBIVORE) {
-        const veg = Game.state.vegetation;
-        if (veg && veg.world === world && world.fertility[idx] < 0.4) canRepro = false;
-      }
+      if (canRepro && type === S.HERBIVORE && vegOK && world.fertility[idx] < 0.4) canRepro = false;
       if (canRepro) {
         const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy, mutate(rand, gene));
         if (child !== -1) e.energy[i] -= 0.4;
