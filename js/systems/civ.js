@@ -220,12 +220,15 @@
       h.dili = inheritTrait(rand, ((pa.dili || 1) + (pb.dili || 1)) / 2);
       h.brave = inheritTrait(rand, ((pa.brave || 1) + (pb.brave || 1)) / 2);
       h.wit = inheritTrait(rand, ((pa.wit || 1) + (pb.wit || 1)) / 2);
+      h.vigor = inheritTrait(rand, ((pa.vigor || 1) + (pb.vigor || 1)) / 2);
     } else if (pa) {
       h.dili = inheritTrait(rand, pa.dili);
       h.brave = inheritTrait(rand, pa.brave);
       h.wit = inheritTrait(rand, pa.wit);
+      h.vigor = inheritTrait(rand, pa.vigor);
     } else {
       h.dili = randTrait(rand); h.brave = randTrait(rand); h.wit = randTrait(rand);
+      h.vigor = randTrait(rand);
     }
     h.skill = 0.06 + rand() * 0.08; // 練度は低くから始まり、経験で伸びる
     h.mood = 0.6;                    // 機嫌（普通）
@@ -782,11 +785,12 @@
       this._move(h, null, world);
       this._roleTick(h, k, world, ti);
 
-      // 死亡（餓死・老衰・疫病）。
-      if (h.food <= 0 || h.age > CP.maxAge) {
+      // 死亡（餓死・老衰・疫病）。生命力(vigor)が高いほど長寿で病に強い（遺伝）。
+      const vg = h.vigor || 1;
+      if (h.food <= 0 || h.age > CP.maxAge * vg) {
         h.alive = false;
-      } else if (k.plague > 0 && this.rand() < CP.plagueMortality) {
-        h.alive = false; // 疫病で病没
+      } else if (k.plague > 0 && this.rand() < CP.plagueMortality / vg) {
+        h.alive = false; // 疫病で病没（生命力で抵抗）
       }
     }
 
@@ -2542,15 +2546,19 @@
     // 直進→±約35°→±約70°の順に通れる方向を探す。火・水・山は避ける。
     const baseAng = Math.atan2(by, bx);
     const OFF = [0, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9];
+    // 経路探索の内側ループで使う配列をループ外で1回だけ解決（最大7回/人/ティックの
+    // プロパティ解決と関数呼び出しを削減）。
+    const terr = world.terrain;
+    const fire = Game.state.fire, burn = (fire && fire.burn) ? fire.burn : null;
     let moved = false;
     for (let di = 0; di < OFF.length; di++) {
       const a = baseAng + OFF[di];
       const sxv = Math.cos(a) * speed, syv = Math.sin(a) * speed;
       const nxp = h.x + sxv, nyp = h.y + syv;
-      const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
-      const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
+      const ntx = nxp < 0 ? 0 : nxp >= W ? W - 1 : nxp | 0;
+      const nty = nyp < 0 ? 0 : nyp >= H ? H - 1 : nyp | 0;
       const ni = nty * W + ntx;
-      if (tile.isLand(world.terrain[ni]) && !this._onFire(world, ni)) {
+      if (tile.isLand(terr[ni]) && !(burn && burn[ni] > 0)) {
         h.hx = sxv; h.hy = syv; h.x = nxp; h.y = nyp; moved = true; break;
       }
     }

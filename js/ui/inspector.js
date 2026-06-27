@@ -178,6 +178,7 @@
         row("種別", pred ? "捕食者（狩りをする）" : "草食獣（草を食む）") +
         row("成長", young ? "仔" : "成獣") +
         row("体格", build + "（遺伝 " + gene.toFixed(2) + "）") +
+        row("遺伝子", genoStr(ents, i)) +
         bar("活力", hp, false) +
         bar("渇き", thirst, true);
       return;
@@ -275,6 +276,7 @@
       { v: p.dili || 1, hi: "勤勉", lo: "怠惰" },
       { v: p.brave || 1, hi: "勇敢", lo: "臆病" },
       { v: p.wit || 1, hi: "聡明", lo: "純朴" },
+      { v: p.vigor || 1, hi: "頑健", lo: "病弱" },
     ];
     let best = axes[0], bd = 0;
     for (let i = 0; i < axes.length; i++) {
@@ -297,6 +299,13 @@
     const LIFE = Game.lifeStages || { elder: 2600 };
     if ((p.age || 0) >= LIFE.elder) return "古老";
     return "名士";
+  }
+
+  // 生物の遺伝子をアイコンつきで簡潔に表す（記号で高低が一目で分かる）。
+  function genoStr(ents, i) {
+    function mark(v) { return v >= 1.1 ? "▲" : v <= 0.9 ? "▽" : "・"; }
+    return "体" + mark(ents.gene[i] || 1) + " 速" + mark(ents.geneSpd[i] || 1) +
+      " 感" + mark(ents.geneSense[i] || 1) + " 産" + mark(ents.geneFert[i] || 1);
   }
 
   function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
