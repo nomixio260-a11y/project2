@@ -438,6 +438,25 @@
     return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus + agriBonus));
   };
 
+  // 国の農地の平均的な肥沃度（0..1）。各都市の周辺を数点サンプリングして平均する。
+  // 干ばつ・火災・噴火で植生(fertility)が落ちると、この値を介して食料生産が減る。
+  CivSystem.prototype._landFertility = function (k) {
+    const world = this.world;
+    if (!world.fertility || !k.cities || !k.cities.length) return 0.6;
+    const W = world.width, H = world.height, f = world.fertility;
+    const off = [0, 0, -2, 0, 2, 0, 0, -2, 0, 2]; // 中心＋上下左右
+    let sum = 0, n = 0;
+    for (let c = 0; c < k.cities.length; c++) {
+      const cx = k.cities[c].x, cy = k.cities[c].y;
+      for (let o = 0; o < off.length; o += 2) {
+        const x = cx + off[o], y = cy + off[o + 1];
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        sum += f[y * W + x]; n++;
+      }
+    }
+    return n ? sum / n : 0.6;
+  };
+
   // 領有する資源タイルを集計し各国の res（鉱石/漁場/宝石）に反映する。
   // 資源は少数なので resourceList を一巡するだけで全国まとめて数えられる。
   CivSystem.prototype._tallyResources = function () {
@@ -941,13 +960,17 @@
       this._recountFacilities(ka);
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0 };
-      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体で増す）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade");
-      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体・文字・印刷で加速）。
+      // 治安（不満）が生産を左右する: 高い不満は混乱を生み、富・技術・食料・武具の
+      //   産出を落とす（=失政の国は衰える負の連鎖）。order: 0.5(不満100)〜1.0(不満0)。
+      const order = 1 - ka.unrest / 200;
+      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体・治安で増減）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade") * order;
+      if (ka.wealth < 0) ka.wealth = 0;
+      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0);
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate;
-      // 鉱石は武具の備蓄を増やす。備蓄は人口を上限に飽和（武装度の指標）。
-      ka.tools += res.ore * 0.3;
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order;
+      // 武具の備蓄: 鉱石＋富で武装する（富裕国は兵を装備できる＝経済→軍事）。治安で増減。
+      ka.tools += (res.ore * 0.3 + Math.min(2.5, ka.wealth * 0.0025)) * order;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
       // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
       for (let ti = 0; ti < TECHS.length; ti++) {
@@ -973,12 +996,17 @@
       dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0); // 信仰・食料・漁場・記念碑・法典で安定
 
       // 食料経済: 農民・農場・漁場・採集で生産し、人口が消費する。穀倉が備蓄上限を上げる。
+      // 因果の要: 生産は「土地の肥沃度（=植生。干ばつ・火災・噴火で低下）」と「季節
+      //   （冬は減産）」と「治安」に連動する。これにより気候・災害・植生・社会が食料を
+      //   通じて人口に波及する。
       const agriF = hasTech(ka, "agri") ? 1.3 : 1;
-      // 戦争は農地を荒らし生産を落とし（×減産）、軍の補給で消費を押し上げる（×増）。
-      // 長く戦う国・過密で農地不足の国は備蓄を食いつぶして飢饉に陥る。
-      const warDisrupt = 1 - Math.min(0.5, warCount * 0.22);
+      const warDisrupt = 1 - Math.min(0.5, warCount * 0.22); // 戦争は農地を荒らす
+      // 植生システムがある時のみ肥沃度を反映（無い環境＝テスト等では中立=1）。
+      const fert = Game.state.vegetation ? (0.55 + 0.55 * this._landFertility(ka)) : 1; // 0.55〜1.1
+      const season = Game.state.clock && Game.state.clock.season;
+      const seasonF = season ? (0.55 + 0.45 * season.growth) : 1; // 冬≈0.66 夏≈1.16
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
-        res.fish * CP.foodFish + ka.tileCount * CP.foodGather) * agriF * warDisrupt;
+        res.fish * CP.foodFish + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * order;
       const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary;
