@@ -2518,7 +2518,7 @@
     const W = world.width, H = world.height;
     let dux = h.gx + 0.5 - h.x;
     let duy = h.gy + 0.5 - h.y;
-    const dist = Math.hypot(dux, duy);
+    const dist = Math.sqrt(dux * dux + duy * duy);
     let speed = CP.speed;
     // 街道の上では速く移動できる（交通インフラの効果）。
     if (world.road && world.road[(h.y | 0) * W + (h.x | 0)]) speed *= 1.5;
@@ -2531,12 +2531,13 @@
       dux /= dist; duy /= dist;
     }
     // 慣性: 直前の進行方向と混ぜて滑らかに曲がる。
-    const pl = Math.hypot(h.hx || 0, h.hy || 0);
+    const hx0 = h.hx || 0, hy0 = h.hy || 0;
+    const pl = Math.sqrt(hx0 * hx0 + hy0 * hy0);
     const pux = pl > 1e-4 ? h.hx / pl : dux;
     const puy = pl > 1e-4 ? h.hy / pl : duy;
     let bx = pux * 0.55 + dux * 0.45;
     let by = puy * 0.55 + duy * 0.45;
-    const bl = Math.hypot(bx, by) || 1;
+    const bl = Math.sqrt(bx * bx + by * by) || 1;
     // 進路が塞がれていたら、向きを少しずつ振って障害物を回り込む（賢い経路選択）。
     // 直進→±約35°→±約70°の順に通れる方向を探す。火・水・山は避ける。
     const baseAng = Math.atan2(by, bx);
