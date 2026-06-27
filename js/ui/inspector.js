@@ -207,6 +207,8 @@
       row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "") +
         (info && info.foodTrade ? (info.foodTrade > 0 ? " （輸入+" + info.foodTrade + "）" : " （輸出" + info.foodTrade + "）") : "")) +
       row("資源", resStr) +
+      (info && info.market
+        ? row("市場", "希少 " + esc(info.market.scarce) + " ↑　余剰 " + esc(info.market.abundant) + " ↓") : "") +
       (info && info.partners && info.partners.length
         ? row("交易", "🐫 " + info.partners.length + "国 ＋💰" + info.tradeIncome +
             "<br><span class='insp-sub'>" + info.partners.slice(0, 3).map(function (p) { return esc(p.name); }).join("・") + "</span>")

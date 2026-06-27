@@ -112,6 +112,9 @@
     tradeRoadBonus: 0.4,  // 街道網の交易力寄与
     tradeFoodPrice: 0.7,  // 食料1単位の取引価格（富）。飢饉国へ食料が流れる
     tradeFoodMax: 12,     // 1回の評価で動かせる食料の上限
+    tradeToolPrice: 1.1,  // 武具1単位の取引価格（富）。軍需品の交易
+    tradeToolMax: 6,      // 1回の評価で動かせる武具の上限
+    tradeArbScale: 0.18,  // 価格差（裁定）から生まれる交易利益の係数
     // 生産・装備（専門職が施設で働いて生み出す）
     workRadius: 3,       // 施設からこの距離以内なら「就労中」
     toolRate: 0.02,      // 鍛冶が1ティックに作る道具・武具
@@ -1087,11 +1090,53 @@
     this._setRel(a, b, 70);
   };
 
-  // ===== 交易（取引）=====
+  // ===== 交易（取引）と市場 =====
   // 文明どうしが余剰と不足を交換し、双方が富む経済の根幹。交易の力は文明により異なる:
   //   政体（共和制は商業的）・気質（商才）・市場・商人・技術（車輪=陸路 / 航海術=海路）・治安。
-  // 比較優位: 産物の構成が異なる相手ほど交換の利益が大きい。
-  // 食料は飢えた国へ流れ、対価の富と引き換えに飢饉を和らげる（経済→人口の因果）。
+  // 市場の理: 各文明では財の供給と需要から「市場価格」が決まる（希少なら高く、
+  //   豊富なら安い）。価格の高い国（希少）へ、安い国（豊富）から財が流れ、その
+  //   価格差が交易の利益を生む（裁定＝comparative advantage の経済的な実体）。
+  // 実物の移動: 穀物は飢えた国へ、武具は手薄な国へ流れ、奢侈品は富裕層を潤して
+  //   人心を和らげる。交易は飢饉・軍備・治安に波及する（経済→人口・軍事・社会）。
+
+  // 交易財。各文明の供給/需要から市場価格が定まり、価格差が交易を駆動する。
+  const GOODS = [
+    { id: "grain", name: "穀物", base: 1.0, w: 1.2 },   // 食料。需要=人口
+    { id: "metal", name: "金属", base: 1.4, w: 1.0 },   // 鉱石。需要=鍛冶・人口
+    { id: "sea", name: "海産", base: 0.9, w: 0.9 },     // 漁獲。需要=人口
+    { id: "luxury", name: "奢侈品", base: 2.2, w: 0.9 }, // 宝石。需要=富・人口
+    { id: "tools", name: "道具", base: 1.6, w: 1.1 },   // 道具・武具。需要=人口・鍛冶
+  ];
+
+  // 文明の市場価格を求める（財ごとの供給と需要の比＝希少度。0.1〜8 にクランプ）。
+  // 供給が少なく需要が多い財ほど高価になり、交易で輸入されやすくなる。
+  CivSystem.prototype._marketPrices = function (k) {
+    const res = k.res || { ore: 0, fish: 0, gems: 0 };
+    const fac = k.facilities || {};
+    const pop = Math.max(1, k.humanCount);
+    const supply = {
+      grain: 0.2 + (k.food || 0) * 0.15 + (k.roleCount[ROLE.FARMER] || 0) * 0.5 + (fac.farm || 0) * 1.2,
+      metal: 0.3 + res.ore,
+      sea: 0.3 + res.fish,
+      luxury: 0.2 + res.gems,
+      tools: 0.3 + (k.tools || 0),
+    };
+    const demand = {
+      grain: pop * 0.5,
+      metal: pop * 0.12 + (fac.smithy || 0) * 1.5,
+      sea: pop * 0.18,
+      luxury: pop * 0.08 + (k.wealth || 0) * 0.002,
+      tools: pop * 0.2 + (fac.barracks || 0),
+    };
+    const p = {};
+    for (let i = 0; i < GOODS.length; i++) {
+      const g = GOODS[i].id;
+      let v = GOODS[i].base * (demand[g] + 1) / (supply[g] + 1);
+      if (v < 0.1) v = 0.1; else if (v > 8) v = 8;
+      p[g] = v;
+    }
+    return p;
+  };
 
   // 文明の交易力（市場・商人・車輪・政体・気質・治安で決まる）。
   CivSystem.prototype._tradeCapacity = function (k) {
@@ -1116,19 +1161,6 @@
     return { f: f, sea: sea, ally: ally };
   };
 
-  // 産物の構成ベクトル（鉱石・漁獲・宝石・道具・食料）。微小な下駄で汎用財の交易も担保。
-  function goodVec(k) {
-    const r = k.res || {};
-    return [(r.ore || 0) + 0.1, (r.fish || 0) + 0.1, (r.gems || 0) + 0.1,
-      (k.tools || 0) * 0.2 + 0.1, (k.food > 0 ? k.food : 0) * 0.04 + 0.1];
-  }
-  // 比較優位の度合い（0=同質, ~1=異質）。産物が違うほど交換の利益が大きい。
-  function complementarity(va, vb) {
-    let dot = 0, na = 0, nb = 0;
-    for (let i = 0; i < va.length; i++) { dot += va[i] * vb[i]; na += va[i] * va[i]; nb += vb[i] * vb[i]; }
-    const cos = dot / (Math.sqrt(na * nb) || 1);
-    return 1 - cos;
-  }
   function addPartner(k, id, vol) {
     if (!k.partners) k.partners = {};
     k.partners[id] = (k.partners[id] || 0) + vol;
@@ -1139,22 +1171,62 @@
     const route = this._tradeRoute(a, b, ka, kb);
     if (!route) return false;
     const capA = this._tradeCapacity(ka), capB = this._tradeCapacity(kb);
+    const cap = Math.min(capA, capB) * route.f;
     const mass = Math.min(ka.humanCount, kb.humanCount); // 交易は小さい方の経済規模に律速
-    const comp = complementarity(goodVec(ka), goodVec(kb));
-    // 交易の利益（双方が得る富）。比較優位が大きいほど、また通商路が太いほど大きい。
-    const gain = CP.tradeBase * Math.min(capA, capB) * route.f * (0.4 + 1.2 * comp) * (0.3 + mass * 0.02);
+    const pa = ka.prices || (ka.prices = this._marketPrices(ka));
+    const pb = kb.prices || (kb.prices = this._marketPrices(kb));
+
+    // 裁定の利益: 財ごとの市場価格差を合算（価格が割れているほど交易の余地が大きい）。
+    // 価格差は「片方に余り、片方に不足」がある状態＝比較優位の経済的な実体。
+    let gapSum = 0;
+    for (let i = 0; i < GOODS.length; i++) {
+      const g = GOODS[i].id;
+      const gap = Math.abs(pa[g] - pb[g]);
+      if (gap > 0.15) gapSum += Math.min(2.2, gap) * GOODS[i].w;
+    }
+    const gain = CP.tradeBase * cap * gapSum * (0.3 + mass * 0.02) * CP.tradeArbScale;
     if (gain > 0) {
-      ka.wealth += gain; kb.wealth += gain;
+      ka.wealth += gain; kb.wealth += gain;       // 交易は双方を富ませる（gains from trade）
       ka.tradeIncome += gain; kb.tradeIncome += gain;
       ka.tradeVol += gain; kb.tradeVol += gain;
       addPartner(ka, b, gain); addPartner(kb, a, gain);
     }
 
-    // 食料の取引: 余剰のある国から、不足する国（特に飢饉国）へ食料が流れる。
-    // 買い手は富で支払う（富が乏しければ買える量が減る）＝富→食料→人口の因果。
+    // 実物の交易（価格の安い＝豊富な国から、高い＝希少な国へ流れる）。
+    // 穀物: 飢えた国へ。武具: 軍備の手薄な国へ。買い手は富で支払う。
     this._tradeFood(a, b, ka, kb, route);
     this._tradeFood(b, a, kb, ka, route);
+    this._tradeTools(a, b, ka, kb, route);
+    this._tradeTools(b, a, kb, ka, route);
+
+    // 奢侈品: 宝石に富む国から乏しい（価格の高い）国へ。富裕層が潤い人心が和らぐ。
+    const luxGap = Math.abs(pa.luxury - pb.luxury);
+    if (luxGap > 0.3) {
+      const imp = pa.luxury > pb.luxury ? ka : kb; // 価格の高い＝奢侈品が希少な側が輸入
+      const exp = pa.luxury > pb.luxury ? kb : ka;
+      if (exp.res && exp.res.gems > 0) {
+        imp.unrest = Math.max(0, (imp.unrest || 0) - Math.min(1.5, luxGap * 0.3 * route.f));
+      }
+    }
     return true;
+  };
+
+  // seller→buyer の方向に武具を売る（買い手の軍備が手薄で、売り手に余裕があるとき）。
+  // 軍需品の交易: 富める国が武器を輸入して軍を整える（経済→軍事の新たな経路）。
+  CivSystem.prototype._tradeTools = function (sa, ba, seller, buyer, route) {
+    const sPop = Math.max(1, seller.humanCount), bPop = Math.max(1, buyer.humanCount);
+    const sRatio = (seller.tools || 0) / sPop, bRatio = (buyer.tools || 0) / bPop;
+    if (sRatio - bRatio < 0.15) return;          // 売り手の方が十分に余裕があるときだけ
+    let amount = Math.min(seller.tools - sPop * 0.4, (bPop - (buyer.tools || 0)) * 0.5, CP.tradeToolMax * route.f);
+    if (amount <= 0.1) return;
+    const price = CP.tradeToolPrice;
+    let cost = amount * price;
+    if (buyer.wealth < cost) { amount = buyer.wealth / price; cost = buyer.wealth; }
+    if (amount <= 0.1) return;
+    seller.tools -= amount; buyer.tools += amount;
+    seller.wealth += cost; buyer.wealth -= cost;
+    seller.tradeVol += cost; buyer.tradeVol += cost;
+    addPartner(seller, ba, cost); addPartner(buyer, sa, cost);
   };
 
   // seller→buyer の方向に食料を売る（buyer が不足し seller に余剰があるときのみ）。
@@ -1205,6 +1277,7 @@
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
       ka.tradeVol *= 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0;
       ka.tradeIncome = 0; ka.foodTrade = 0; ka.partners = null;
+      ka.prices = this._marketPrices(ka); // 当評価期の市場価格（交易の駆動・UI表示）
       // 治安（不満）が生産を左右する: 高い不満は混乱を生み、富・技術・食料・武具の
       //   産出を落とす（=失政の国は衰える負の連鎖）。order: 0.5(不満100)〜1.0(不満0)。
       const order = 1 - ka.unrest / 200;
@@ -1513,6 +1586,16 @@
         trade: Math.round(k.tradeVol || 0),
         tradeIncome: Math.round(k.tradeIncome || 0),
         foodTrade: Math.round(k.foodTrade || 0),
+        market: k.prices ? (function () {
+          // 最も高い（希少＝輸入したい）財と、最も安い（豊富＝輸出できる）財。
+          let hi = null, hv = -1, lo = null, lv = 1e9;
+          for (let i = 0; i < GOODS.length; i++) {
+            const v = k.prices[GOODS[i].id];
+            if (v > hv) { hv = v; hi = GOODS[i].name; }
+            if (v < lv) { lv = v; lo = GOODS[i].name; }
+          }
+          return { scarce: hi, scarceP: hv, abundant: lo, abundantP: lv };
+        })() : null,
         partners: k.partners ? (function () {
           const out = [];
           for (const id in k.partners) { const kb = ks[+id]; if (kb && kb.alive) out.push({ name: kb.name, vol: k.partners[id] }); }
