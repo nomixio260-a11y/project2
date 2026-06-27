@@ -261,6 +261,19 @@
   const PERSON_A = ["Al", "Bre", "Cas", "Dor", "El", "Fen", "Gar", "Hel", "Ir", "Jor", "Ka", "Lo", "Mar", "Ned", "Or", "Pol", "Rin", "Sel", "Tor", "Ul", "Ven", "Wyn", "Yas", "Zel", "Ash", "Bryn", "Cor", "Dag"];
   const PERSON_B = ["a", "e", "i", "o", "ae", "ia", "or", "an", "en", "wyn", "ric", "mund", "gar", "dis", "wen", "far", "lin", "eth", "ulf", "win"];
   function personName(rand) { return PERSON_A[(rand() * PERSON_A.length) | 0] + PERSON_B[(rand() * PERSON_B.length) | 0]; }
+  // 家名（姓）。創始者に与えられ、以後は父方の血統を通じて受け継がれる。
+  const SUR_A = ["Stone", "Iron", "Oak", "Wolf", "Raven", "Hart", "Ash", "Black", "White", "Strong", "Swift", "Bright", "Frost", "Storm", "Gold", "Red", "Grey", "High", "Fair", "Stark"];
+  const SUR_B = ["ward", "born", "wood", "field", "ford", "hill", "vale", "moor", "brook", "crest", "bane", "heart", "mark", "guard", "well", "ridge"];
+  function surname(rand) { return SUR_A[(rand() * SUR_A.length) | 0] + SUR_B[(rand() * SUR_B.length) | 0]; }
+  // 近親か（親子・兄弟姉妹）。近親婚を避け、外婚（exogamy）を促すために用いる。
+  function closeKin(a, b) {
+    if (!a.pid || !b.pid) return false;
+    if (a.momId === b.pid || a.dadId === b.pid) return true; // b は a の親
+    if (b.momId === a.pid || b.dadId === a.pid) return true; // a は b の親
+    if (a.momId && a.momId === b.momId) return true;         // 同じ母＝兄弟姉妹
+    if (a.dadId && a.dadId === b.dadId) return true;         // 同じ父＝兄弟姉妹
+    return false;
+  }
 
   // 名声(prestige)→社会的影響力。名士の言葉ほど人を動かす（機嫌・文化・技を伝える力）。
   function influence(h) {
@@ -538,7 +551,13 @@
     if (h.pid === undefined) {
       h.pid = ++this._pidSeq;
       h.name = personName(this.rand);
-      h.prestige = 0;       // 名声（功・徳・齢で高まり、人を動かす）
+      // 血統・家系: 両親のIDと世代、父方から継ぐ家名を記録する（血縁・家族の追跡）。
+      h.momId = pa ? (pa.pid || 0) : 0;
+      h.dadId = pb ? (pb.pid || 0) : 0;
+      h.gen = pa ? (Math.max(pa.gen || 1, pb ? (pb.gen || 1) : (pa.gen || 1)) + 1) : 1;
+      h.sur = (pb && pb.sur) ? pb.sur : (pa && pa.sur) ? pa.sur : surname(this.rand);
+      // 名声: 名門の子は幾分かの威信を生まれながらに継ぐ（貴種の血筋）。創始者は0から。
+      h.prestige = pa ? Math.min(4, ((pa.prestige || 0) + (pb ? (pb.prestige || 0) : 0)) * 0.12) : 0;
       h.partner = null;     // 伴侶（繁殖で結ばれ、死別で深く悲しむ）
       h.bonds = null;       // 親友（会話を重ねて結ばれる。最大 MAX_BONDS）
       // 文化的気質（会話で伝播し、地域・国ごとの文化を創発させる）。
@@ -1888,7 +1907,8 @@
     if (h.food < CP.reproFood || h.repro > 0) return;
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return;
     const partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
-      return (o.kid === 0 && o !== h && o.alive && o.age >= CP.adultAge && o.food >= CP.reproFood && o.repro <= 0) ? 2 : 0;
+      return (o.kid === 0 && o !== h && o.alive && o.age >= CP.adultAge && o.food >= CP.reproFood &&
+        o.repro <= 0 && !closeKin(h, o)) ? 2 : 0;
     }).best;
     if (!partner) return;
     h.repro = CP.reproCooldown; partner.repro = CP.reproCooldown;
@@ -2035,6 +2055,13 @@
       const akin = (h.clan && other.clan === h.clan) ? 1.6 : 1;
       const cultSim = 1 - Math.abs((h.culture || 0.5) - (other.culture || 0.5));
       this._befriend(h, other, 0.06 * akin * cultSim);
+      // 血縁の扶助: 満ち足りた者は、飢えた同じ血統（家族・氏族）の者に食を分け与える
+      // （血縁淘汰＝身内を助ける利他）。伴侶には特に手厚く。
+      const kin = (h.partner === other) ? 1 : (h.clan && other.clan === h.clan ? 0.7 : 0);
+      if (kin > 0 && h.food > 0.65 && other.food < 0.3) {
+        const give = Math.min(0.18 * kin, h.food - 0.5);
+        if (give > 0.02) { h.food -= give; other.food = Math.min(1, other.food + give); }
+      }
     }
 
     // 喜び(joy)を更新: 仲間・伴侶と過ごし、満ち足りていると湧く（社交欲は synSoc で個人差）。
@@ -2556,7 +2583,8 @@
     if (k.humanCount >= capacity) return;
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return;
     // パートナー選び: 伴侶が近くにいて適齢なら添い遂げる（家族の継続）。
-    // いなければ近くの同王国の成人を新たな伴侶に（配偶者の選好）。
+    // いなければ新たな伴侶を選ぶ。近親婚は避け（incest taboo）、別の血統＝外婚を好み、
+    // 健やかで威信ある相手を選ぶ（配偶者選択＝性淘汰）。
     let partner = null;
     const sp = h.partner;
     if (sp && sp.alive && sp.kid === h.kid && sp.age >= CP.adultAge && sp.age <= CP.elderAge &&
@@ -2565,17 +2593,26 @@
       if (dx * dx + dy * dy <= CP.reproRadius * CP.reproRadius) partner = sp;
     }
     if (!partner) {
-      // 独身者を優先しつつ、近くの適齢の同胞を伴侶に。
+      const eligible = function (o) {
+        return o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.age <= CP.elderAge &&
+          o.food >= CP.reproFood && o.repro <= 0 && !closeKin(h, o);
+      };
+      // ①独身・別血統・健康で素質のある相手（外婚＋性淘汰）。
       partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
-        return (o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.age <= CP.elderAge &&
-          o.food >= CP.reproFood && o.repro <= 0 && !o.partner) ? 2 : 0;
+        return (eligible(o) && !o.partner && o.clan !== h.clan && o.food > 0.65 && (o.vigor || 1) >= 1.0) ? 2 : 0;
       }).best;
-      if (!partner) {
-        partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
-          return (o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.age <= CP.elderAge &&
-            o.food >= CP.reproFood && o.repro <= 0) ? 2 : 0;
-        }).best;
-      }
+      // ②独身・別血統。
+      if (!partner) partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
+        return (eligible(o) && !o.partner && o.clan !== h.clan) ? 2 : 0;
+      }).best;
+      // ③独身（同血統でも可。近親は除く）。
+      if (!partner) partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
+        return (eligible(o) && !o.partner) ? 2 : 0;
+      }).best;
+      // ④既婚でも近親でない相手（小集団での最後の手段。近親婚だけは避ける）。
+      if (!partner) partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
+        return eligible(o) ? 2 : 0;
+      }).best;
     }
     if (!partner) return;
     h.repro = CP.reproCooldown; partner.repro = CP.reproCooldown;
