@@ -202,7 +202,8 @@ html, body {
   position: fixed;
   top: 56px; left: 12px;
   width: 198px;
-  max-height: calc(100vh - 72px);
+  /* 左下のヘルプ(?)ボタンに重ならないよう、下端に余白を残す。 */
+  max-height: calc(100vh - 56px - 52px);
   overflow-y: auto;
   padding: 12px;
   z-index: 12;
@@ -450,7 +451,13 @@ html, body {
 .insp-dead { font-size: 12px; color: var(--text-faint); font-style: italic; padding: 4px 0; }
 
 @media (max-width: 680px) {
-  .inspector { bottom: auto; top: 56px; }
+  /* 狭い画面では下からのシートにし、上部バー・サイドバー・🪄トグルと衝突させない。
+     ミニマップ/ヘルプの上に重なるが、調べている間の一時的な前面カードとして扱う。 */
+  .inspector {
+    left: 8px; right: 8px; bottom: 8px; top: auto;
+    width: auto; transform: translateY(8px); z-index: 16;
+  }
+  .inspector.show { transform: translateY(0); }
 }
 
 /* ===== イベント通知トースト ===== */
@@ -533,6 +540,10 @@ html, body {
   background: rgba(16, 22, 40, 0.94); color: var(--text);
   font-size: 20px; cursor: pointer; box-shadow: var(--shadow);
 }
+.toolbar-toggle.on {
+  background: linear-gradient(180deg, var(--accent), #3f6fd0);
+  color: #fff; border-color: transparent;
+}
 
 /* ===== レスポンシブ ===== */
 @media (max-width: 680px) {
@@ -556,7 +567,8 @@ html, body {
   .sidebar { top: 50px; right: 8px; width: 158px; max-height: calc(100vh - 50px - 128px); }
   .hud-chips { grid-template-columns: 1fr 1fr; }
 
-  .coords { bottom: auto; top: 50px; left: 12px; max-width: 56vw; }
+  /* 🪄トグル(左上)に重ならないよう右へずらす。 */
+  .coords { bottom: auto; top: 54px; left: 66px; max-width: 48vw; }
 
   .minimap {
     bottom: 12px; top: auto; left: 12px; right: auto;

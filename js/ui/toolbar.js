@@ -118,12 +118,17 @@
         });
       }
 
-      // モバイル: ツールバー開閉トグル。
+      // モバイル: ツールバー開閉トグル。狭い画面では既定で畳んでおき、
+      // 地図とミニマップを覆い隠さないようにする（🪄 で開く）。
       const toolbarEl = document.getElementById("toolbar");
       const toggle = document.getElementById("toolbar-toggle");
+      if (toolbarEl && window.matchMedia && window.matchMedia("(max-width: 680px)").matches) {
+        toolbarEl.classList.add("collapsed");
+      }
       if (toggle) {
         toggle.addEventListener("click", function () {
           toolbarEl.classList.toggle("collapsed");
+          toggle.classList.toggle("on", !toolbarEl.classList.contains("collapsed"));
         });
       }
 
