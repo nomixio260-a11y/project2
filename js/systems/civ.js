@@ -136,6 +136,26 @@
   };
 
   const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
+
+  // ===== 人種（民族）=====
+  // 起源の地（気候）ごとに分かれた、見た目・わずかな環境適応・色を持つ集団。
+  // 親から受け継がれ（混血で交わり）、地域ごとに多数派が生まれ、国の民族構成を成す。
+  // 形質の偏りはごく小さく（±0.05）、能力の平均~1.0と経済バランスを崩さない。
+  //   skins/hairs: 肌・髪の色（個体差つき）。bias: 環境適応の形質と量。
+  //   col: 地図の人種ビューでの代表色。clime: 起源の気候 0=寒 1=温 2=熱。
+  const RACES = [
+    { id: 0, name: "北方人", skins: ["#f3d3ad", "#efc79a", "#f7dcc0"], hairs: ["#caa84a", "#6b4f2a", "#8d6a3a"], bias: "vigor", amt: 0.05, col: [180, 200, 230], clime: 0 },
+    { id: 1, name: "平原人", skins: ["#e8b887", "#d9a066", "#e0ad77"], hairs: ["#4a3422", "#2a1c10", "#6b4f2a"], bias: "dili", amt: 0.04, col: [150, 190, 120], clime: 1 },
+    { id: 2, name: "森人", skins: ["#cda06a", "#bb9258", "#c9a878"], hairs: ["#2a1c10", "#15110b", "#3a2a18"], bias: "wit", amt: 0.05, col: [90, 160, 110], clime: 1 },
+    { id: 3, name: "砂漠人", skins: ["#c68642", "#b5763a", "#a9764b"], hairs: ["#15110b", "#2a1c10"], bias: "vigor", amt: 0.04, col: [220, 190, 110], clime: 2 },
+    { id: 4, name: "島嶼人", skins: ["#a9764b", "#8d5524", "#9a6638"], hairs: ["#15110b", "#1c140c"], bias: "brave", amt: 0.04, col: [110, 190, 200], clime: 2 },
+  ];
+  function raceForClime(temp, moist, rand) {
+    // 起源の地の気候から人種を定める（寒→北方、熱→砂漠/島嶼、温→平原/森）。
+    if (temp < 0.36) return 0;                          // 寒冷 → 北方人
+    if (temp > 0.66) return (moist > 0.5 ? 4 : 3);      // 高温 → 多湿:島嶼 / 乾燥:砂漠
+    return (moist > 0.55 ? 2 : 1);                      // 温帯 → 多湿:森人 / それ以外:平原人
+  }
   const GOV_TYPES = ["君主制", "共和制", "部族連合", "神権制", "氏族制"];
   // 政体ごとの振る舞い補正（指導者の性格 TRAITS と乗算して用いる）。
   // war=好戦性 ally=同盟志向 trade=交易 tech=技術 unrest=不満の溜まりやすさ
@@ -405,6 +425,7 @@
     if (mode === "era") { let i = (k.tech / TECH_PER_ERA) | 0; if (i >= ERA_COLORS.length) i = ERA_COLORS.length - 1; if (i < 0) i = 0; return ERA_COLORS[i]; }
     if (mode === "dynasty") return k.dynasty ? hashColor(k.dynasty) : k.color;
     if (mode === "culture") return cultureColor(k.cultureAvg == null ? 0.5 : k.cultureAvg);
+    if (mode === "race") { const R = RACES[k.race == null ? 1 : k.race]; return R ? R.col : k.color; }
     return k.color; // nation（既定）
   };
 
@@ -416,6 +437,18 @@
     else if (mode === "religion") for (let i = 0; i < RELIGIONS.length; i++) out.push({ label: RELIGIONS[i], color: REL_COLORS[i] });
     else if (mode === "era") for (let i = 0; i < ERAS.length; i++) out.push({ label: ERAS[i], color: ERA_COLORS[i] });
     else if (mode === "culture") { out.push({ label: "文化 A", color: cultureColor(0.1) }); out.push({ label: "中間", color: cultureColor(0.5) }); out.push({ label: "文化 B", color: cultureColor(0.9) }); }
+    else if (mode === "race") for (let i = 0; i < RACES.length; i++) out.push({ label: RACES[i].name, color: RACES[i].col });
+    return out;
+  };
+
+  // 人種名（UI用）。
+  CivSystem.prototype.raceName = function (id) { const R = RACES[id]; return R ? R.name : "—"; };
+  // 国の民族構成（UI用）: [{name, pct}] 降順。
+  CivSystem.prototype.raceMixOf = function (k) {
+    if (!k || !k.raceMix || !k.raceTot) return [];
+    const out = [];
+    for (let i = 0; i < k.raceMix.length; i++) if (k.raceMix[i] > 0) out.push({ name: RACES[i].name, pct: Math.round(100 * k.raceMix[i] / k.raceTot) });
+    out.sort(function (a, b) { return b.pct - a.pct; });
     return out;
   };
 
@@ -626,6 +659,27 @@
       h.culture = pa
         ? clamp01(((pa.culture == null ? 0.5 : pa.culture) + (pb ? (pb.culture == null ? 0.5 : pb.culture) : (pa.culture == null ? 0.5 : pa.culture))) / 2 + (this.rand() - 0.5) * 0.08)
         : this.rand();
+      // 人種（民族）: 親があればどちらかの人種を受け継ぐ（混血）。創始者は起源の地の
+      //   気候で定まる（寒冷→北方人 等）。見た目（肌・髪）と微小な環境適応が決まる。
+      let rid;
+      if (pa) {
+        const ra = pa.race != null ? pa.race : 1;
+        const rb = (pb && pb.race != null) ? pb.race : ra;
+        rid = this.rand() < 0.5 ? ra : rb; // 混血: どちらかの親の人種
+      } else {
+        const w = this.world, i = (h.y | 0) * w.width + (h.x | 0);
+        const t = w.temperature ? w.temperature[i] : 0.5;
+        const m = w.moisture ? w.moisture[i] : 0.5;
+        rid = raceForClime(t, m, this.rand);
+      }
+      h.race = rid;
+      const R = RACES[rid] || RACES[1];
+      // 見た目（人種の色域から個体差つきで）。renderer がそのまま使う。
+      h.skinCol = R.skins[(this.rand() * R.skins.length) | 0];
+      h.hairCol = R.hairs[(this.rand() * R.hairs.length) | 0];
+      // 環境適応: 創始者にのみ人種の得意形質をごく僅かに付与する。子孫は遺伝で受け継ぎ、
+      //   混血で薄まる（世代ごとの再加算による暴走を避ける）。
+      if (!pa && R.bias && h[R.bias] != null) h[R.bias] = clampTrait(h[R.bias] + R.amt);
     }
     return h;
   };
@@ -843,9 +897,10 @@
       h.food -= CP.metab;
       h.social += CP.socialRise;
       if (h.repro > 0) h.repro--;
-      // 民心・文化の集計（社会→国家の因果＋地図の文化ビュー用）。
+      // 民心・文化・民族の集計（社会→国家の因果＋地図の文化/人種ビュー用）。
       k._moodS = (k._moodS || 0) + h.mood; k._moodN = (k._moodN || 0) + 1;
       k._cultS = (k._cultS || 0) + (h.culture == null ? 0.5 : h.culture);
+      if (h.race != null) (k._raceCnt || (k._raceCnt = [0, 0, 0, 0, 0]))[h.race]++;
       // 最も名高い人物を追う（国を代表する英傑・賢人）。
       if ((h.prestige || 0) > (k._topP || 0)) { k._topP = h.prestige; k._topRef = h; }
 
@@ -918,13 +973,19 @@
         k.unrest = (k.unrest || 0) + (0.55 - avg) * 0.05;
         if (k.unrest < 0) k.unrest = 0; else if (k.unrest > 100) k.unrest = 100;
       }
+      // 民族構成: 最多の人種を国の代表民族とし、構成比を記録（人種ビュー・UI用）。
+      if (k._raceCnt) {
+        let dom = 0, dn = -1, tot = 0;
+        for (let r = 0; r < k._raceCnt.length; r++) { tot += k._raceCnt[r]; if (k._raceCnt[r] > dn) { dn = k._raceCnt[r]; dom = r; } }
+        k.race = dom; k.raceMix = k._raceCnt.slice(); k.raceTot = tot;
+      }
       // 国を代表する英傑（名声が一定以上のときのみ掲げる）。
       if (k._topRef && k._topRef.alive && (k._topP || 0) >= FAME_THRESHOLD) {
         k.figure = { name: k._topRef.name, title: titleOf(k._topRef) };
       } else if (k.figure && (!k._topRef || !k._topRef.alive)) {
         k.figure = null;
       }
-      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._topP = 0; k._topRef = null;
+      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
     }
 
     // 出生を追加。
@@ -2180,7 +2241,8 @@
       // 文化の混交（相手の気質に少し近づく。名士の文化ほど伝播力が強い）。
       h.culture = clamp01((h.culture == null ? 0.5 : h.culture) + (((other.culture == null ? 0.5 : other.culture)) - (h.culture == null ? 0.5 : h.culture)) * 0.04 * infl);
       // 友誼: 同氏族・近距離・気の合う（文化が近い）相手とは絆が深まる。
-      const akin = (h.clan && other.clan === h.clan) ? 1.6 : 1;
+      // 血縁(氏族)に加え、同じ人種とはやや親しみやすい（穏やかな同族意識）。
+      const akin = ((h.clan && other.clan === h.clan) ? 1.6 : 1) * (h.race === other.race ? 1.12 : 1);
       const cultSim = 1 - Math.abs((h.culture || 0.5) - (other.culture || 0.5));
       this._befriend(h, other, 0.06 * akin * cultSim);
       // 血縁の扶助: 満ち足りた者は、飢えた同じ血統（家族・氏族）の者に食を分け与える

@@ -204,6 +204,7 @@
       let html =
         row("所属", k ? swatch(k.color) + " " + esc(k.name) : "なし（放浪者）") +
         row("役割", role + "（" + stage + "）") +
+        (p.race != null && civ.raceName ? row("人種", esc(civ.raceName(p.race))) : "") +
         (p.sur ? row("家系", esc(p.sur) + "家 ・ 第" + (p.gen || 1) + "世代") : "") +
         row("行動", act) +
         bar("体力", hp, false) +
@@ -247,9 +248,11 @@
     this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
       (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +
       (k.famine ? ' <span class="insp-tag bad">🌾 飢饉</span>' : "");
+    const rmix = civ.raceMixOf ? civ.raceMixOf(k) : [];
     this.bodyEl.innerHTML =
       row("統治", esc(k.ruler) + "（" + esc(k.gov) + "）") +
       (k.dynasty ? row("王朝", esc(k.dynasty) + "家") : "") +
+      (rmix.length ? row("民族", rmix.slice(0, 3).map(function (r) { return esc(r.name) + " " + r.pct + "%"; }).join(" ・ ")) : "") +
       row("時代", (info ? info.era : "") + " · " + esc(k.religion)) +
       row("気質", esc(k.trait.name)) +
       row("人口", String(k.humanCount) + " 人") +
