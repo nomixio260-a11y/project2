@@ -165,6 +165,62 @@
     return ERAS[i];
   }
 
+  // ===== 人間の個性・能力・練度・機嫌（社会を形成するための内面）=====
+  // 各人は生まれつきの性格3軸を持ち、年齢で能力が変化し、経験で練度が伸び、
+  // 暮らし向きで機嫌が上下する。これらを合成した「実効能力」が生産・戦闘に効く。
+  // 設計上、集団平均の実効能力が ~1.0 になるよう各係数を中央化し、丹精込めて
+  // 調整した経済・人口バランスを壊さないようにしている。
+  //   dili  勤勉さ … 生産（耕作・鍛冶・交易・布教）に効く
+  //   brave 勇敢さ … 戦闘・脅威への立ち向かい/逃走判断に効く
+  //   wit   賢さ   … 学習（練度の伸び）・職の適応に効く
+  const TRAIT_MIN = 0.65, TRAIT_MAX = 1.35;
+  function clampTrait(v) { return v < TRAIT_MIN ? TRAIT_MIN : v > TRAIT_MAX ? TRAIT_MAX : v; }
+  // 無所属/初期世代の性格（平均1.0・幅0.75〜1.25）。
+  function randTrait(rand) { return 0.75 + rand() * 0.5; }
+  // 親の素質を受け継ぎつつ、ばらつき（突然変異）を加える。
+  function inheritTrait(rand, p) { return clampTrait((p == null ? 1 : p) + (rand() - 0.5) * 0.24); }
+  // 加齢による能力曲線。子供は未熟、成人で最盛、老いとともに衰える。平均 ~1.0。
+  function ageFactor(age) {
+    if (age < CP.adultAge) return 0.55 + 0.45 * (age / CP.adultAge); // 子供: 0.55→1.0
+    if (age <= CP.elderAge) {
+      // 成人期はわずかに山なり（中年で最盛 ~1.06、若年・初老で ~1.0）。
+      const t = (age - CP.adultAge) / (CP.elderAge - CP.adultAge); // 0..1
+      return 1.0 + 0.12 * Math.sin(Math.PI * t);
+    }
+    const t = Math.min(1, (age - CP.elderAge) / (CP.maxAge - CP.elderAge)); // 0..1
+    return 1.0 - 0.45 * t; // 老人: 1.0→0.55
+  }
+  // 練度(0..1)→係数（0.78〜1.22、平均練度~0.5で~1.0）。
+  function skillFactor(s) { return 0.78 + 0.44 * (s || 0); }
+  // 機嫌(0..1)→係数（0.74〜1.14、既定機嫌0.6で~1.0）。
+  function moodFactor(m) { return 0.74 + 0.5 * (m == null ? 0.6 : m); }
+  // 実効能力。性格×加齢×練度×機嫌。traitKey 省略時は勤勉さ(dili)を用いる。
+  function ability(h, traitKey) {
+    const t = traitKey ? (h[traitKey] || 1) : (h.dili || 1);
+    return t * ageFactor(h.age) * skillFactor(h.skill) * moodFactor(h.mood);
+  }
+  // 生まれたばかり/置かれたばかりの人に内面を授ける。親(pa,pb)があれば遺伝する。
+  function endow(h, rand, pa, pb) {
+    if (pa && pb) {
+      h.dili = inheritTrait(rand, ((pa.dili || 1) + (pb.dili || 1)) / 2);
+      h.brave = inheritTrait(rand, ((pa.brave || 1) + (pb.brave || 1)) / 2);
+      h.wit = inheritTrait(rand, ((pa.wit || 1) + (pb.wit || 1)) / 2);
+    } else if (pa) {
+      h.dili = inheritTrait(rand, pa.dili);
+      h.brave = inheritTrait(rand, pa.brave);
+      h.wit = inheritTrait(rand, pa.wit);
+    } else {
+      h.dili = randTrait(rand); h.brave = randTrait(rand); h.wit = randTrait(rand);
+    }
+    h.skill = 0.06 + rand() * 0.08; // 練度は低くから始まり、経験で伸びる
+    h.mood = 0.6;                    // 機嫌（普通）
+    return h;
+  }
+  // 仕事を続けて練度を上げる（賢い者ほど速く習熟する）。役割変更で skill は別途下がる。
+  function practice(h) {
+    if (h.skill < 1) { h.skill += (1 - h.skill) * 0.0007 * (h.wit || 1); if (h.skill > 1) h.skill = 1; }
+  }
+
   function CivSystem(world, renderer) {
     this.world = world;
     this.renderer = renderer;
@@ -323,14 +379,16 @@
     if (!world.inBounds(x, y)) return false;
     if (!tile.isLand(world.getTerrain(x, y))) return false;
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return false;
-    this.people.push({
+    const h = {
       x: x + 0.5, y: y + 0.5, hx: 0, hy: 0,
       kid: 0, clan: 0,
       age: 0, food: 0.9,
       role: ROLE.EXPLORER, state: 0,
       gx: x, gy: y, work: null, gear: 0,
       repro: CP.reproCooldown, social: 0, alive: true,
-    });
+    };
+    endow(h, this.rand);
+    this.people.push(h);
     return true;
   };
 
@@ -407,7 +465,7 @@
     return t !== undefined && (this._tickN - t) <= CP.borderWindow;
   };
 
-  CivSystem.prototype._spawnHuman = function (k, x, y, clan, role, food) {
+  CivSystem.prototype._spawnHuman = function (k, x, y, clan, role, food, pa, pb) {
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return null;
     if (k.humanCount >= CP.perKingdomCap) return null;
     const home = this._nearestCity(k, x, y);
@@ -425,6 +483,7 @@
       social: 0,
       alive: true,
     };
+    endow(h, this.rand, pa, pb); // 個性・練度・機嫌（親があれば遺伝）
     k.humanCount++;
     k.roleCount[role]++;
     return h;
@@ -598,6 +657,7 @@
     for (let i = 0; i < people.length; i++) {
       const h = people[i];
       if (!h.alive) continue;
+      if (h.dili === undefined) endow(h, this.rand); // 旧セーブ等の互換: 内面を補う
 
       // 放浪者（無所属）: 集まり、やがて国を興す。
       if (h.kid === 0) { this._tickNomad(h, world, tN, i); continue; }
@@ -1375,6 +1435,8 @@
     h.role = role;
     k.roleCount[role]++;
     h.farm = null; h.work = null; h._enemy = null;
+    // 転職で練度はかなり失われる（新しい技能を一から積み直す）。
+    if (h.skill != null) h.skill *= 0.4;
   };
 
   // 放浪者の集団が建国: 中心の人とその周囲の放浪者が新王国の住人になる。
@@ -1416,12 +1478,14 @@
     if (!partner) return;
     h.repro = CP.reproCooldown; partner.repro = CP.reproCooldown;
     h.food -= CP.reproCost; partner.food -= CP.reproCost;
-    this._births.push({
+    const child = {
       x: h.x, y: h.y, hx: 0, hy: 0,
       kid: 0, clan: 0, age: 0, food: 0.7,
       role: ROLE.EXPLORER, state: 0, gx: h.x | 0, gy: h.y | 0,
       repro: CP.reproCooldown, social: 0, alive: true,
-    });
+    };
+    endow(child, this.rand, h, partner); // 両親から個性を遺伝
+    this._births.push(child);
   };
 
   // 自国領に地続きの未開地のみ確保する（足下が自国領のときだけ周囲へ拡張）。
@@ -1469,11 +1533,47 @@
     return { dx: dx, dy: dy, d2: d2 };
   };
 
+  // 会話・交流と機嫌の更新（thinkInterval 毎・低負荷）。人と人が影響し合い社会を作る。
+  //  - 近くの同胞と言葉を交わせば孤独が癒え、機嫌が上向く（社交欲の充足）。
+  //  - 同じ職の腕利きが近くにいれば、技を見て学び練度が伸びる（知識の伝播）。
+  //  - 機嫌は暮らし向き（食料・社交・戦争・飢饉・国の不満）へ向けてゆっくり推移し、
+  //    その人の実効能力（生産・戦闘）に効く。良い社会ほど人が活き、社会が栄える。
+  CivSystem.prototype._socialize = function (h, k) {
+    const self = this;
+    // 近傍の同胞を見る。mentor = 近くの同職で自分より熟練した者（best）。
+    const scan = this._scan(h.x, h.y, CP.socialRadius, function (o) {
+      if (o === h || o.kid !== h.kid) return 0;
+      if (o.role === h.role && (o.skill || 0) > (h.skill || 0) + 0.02) return 2; // 師
+      return 1; // 同胞
+    });
+    const company = scan.count + scan.count2;
+    if (company > 0) {
+      h.social = 0; // 語らいで孤独が癒える
+      // 知識の伝播: 腕利きの所作を見て学び、練度が縮まる（賢い者ほど速く学ぶ）。
+      const mentor = scan.best;
+      if (mentor) {
+        const gap = (mentor.skill || 0) - (h.skill || 0);
+        if (gap > 0) { h.skill += gap * 0.06 * (h.wit || 1); if (h.skill > 1) h.skill = 1; }
+      }
+    }
+    // 機嫌の目標値: 普通(0.5)を基準に、満腹・社交・国情で上下する。
+    let target = 0.5 + (h.food - 0.5) * 0.4;
+    if (company >= CP.socialNeed) target += 0.08; else if (company === 0) target -= 0.12;
+    if (k.famine) target -= 0.22;
+    if (this._count(k.wars) > 0) target -= 0.12;
+    target += (40 - (k.unrest || 0)) * 0.0015; // 安定した国は人心も穏やか
+    if (target < 0) target = 0; else if (target > 1) target = 1;
+    h.mood += (target - h.mood) * 0.15; // ゆっくり推移
+    if (h.mood < 0) h.mood = 0; else if (h.mood > 1) h.mood = 1;
+  };
+
   // AI: 欲求と役割を勘案して目標(gx,gy)を決める「熟考」。thinkInterval 毎にのみ実行。
   CivSystem.prototype._think = function (h, k, world) {
     const self = this;
     // 近傍の土地を確保（足下は毎ティック）。
     this._claimNeighbors(h, k, world);
+    // 社会的な交わり（会話）と機嫌の更新。人々が互いに影響し合い社会を形づくる。
+    this._socialize(h, k);
     // 繁殖（成人・食料十分・近くに同胞成人がいれば家族を作る）。
     this._tryReproduce(h, k);
 
@@ -1604,7 +1704,9 @@
       const e = scan.best;
       h._enemy = e;
       // 士気: 局所的に大きく劣勢なら退却して味方と合流する（無謀な突撃を避ける）。
-      if (e && scan.count2 > scan.count + 1) {
+      // 勇敢な兵ほど劣勢でも踏みとどまり、臆病な兵は早く退く（個性が戦場を左右する）。
+      const grit = 0.4 + 1.2 * (h.brave || 1); // 臆病~1.3 / 勇敢~1.9
+      if (e && scan.count2 > scan.count + grit) {
         h.gx = hcx; h.gy = hcy; h.state = 14; return;
       }
       // 敵が見えれば交戦。
@@ -1930,7 +2032,7 @@
     if (!partner) return;
     h.repro = CP.reproCooldown; partner.repro = CP.reproCooldown;
     h.food -= CP.reproCost; partner.food -= CP.reproCost;
-    const child = this._spawnHuman(k, h.x, h.y, h.clan, this._assignRole(k), 0.7);
+    const child = this._spawnHuman(k, h.x, h.y, h.clan, this._assignRole(k), 0.7, h, partner);
     if (child) this._births.push(child);
   };
 
@@ -2008,36 +2110,40 @@
   // 役割の局所効果（毎ティックだが探索なし＝低負荷）。ti は足下のタイル index。
   CivSystem.prototype._roleTick = function (h, k, world, ti) {
     if (h.role === ROLE.FARMER) {
-      // 耕作: 道具があるほど効率よく足下の fertility を高める。
+      // 耕作: 道具があるほど、また腕の良い（勤勉・熟練・壮年・上機嫌な）農夫ほど効率よく耕す。
       if (world.fertility && tile.isLand(world.terrain[ti])) {
-        const f = world.fertility[ti] + CP.cultivate * (1 + (h.gear || 0) * 0.15);
+        const f = world.fertility[ti] + CP.cultivate * (1 + (h.gear || 0) * 0.15) * ability(h);
         world.fertility[ti] = f > 1 ? 1 : f;
+        practice(h); // 耕すたびに腕が上がる
       }
       // 道具の支給（在庫があれば）。
       if (!h.gear && k.tools > 0 && this.rand() < CP.equipChance) h.gear = gearTier(k.tech);
       return;
     }
-    // 鍛冶: 鍛冶場で道具・武具を生産する（人口を上限に飽和）。
+    // 鍛冶: 鍛冶場で道具・武具を生産する（人口を上限に飽和）。熟練の職人ほど多く打つ。
     if (h.role === ROLE.SMITH) {
       if (this._atWork(h)) {
-        if (k.tools < k.humanCount) k.tools += CP.toolRate * (1 + k.tech * 0.002);
+        if (k.tools < k.humanCount) k.tools += CP.toolRate * (1 + k.tech * 0.002) * ability(h);
         if (!h.gear) h.gear = gearTier(k.tech);
+        practice(h);
       }
       return;
     }
-    // 商人: 市場で富を生む。
+    // 商人: 市場で富を生む。商才ある熟練の商人ほど稼ぐ。
     if (h.role === ROLE.MERCHANT) {
       if (this._atWork(h)) {
-        k.wealth += CP.marketRate * this._eff(k, "trade");
+        k.wealth += CP.marketRate * this._eff(k, "trade") * ability(h);
         if (!h.gear) h.gear = gearTier(k.tech);
+        practice(h);
       }
       return;
     }
-    // 神官: 神殿で不満を鎮める。
+    // 神官: 神殿で不満を鎮める。徳の高い熟練の神官ほど人心を安んじる。
     if (h.role === ROLE.PRIEST) {
       if (this._atWork(h)) {
-        if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.templeCalm * this._eff(k, "faith"));
+        if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.templeCalm * this._eff(k, "faith") * ability(h));
         if (!h.gear) h.gear = gearTier(k.tech);
+        practice(h);
       }
       return;
     }
@@ -2053,7 +2159,9 @@
           const other = this.kingdoms[e.kid];
           const m1 = this._military(k), m2 = other ? this._military(other) : 1;
           const edge = m1 / (m1 + m2);
-          e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12);
+          // 個の武勇: 勇敢で歴戦（高練度）の壮年兵ほど大きな損害を与える。
+          e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) * (0.55 + 0.45 * ability(h, "brave"));
+          practice(h); // 実戦で武を磨く
           if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); } // 戦死
         }
       } else {

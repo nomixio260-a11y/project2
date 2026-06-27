@@ -153,12 +153,20 @@
       const hp = Math.round(Math.max(0, Math.min(1, p.food)) * 100);
       const gear = p.gear ? ("装備 Lv" + p.gear) : "素手";
       this.titleEl.textContent = (k ? "🧑 " + role : "🚶 放浪者");
-      this.bodyEl.innerHTML =
+      let html =
         row("所属", k ? swatch(k.color) + " " + esc(k.name) : "なし（放浪者）") +
         row("役割", role + "（" + stage + "）") +
         row("行動", act) +
         bar("体力", hp, false) +
         row("装備", gear);
+      // 個性・能力（実装されていれば表示）。
+      if (p.dili !== undefined) {
+        html +=
+          row("気質", persona(p)) +
+          bar("練度", Math.round(Math.max(0, Math.min(1, p.skill || 0)) * 100), false) +
+          bar("機嫌", Math.round(Math.max(0, Math.min(1, p.mood == null ? 0.6 : p.mood)) * 100), false);
+      }
+      this.bodyEl.innerHTML = html;
       return;
     }
     // 国。
@@ -194,6 +202,22 @@
     const civ = Game.state.civ;
     return civ && civ._military ? civ._military(k) : (k.roleCount ? k.roleCount[3] : 0);
   };
+
+  // 人物の生まれつきの気質を、最も際立つ素質から言葉にする。
+  function persona(p) {
+    const axes = [
+      { v: p.dili || 1, hi: "勤勉", lo: "怠惰" },
+      { v: p.brave || 1, hi: "勇敢", lo: "臆病" },
+      { v: p.wit || 1, hi: "聡明", lo: "純朴" },
+    ];
+    let best = axes[0], bd = 0;
+    for (let i = 0; i < axes.length; i++) {
+      const d = Math.abs(axes[i].v - 1);
+      if (d > bd) { bd = d; best = axes[i]; }
+    }
+    if (bd < 0.06) return "平凡";
+    return best.v >= 1 ? best.hi : best.lo;
+  }
 
   function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
   function row(label, val) {
