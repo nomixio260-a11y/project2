@@ -9,16 +9,22 @@
 
   // パラメータ（1ティック=シム内100ms 基準）。
   const P = {
-    metabolism: [0.009, 0.010], // 種別ごとの基礎代謝
+    // 捕食者は「稀で頑健・繁殖は遅い」頂点捕食者として設計する。獲物を絶やさず、
+    // かつ過剰増殖もしない少数の安定層が、被食者を緩やかに調整して共存する。
+    metabolism: [0.008, 0.0052], // 基礎代謝（肉食は低燃費＝狩りの間隔があいても飢えにくい）
     speed: [0.25, 0.31], // タイル/ティック（肉食はやや速い）
-    huntRadius: 6, // 肉食が獲物を探す半径
+    huntRadius: 7, // 肉食が獲物を探す半径
     grazeGainScale: 0.95, // 採食量(fertility)→エネルギーの変換係数
     grazeGain: 0.06, // 植生システム未接続時のフォールバック回復
-    preyGain: 0.6, // 捕食でのエネルギー回復
-    reproduceAt: 0.8, // この energy で繁殖
-    reproduceChance: [0.05, 0.022], // 種別ごとの繁殖確率（肉食は控えめ）
-    offspringEnergy: 0.34,
-    maxAge: [1200, 1700],
+    preyGain: 0.8, // 捕食でのエネルギー回復（1度の狩りで長く保つ）
+    catchChance: 0.45, // 接近しても狩りが成功する確率（残りは取り逃がす＝被食者の避難余地）
+    satiation: 0.82, // 飽食した捕食者は狩らない（捕食を「必要分」に抑え乱獲を防ぐ最重要要素）
+    reproduceAt: [0.8, 0.9], // この energy で繁殖（肉食は満腹時のみ＝過剰増殖を抑える）
+    reproduceChance: [0.045, 0.012], // 繁殖確率（草食は旺盛で捕食を支え、肉食は稀）
+    reproCost: [0.4, 0.5], // 繁殖で失うエネルギー
+    herbReproFert: 0.4, // 草食はこの肥沃度未満では繁殖を控える（過放牧と暴落を抑える）
+    offspringEnergy: 0.36,
+    maxAge: [1200, 2900],
     eatRadius: 0.7, // 肉食の捕食到達距離
     thirstRate: 0.0025, // 1ティックの渇きの進行
     dehydration: 0.008, // 渇き限界でのエネルギー消耗
@@ -219,16 +225,21 @@
             if (dl > P.herdSpacing) { dirX = dx / dl * 0.6; dirY = dy / dl * 0.6; }
           }
         }
-      } else if (dirX === 0 && dirY === 0) {
-        // 肉食: 近くの草食を追って捕食。
+      } else if (dirX === 0 && dirY === 0 && e.energy[i] < P.satiation) {
+        // 肉食: 満腹でないときだけ近くの草食を追って捕食する。
+        // 飽食した捕食者は獲物を見過ごす＝捕食を必要分に抑え、被食者の乱獲・崩壊を防ぐ。
         const prey = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.huntRadius, i);
         if (prey !== -1) {
           const dx = e.x[prey] - e.x[i];
           const dy = e.y[prey] - e.y[i];
           const dist = Math.sqrt(dx * dx + dy * dy);
           if (dist <= P.eatRadius) {
-            e.kill(prey);
-            e.energy[i] = Math.min(1, e.energy[i] + P.preyGain);
+            // 多くの狩りは失敗する（獲物の警戒・逃げ足＝避難の余地）。これが
+            // 捕食圧を和らげ、被食者を絶滅させずに捕食者と共存させる安定化要素。
+            if (rand() < P.catchChance) {
+              e.kill(prey);
+              e.energy[i] = Math.min(1, e.energy[i] + P.preyGain);
+            }
           } else {
             dirX = dx / dist;
             dirY = dy / dist;
@@ -262,12 +273,12 @@
       // 繁殖。新個体は次ティックの _buildGrid で登録される
       // （ここでグリッドへ挿し込むと、解放スロット再利用時に
       //  リンクリストが循環し _nearest が無限ループするため挿さない）。
-      let canRepro = e.energy[i] > P.reproduceAt && e.live < maxEntities && rand() < P.reproduceChance[type];
+      let canRepro = e.energy[i] > P.reproduceAt[type] && e.live < maxEntities && rand() < P.reproduceChance[type];
       // 草食は局所の食料(fertility)が乏しいと繁殖を控える（密度依存で暴走を防ぐ）。
-      if (canRepro && type === S.HERBIVORE && vegOK && world.fertility[idx] < 0.4) canRepro = false;
+      if (canRepro && type === S.HERBIVORE && vegOK && world.fertility[idx] < P.herbReproFert) canRepro = false;
       if (canRepro) {
         const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy, mutate(rand, gene));
-        if (child !== -1) e.energy[i] -= 0.4;
+        if (child !== -1) e.energy[i] -= P.reproCost[type];
       }
 
       // 死亡判定。
@@ -347,4 +358,5 @@
   };
 
   Game.CreatureSystem = CreatureSystem;
+  CreatureSystem.P = P; // チューニング/検証用にパラメータを公開（挙動はこの参照を使う）
 })(window.Game);

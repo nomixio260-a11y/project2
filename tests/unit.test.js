@@ -197,6 +197,35 @@ test("CreatureSystem: 採食でエネルギーが増え、餓死で死ぬ", () =
   assert.equal(ent.alive[starving], 0, "餓死で kill");
 });
 
+test("CreatureSystem: 飽食した捕食者は狩らない（捕食の安定化）", () => {
+  const Game = loadCore({ mapWidth: 16, mapHeight: 16 });
+  const w = new Game.World(16, 16);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.elevation.fill(0.5);
+  const ent = new Game.Entities(50);
+  const sys = new Game.CreatureSystem(ent, w, { markDirty: function () {} });
+  const P = Game.CreatureSystem.P;
+
+  // 満腹（satiation 超）の捕食者は隣の獲物に手を出さない。
+  const prey = ent.spawn(Game.SPECIES.HERBIVORE, 8, 8, 0.6);
+  const fullPred = ent.spawn(Game.SPECIES.PREDATOR, 8.2, 8, 1.0);
+  ent.energy[fullPred] = 1.0; // > P.satiation
+  for (let t = 0; t < 5; t++) sys.tick(w);
+  assert.equal(ent.alive[prey], 1, "飽食した捕食者は獲物を狩らない");
+
+  // 空腹の捕食者は、いずれ獲物を仕留める（狩り成功は確率的なので多ティック観測）。
+  const preys = [];
+  for (let i = 0; i < 8; i++) preys.push(ent.spawn(Game.SPECIES.HERBIVORE, 4 + (i % 3) * 0.3, 4, 0.6));
+  const hungry = ent.spawn(Game.SPECIES.PREDATOR, 4.1, 4, 0.5);
+  ent.energy[hungry] = 0.5; // < P.satiation → 狩る
+  let killed = false;
+  for (let t = 0; t < 300 && !killed; t++) {
+    sys.tick(w);
+    for (const pi of preys) if (!ent.alive[pi]) killed = true;
+  }
+  assert.ok(killed, "空腹の捕食者は獲物を狩れる");
+});
+
 test("CreatureSystem: 上限を超えて繁殖しない", () => {
   const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
   Game.config.sim.maxEntities = 6;
