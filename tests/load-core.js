@@ -39,6 +39,7 @@ function loadCore(overrides) {
     "js/systems/creatures.js",
     "js/systems/fire.js",
     "js/systems/civ.js",
+    "js/systems/disasters.js",
     "js/ui/hud.js",
   ];
   for (const f of files) {

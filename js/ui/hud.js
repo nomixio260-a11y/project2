@@ -95,9 +95,11 @@
     const clk = Game.state.clock;
     if (!this.clockEl || !clk || !clk.season) return;
     const dayInSeason = ((clk.day % Game.config.sim.daysPerSeason) | 0) + 1;
+    // 平常時以外の長期気候（豊穣・旱魃・寒冷など）を併記する。
+    const clim = clk.climate && clk.climate !== "穏やか" ? "  · " + clk.climate : "";
     this.clockEl.textContent =
       clk.season.emoji + " " + clk.season.name +
-      "  " + clk.year + "年 " + dayInSeason + "日";
+      "  " + clk.year + "年 " + dayInSeason + "日" + clim;
   };
 
   Hud.sample = function () {

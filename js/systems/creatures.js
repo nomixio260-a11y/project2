@@ -28,6 +28,8 @@
     fleeBoost: 1.12, // 逃走時の速度倍率（パニック）
     chaseBoost: 1.45, // 肉食が獲物を追うときの速度倍率（しっかり捕らえる）
     youngAge: 140, // この齢未満は「仔」（描画が小さい）
+    herdRadius: 5,   // 草食が群れの仲間を探す距離
+    herdSpacing: 1.6, // これより近ければ寄らない（密集しすぎない）
   };
 
   // 遺伝子を継承（軽い変異つき、0.7..1.3 にクランプ）。
@@ -123,6 +125,10 @@
 
     this._buildGrid();
 
+    // 長期気候: 寒冷な時代は基礎代謝が上がり（寒さに耐えるため）個体数が抑えられる。
+    const clk = Game.state.clock;
+    const coldF = 1 + Math.max(0, -(clk ? (clk.warmth || 0) : 0)) * 0.5;
+
     const n = e.count; // 今ティックの個体のみ処理（新生は次ティック）
     for (let i = 0; i < n; i++) {
       if (!e.alive[i]) continue;
@@ -130,7 +136,7 @@
 
       const gene = e.gene[i] || 1;
       e.age[i] += 1;
-      e.energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene); // 大型ほど燃費が悪い
+      e.energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * coldF; // 大型ほど・寒冷ほど燃費が悪い
 
       const tx = e.x[i] | 0;
       const ty = e.y[i] | 0;
@@ -188,6 +194,16 @@
           const f = this._seekFood(world, tx, ty);
           dirX = f.x;
           dirY = f.y;
+        }
+        // 群れ行動: 逃走・採食でなく満ち足りているときは仲間に寄り集まる
+        // （数の安全。捕食者に対し群れで身を守る＝創発的な草食獣の群れ）。
+        if (!fleeing && dirX === 0 && dirY === 0) {
+          const mate = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.herdRadius, i);
+          if (mate !== -1) {
+            const dx = e.x[mate] - e.x[i], dy = e.y[mate] - e.y[i];
+            const dl = Math.hypot(dx, dy) || 1;
+            if (dl > P.herdSpacing) { dirX = dx / dl * 0.6; dirY = dy / dl * 0.6; }
+          }
         }
       } else if (dirX === 0 && dirY === 0) {
         // 肉食: 近くの草食を追って捕食。

@@ -20,10 +20,19 @@
     const st = Game.config.settings;
     if (st && st.disasters === false) return; // 設定で無効化
     const rand = this.rand;
+    const clk = Game.state.clock;
+    const warmth = clk ? (clk.warmth || 0) : 0;
+    const wetness = clk ? (clk.wetness || 0) : 0;
+    const season = clk && clk.season;
+
     if (rand() < 0.03) this._eruption(world);
     if (rand() < 0.03) this._earthquake(world);
-    const season = Game.state.clock && Game.state.clock.season;
-    if (season && season.name === "夏" && rand() < 0.04) this._drought(world);
+    // 干ばつ: 夏に加え、乾燥・温暖な気候の時代ほど起きやすい（気候→災害の因果）。
+    const droughtChance = (season && season.name === "夏" ? 0.04 : 0.005) +
+      Math.max(0, -wetness) * 0.10 + Math.max(0, warmth) * 0.04;
+    if (rand() < droughtChance) this._drought(world);
+    // 洪水: 多雨の時代ほど起きやすい。沿岸・低地を浸し、田畑を肥やしつつ犠牲も出す。
+    if (wetness > 0.08 && rand() < wetness * 0.18) this._flood(world);
   };
 
   // 火山噴火: 山岳タイルを中心に、可燃地を発火させ、周囲を焼け地にする。
@@ -52,6 +61,54 @@
       }
     }
     this._log("🌋 " + this._place(world, ex, ey) + "で火山が噴火した");
+    // 大噴火は「火山の冬」を招き、世界を一時的に冷え込ませる（災害→気候の因果）。
+    if (this.rand() < 0.4) {
+      const clk = Game.state.clock;
+      if (clk) {
+        clk.coolShock = Math.min(0.45, (clk.coolShock || 0) + 0.28);
+        this._log("🌋❄ 噴煙が空を覆い、火山の冬が世界を冷え込ませた");
+      }
+    }
+  };
+
+  // 洪水: 川・海沿いの低地を浸す。肥沃な泥を残して fertility を高めるが、
+  // 低地の住民に犠牲を出し、建物にも被害を与える（恵みと災いの両面）。
+  DisasterSystem.prototype._flood = function (world) {
+    const W = world.width, H = world.height, rand = this.rand;
+    const tile = Game.tile, T = Game.TERRAIN;
+    // 浅瀬を起点に氾濫の中心を探す。
+    let cx = -1, cy = -1;
+    for (let s = 0; s < 40; s++) {
+      const x = (rand() * W) | 0, y = (rand() * H) | 0;
+      if (world.terrain[y * W + x] === T.SHALLOW_WATER) { cx = x; cy = y; break; }
+    }
+    if (cx < 0) return;
+    const R = 5;
+    for (let dy = -R; dy <= R; dy++) {
+      for (let dx = -R; dx <= R; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (dx * dx + dy * dy > R * R) continue;
+        const i = y * W + x;
+        if (!tile.isLand(world.terrain[i])) continue;
+        if (world.moisture) { const m = world.moisture[i] + 0.3; world.moisture[i] = m > 1 ? 1 : m; }
+        if (world.fertility) { const f = world.fertility[i] + 0.15; world.fertility[i] = f > 1 ? 1 : f; } // 沃土
+      }
+    }
+    // 低地の住民に犠牲（沿岸近くの人）。
+    const civ = Game.state.civ;
+    if (civ && civ.people) {
+      let killed = 0;
+      const people = civ.people, R2 = R * R;
+      for (let p = 0; p < people.length; p++) {
+        const o = people[p];
+        if (!o.alive || !o.kid) continue;
+        const dx = o.x - cx, dy = o.y - cy;
+        if (dx * dx + dy * dy > R2) continue;
+        if (rand() < 0.08) { o.alive = false; if (civ._addMark) civ._addMark(o.x, o.y); if (++killed >= 8) break; }
+      }
+    }
+    this._log("🌊 " + this._place(world, cx, cy) + "で洪水が起きた（沃土を残し、低地に爪痕を）");
   };
 
   // 地震: 都市を震源に、砦以外の建物が倒壊し、付近の住民に犠牲が出る。

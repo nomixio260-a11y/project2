@@ -95,32 +95,45 @@
       }
     }
 
+    // 延焼の環境補正（季節・長期気候・卓越風）。火は風下へ広がりやすい。
+    const clk = Game.state.clock;
+    const season = clk && clk.season;
+    const seasonMul = season ? season.fireMul : 1;
+    const wetness = clk ? (clk.wetness || 0) : 0;
+    const warmth = clk ? (clk.warmth || 0) : 0;
+    const climMul = (1 - 0.45 * wetness) * (1 + 0.25 * Math.max(0, warmth)); // 乾燥・温暖でよく燃える
+    const wind = Game.state.wind;
+    const wx = wind ? wind.x : 0, wy = wind ? wind.y : 0;
+    const envMul = seasonMul * (climMul > 0 ? climMul : 0);
+
     // パス2: 延焼（生存タイル数を含めて maxFires を超えないよう制限）。
     for (let k = 0; k < cur.length && next.length < maxFires; k++) {
       const i = cur[k];
       const x = i % W;
       const y = (i / W) | 0;
-      if (x > 0) this._maybeSpread(i - 1, next, rand);
-      if (x < W - 1) this._maybeSpread(i + 1, next, rand);
-      if (y > 0) this._maybeSpread(i - W, next, rand);
-      if (y < H - 1) this._maybeSpread(i + W, next, rand);
+      // 風下（風向と一致する向き）ほど延焼しやすく、風上は燃え広がりにくい。
+      if (x > 0) this._maybeSpread(i - 1, next, rand, -wx, envMul);
+      if (x < W - 1) this._maybeSpread(i + 1, next, rand, wx, envMul);
+      if (y > 0) this._maybeSpread(i - W, next, rand, -wy, envMul);
+      if (y < H - 1) this._maybeSpread(i + W, next, rand, wy, envMul);
     }
 
     this.active = next;
   };
 
-  FireSystem.prototype._maybeSpread = function (ni, next, rand) {
+  // dirDot: 延焼方向と卓越風の内積（+で風下, −で風上）。envMul: 季節×気候の補正。
+  FireSystem.prototype._maybeSpread = function (ni, next, rand, dirDot, envMul) {
     if (this.burn[ni] !== 0) return;
     const terr = this.world.terrain[ni];
     let p = spreadProb(terr);
     if (p === 0) return;
-    // 季節で延焼しやすさを変調（夏は燃え広がりやすく冬は鎮まる）。
-    const season = Game.state.clock && Game.state.clock.season;
-    if (season) p *= season.fireMul;
+    p *= (envMul == null ? 1 : envMul);
+    // 卓越風: 風下は燃え移りやすく(最大+60%)、風上は鎮まる(最大-40%)。
+    if (dirDot) p *= 1 + 0.5 * dirDot;
     // 乾燥（低 fertility）ほどよく燃える。
     const f = this.world.fertility;
     if (f) p *= 0.7 + 0.6 * (1 - f[ni]);
-    if (rand() < p) this._igniteInto(ni, next);
+    if (p > 0 && rand() < p) this._igniteInto(ni, next);
   };
 
   // 毎フレーム: グローのアニメ位相を進める（一時停止中も揺らぐ）。
