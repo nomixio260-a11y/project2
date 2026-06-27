@@ -249,6 +249,7 @@
       (k.famine ? ' <span class="insp-tag bad">🌾 飢饉</span>' : "");
     this.bodyEl.innerHTML =
       row("統治", esc(k.ruler) + "（" + esc(k.gov) + "）") +
+      (k.dynasty ? row("王朝", esc(k.dynasty) + "家") : "") +
       row("時代", (info ? info.era : "") + " · " + esc(k.religion)) +
       row("気質", esc(k.trait.name)) +
       row("人口", String(k.humanCount) + " 人") +

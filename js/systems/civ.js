@@ -401,7 +401,10 @@
     const k = {
       id: id,
       name: makeName(this.rand),
-      ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
+      ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0], // 表示名（実在の統治者から更新される）
+      rulerRef: null, // 統治者である実在の人物（_succeed が選ぶ）
+      rulerPid: 0,
+      dynasty: null,  // 王朝＝統治者の家名（世襲で継がれ、王朝交代で変わる）
       reign: 0,      // 現君主の在位（ティック）。継承で 0 に戻る
       gov: GOV_TYPES[govIdx],
       govMod: GOV_MODS[govIdx], // 政体の振る舞い補正
@@ -1403,6 +1406,53 @@
     // 飢饉国が食料を輸入できれば飢えが和らぐ（飢饉フラグはこの後の評価で見直される）。
   };
 
+  // ===== 政治: 統治者・王朝・継承 =====
+  // 統治者は実在の人物。政体ごとに選ばれ方が異なる:
+  //   君主制・氏族制・部族連合 … 世襲（故主の子→王家→断絶なら新王朝＝継承危機）
+  //   共和制 … 選挙（最も威信ある市民。任期ごとに交代しうる＝王朝が定着しにくい）
+  //   神権制 … 高位の聖職者（最も徳望ある神官）
+  // 統治者の資質（威信＝正統性、知性、徳）が国の安定と発展に影響する。
+  CivSystem.prototype._succeed = function (k, coup) {
+    const late = k.rulerRef;
+    const people = this.people;
+    const hereditary = k.gov === "君主制" || k.gov === "氏族制" || k.gov === "部族連合";
+    let heir = null, heirS = -1, house = null, houseS = -1, best = null, bestS = -1, priest = null, priestS = -1;
+    for (let i = 0; i < people.length; i++) {
+      const o = people[i];
+      if (!o.alive || o.kid !== k.id || o.age < CP.adultAge) continue;
+      // 統治者の器: 威信・知性・徳・齢・健康を総合。
+      const s = (o.prestige || 0) * 1.5 + (o.wit || 1) + (o.dili || 1) + (o.age * 0.0004) + (o.food || 0);
+      if (s > bestS) { bestS = s; best = o; }
+      if (k.dynasty && o.sur === k.dynasty && s > houseS) { houseS = s; house = o; }
+      if (late && late.pid && (o.momId === late.pid || o.dadId === late.pid) && s > heirS) { heirS = s; heir = o; }
+      if (o.role === ROLE.PRIEST && s > priestS) { priestS = s; priest = o; }
+    }
+    let chosen, crisis = false;
+    if (coup) chosen = best;                          // 簒奪: 最有力者が実力で奪う
+    else if (k.gov === "共和制") chosen = best;        // 選挙
+    else if (k.gov === "神権制") chosen = priest || best;
+    else { chosen = heir || house || best; if (!heir && !house) crisis = true; } // 世襲（断絶=危機）
+    if (!chosen) return false;
+
+    const newHouse = chosen.sur || k.dynasty || "—";
+    const houseChanged = k.dynasty && newHouse !== k.dynasty;
+    const hadRuler = !!(late);
+    k.rulerRef = chosen; k.rulerPid = chosen.pid;
+    k.ruler = (chosen.name || "?") + (chosen.sur ? " " + chosen.sur : "");
+    k.dynasty = newHouse;
+    k.reign = 0;
+    // 継承の動揺: 平穏な世襲は小、選挙はやや、王朝交代・断絶・簒奪は大。
+    let shock = !hadRuler ? 0 : coup ? 16 : crisis ? 18 : houseChanged ? 11 : (k.gov === "共和制" ? 4 : 3);
+    k.unrest = Math.min(100, (k.unrest || 0) + shock);
+    if (hadRuler) {
+      if (coup) this._logEvent("⚔ " + k.name + ": " + k.ruler + " が政権を簒奪した（" + newHouse + "家）");
+      else if (crisis) this._logEvent("👑 " + k.name + ": 王統が断絶し " + k.ruler + " が新王朝（" + newHouse + "家）を開いた");
+      else if (k.gov === "共和制") this._logEvent("🗳 " + k.name + ": " + k.ruler + " が指導者に選ばれた");
+      else this._logEvent("👑 " + k.name + ": " + k.ruler + " が " + newHouse + "家を継いで即位した");
+    }
+    return true;
+  };
+
   // イベント駆動の外交・経済・社会評価。
   CivSystem.prototype._diplomacy = function () {
     const ks = this.kingdoms;
@@ -1431,12 +1481,17 @@
       // 治安（不満）が生産を左右する: 高い不満は混乱を生み、富・技術・食料・武具の
       //   産出を落とす（=失政の国は衰える負の連鎖）。order: 0.5(不満100)〜1.0(不満0)。
       const order = 1 - ka.unrest / 200;
-      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体・治安で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade") * order;
+      // 統治者の資質: 勤勉な君主は富を、賢明な君主は技術を伸ばす（名君と暗君の差。
+      //   平均的な統治者(資質~1.0)では中立）。
+      const king = ka.rulerRef;
+      const kingDili = king && king.alive ? (0.7 + 0.3 * (king.dili || 1)) : 1;
+      const kingWit = king && king.alive ? (0.7 + 0.3 * (king.wit || 1)) : 1;
+      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体・治安・名君で増減）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade") * order * kingDili;
       if (ka.wealth < 0) ka.wealth = 0;
-      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安で加速）。
+      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0);
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order;
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
       // 武具の備蓄: 鉱石＋富で武装する（富裕国は兵を装備できる＝経済→軍事）。治安で増減。
       ka.tools += (res.ore * 0.3 + Math.min(2.5, ka.wealth * 0.0025)) * order;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
@@ -1495,18 +1550,30 @@
         ka.famine = false;
         if (ka.food > maxStore * 0.5) dU -= 1; // 食料に余裕があれば安定
       }
+      // 正統性: 威信ある統治者は人心をまとめ不満を抑える（弱い君主の国は乱れやすい）。
+      const rr = ka.rulerRef;
+      if (rr && rr.alive) dU -= Math.min(3, (rr.prestige || 0) * 0.25);
       dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
 
-      // 君主の継承（王朝）: 長い治世の末に代替わりし、ときに新王の気質に変わる。
-      ka.reign += CP.diploInterval;
-      if (ka.reign > CP.reignSpan && this.rand() < 0.2) {
-        const old = ka.ruler;
-        ka.ruler = RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0];
-        ka.reign = 0;
-        if (this.rand() < 0.35) ka.trait = TRAITS[(this.rand() * TRAITS.length) | 0];
-        ka.unrest = Math.min(100, ka.unrest + 8); // 継承の動揺
-        this._logEvent("👑 " + ka.name + "：" + old + "王が崩御し " + ka.ruler + "王が即位");
+      // 政治: 統治者の確認と継承。
+      if (!rr || !rr.alive || rr.kid !== ka.id) {
+        this._succeed(ka); // 空位・崩御・離反 → 政体に応じて継承
+      } else {
+        ka.reign += CP.diploInterval;
+        // 長すぎる治世 → 代替わり（共和制は任期で交代しやすい）。
+        const turnover = ka.gov === "共和制" ? 0.25 : 0.18;
+        if (ka.reign > CP.reignSpan && this.rand() < turnover) this._succeed(ka);
+        // クーデター: 不満が高く、統治者を遥かに凌ぐ威信の者がいれば政権を簒奪する。
+        else if (ka.unrest > 72 && this.rand() < 0.12) {
+          let rival = null, rs = (rr.prestige || 0) + 3;
+          const ppl = this.people;
+          for (let p = 0; p < ppl.length; p++) {
+            const o = ppl[p];
+            if (o.alive && o.kid === ka.id && o !== rr && (o.prestige || 0) > rs) { rs = o.prestige; rival = o; }
+          }
+          if (rival) this._succeed(ka, true); // 簒奪
+        }
       }
 
       // 疫病: 過密で技術・衛生（神殿）が乏しい国に発生し、社会を動揺させやがて収束する。
@@ -1728,7 +1795,7 @@
       for (const b in k.wars) if (ks[b] && ks[b].alive) wars.push(ks[b].name);
       for (const b in k.allies) if (ks[b] && ks[b].alive) allies.push(ks[b].name);
       out.push({
-        id: a, name: k.name, ruler: k.ruler, gov: k.gov, color: k.color,
+        id: a, name: k.name, ruler: k.ruler, dynasty: k.dynasty || null, gov: k.gov, color: k.color,
         pop: k.humanCount, cities: k.cities.length, tiles: k.tileCount,
         capital: k.cities[0], wars: wars, allies: allies,
         religion: k.religion, era: eraOf(k.tech), tech: Math.round(k.tech),
