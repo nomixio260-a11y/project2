@@ -172,7 +172,9 @@
     if (civ.getNations) { const list = civ.getNations(); info = list.find(function (n) { return n.id === k.id; }); }
     const res = k.res || { ore: 0, fish: 0, gems: 0 };
     const resStr = [res.ore ? "⛏" + res.ore : "", res.fish ? "🐟" + res.fish : "", res.gems ? "💎" + res.gems : ""].filter(Boolean).join(" ") || "なし";
-    this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) + (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "");
+    this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
+      (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +
+      (k.famine ? ' <span class="insp-tag bad">🌾 飢饉</span>' : "");
     this.bodyEl.innerHTML =
       row("統治", esc(k.ruler) + "（" + esc(k.gov) + "）") +
       row("時代", (info ? info.era : "") + " · " + esc(k.religion)) +
@@ -181,6 +183,7 @@
       row("都市", String(k.cities.length) + " · 領土 " + k.tileCount) +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
       bar("不満", Math.round(k.unrest), true) +
+      row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "")) +
       row("資源", resStr) +
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +
       (info && (info.wars.length || info.allies.length)

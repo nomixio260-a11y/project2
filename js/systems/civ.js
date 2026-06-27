@@ -78,6 +78,15 @@
     nomadFoundChance: 0.04,
     nomadFoundRadius: 6,
     nomadClusterRadius: 8,
+    // 食料経済（外交評価＝diploInterval ごとに収支を計算）
+    foodConsume: 0.7,     // 1人あたりの消費
+    foodFarmer: 1.5,      // 農民1人の生産（食料は農民・農場に強く依存）
+    foodFarmBldg: 3,      // 農場1棟の生産
+    foodFish: 2,          // 漁場1つの生産
+    foodGather: 0.008,    // 領土からの採集（×tileCount。控えめ＝大国も油断できない）
+    foodStoreBase: 36,    // 基本の備蓄上限（小さめ＝戦争・凶作が早く響く）
+    foodStoreGranary: 48, // 穀倉1棟あたりの備蓄上限増
+    famineDeathFood: 3,   // 食料不足この量ごとに1人が餓死
     // 外交
     diploInterval: 90,  // 外交を評価する間隔(ティック)
     warThreshold: -50,   // 関係がこれ以下で開戦しうる
@@ -283,6 +292,8 @@
       religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
       trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
       wealth: 0,     // 富（交易・領土から蓄積）
+      food: 30,      // 食料備蓄（生産-消費。0で飢饉）
+      famine: false, // 飢饉中か（繁殖停止・餓死）
       unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
       plague: 0,     // 疫病の残り評価回数（>0 で流行中）
       res: { ore: 0, fish: 0, gems: 0 }, // 領有資源（_tallyResources が更新）
@@ -960,6 +971,30 @@
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
       dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0); // 信仰・食料・漁場・記念碑・法典で安定
+
+      // 食料経済: 農民・農場・漁場・採集で生産し、人口が消費する。穀倉が備蓄上限を上げる。
+      const agriF = hasTech(ka, "agri") ? 1.3 : 1;
+      // 戦争は農地を荒らし生産を落とし（×減産）、軍の補給で消費を押し上げる（×増）。
+      // 長く戦う国・過密で農地不足の国は備蓄を食いつぶして飢饉に陥る。
+      const warDisrupt = 1 - Math.min(0.5, warCount * 0.22);
+      const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
+        res.fish * CP.foodFish + ka.tileCount * CP.foodGather) * agriF * warDisrupt;
+      const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
+      ka.food += produce - consume;
+      const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary;
+      ka._famineDeaths = 0;
+      if (ka.food < 0) {
+        // 飢饉: 不足分に応じて餓死者が出る（後でまとめて適用）。社会も動揺。
+        ka._famineDeaths = Math.min((ka.humanCount / 4) | 0, Math.ceil(-ka.food / CP.famineDeathFood));
+        ka.food = 0;
+        dU += 6; // 飢饉は不満を煽る（この後の clamp に反映）
+        if (!ka.famine) this._logEvent("🌾 " + ka.name + " を飢饉が襲った");
+        ka.famine = true;
+      } else {
+        if (ka.food > maxStore) ka.food = maxStore;
+        ka.famine = false;
+        if (ka.food > maxStore * 0.5) dU -= 1; // 食料に余裕があれば安定
+      }
       dU *= this._eff(ka, "unrest");
       ka.unrest = Math.max(0, Math.min(100, ka.unrest + dU));
 
@@ -993,6 +1028,19 @@
       if (ka.unrest > 80 && ka.cities.length >= 2 &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < 0.18) {
         this._rebellion(ka);
+      }
+    }
+
+    // 飢饉による餓死をまとめて適用（人を1回だけ走査）。
+    let anyFamine = false;
+    for (let a = 1; a < ks.length; a++) if (ks[a] && ks[a].alive && ks[a]._famineDeaths > 0) { anyFamine = true; break; }
+    if (anyFamine) {
+      const people = this.people;
+      for (let p = 0; p < people.length; p++) {
+        const o = people[p];
+        if (!o.alive || !o.kid) continue;
+        const k = ks[o.kid];
+        if (k && k._famineDeaths > 0) { o.alive = false; k._famineDeaths--; }
       }
     }
 
@@ -1123,7 +1171,7 @@
       relations: {}, borders: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
-      wealth: 0, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0 }, alive: true,
+      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
     parent.cities.splice(idx, 1);
@@ -1185,6 +1233,7 @@
         religion: k.religion, era: eraOf(k.tech), tech: Math.round(k.tech),
         trait: k.trait.name, wealth: Math.round(k.wealth), unrest: Math.round(k.unrest),
         tools: Math.round(k.tools || 0), facilities: k.facilities,
+        food: Math.round(k.food || 0), famine: !!k.famine,
         techCount: k.discovered ? k.discovered.length : 0,
         latestTechs: k.discovered ? k.discovered.slice(-3) : [],
       });
@@ -1842,6 +1891,7 @@
   CivSystem.prototype._tryReproduce = function (h, k) {
     if (h.age < CP.adultAge || h.age > CP.elderAge) return;
     if (h.food < CP.reproFood || h.repro > 0) return;
+    if (k.famine) return; // 飢饉中は子をもうけない
     const capacity = this._capacity(k);
     if (k.humanCount >= capacity) return;
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return;
