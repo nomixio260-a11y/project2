@@ -71,6 +71,7 @@
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
+    sightBase: 5.2,      // 視野の基準半径（知性・年齢・昼夜で変化する）
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
     cellSize: 6,
@@ -214,24 +215,30 @@
     const t = traitKey ? (h[traitKey] || 1) : (h.dili || 1);
     return t * ageFactor(h.age) * skillFactor(h.skill) * moodFactor(h.mood);
   }
+  // 親があれば中間値を、無ければランダムに継承する1形質。
+  function heritTrait(rand, a, b) {
+    if (a != null && b != null) return inheritTrait(rand, (a + b) / 2);
+    if (a != null) return inheritTrait(rand, a);
+    return randTrait(rand);
+  }
   // 生まれたばかり/置かれたばかりの人に内面を授ける。親(pa,pb)があれば遺伝する。
+  // 内面は3層: ①生得形質(性格・体質) ②シナプス配線(判断の偏り・遺伝) ③感情(その場の状態)。
   function endow(h, rand, pa, pb) {
-    if (pa && pb) {
-      h.dili = inheritTrait(rand, ((pa.dili || 1) + (pb.dili || 1)) / 2);
-      h.brave = inheritTrait(rand, ((pa.brave || 1) + (pb.brave || 1)) / 2);
-      h.wit = inheritTrait(rand, ((pa.wit || 1) + (pb.wit || 1)) / 2);
-      h.vigor = inheritTrait(rand, ((pa.vigor || 1) + (pb.vigor || 1)) / 2);
-    } else if (pa) {
-      h.dili = inheritTrait(rand, pa.dili);
-      h.brave = inheritTrait(rand, pa.brave);
-      h.wit = inheritTrait(rand, pa.wit);
-      h.vigor = inheritTrait(rand, pa.vigor);
-    } else {
-      h.dili = randTrait(rand); h.brave = randTrait(rand); h.wit = randTrait(rand);
-      h.vigor = randTrait(rand);
-    }
+    // ① 生得形質。
+    h.dili = heritTrait(rand, pa && pa.dili, pb && pb.dili);
+    h.brave = heritTrait(rand, pa && pa.brave, pb && pb.brave);
+    h.wit = heritTrait(rand, pa && pa.wit, pb && pb.wit);
+    h.vigor = heritTrait(rand, pa && pa.vigor, pb && pb.vigor);
+    // ② シナプス配線: 競合する欲求の重みづけ（脳の個性）。遺伝し、選択を受ける。
+    //    安全志向 / 食欲 / 社交欲 をどれだけ優先するかが人により異なる。
+    h.synSafe = heritTrait(rand, pa && pa.synSafe, pb && pb.synSafe);
+    h.synFood = heritTrait(rand, pa && pa.synFood, pb && pb.synFood);
+    h.synSoc = heritTrait(rand, pa && pa.synSoc, pb && pb.synSoc);
+    // ③ 感情（0..1, 時間で減衰。出来事で高ぶり、行動を左右する）。
+    h.fear = 0; h.anger = 0; h.joy = 0;
+    h.sight = 5; // 視野（_think で毎回再計算される初期値）
     h.skill = 0.06 + rand() * 0.08; // 練度は低くから始まり、経験で伸びる
-    h.mood = 0.6;                    // 機嫌（普通）
+    h.mood = 0.6;                    // 機嫌（感情の集約。普通から始まる）
     return h;
   }
   // 仕事を続けて練度を上げる（賢い者ほど速く習熟する）。役割変更で skill は別途下がる。
@@ -2016,15 +2023,24 @@
       this._befriend(h, other, 0.06 * akin * cultSim);
     }
 
-    // 機嫌の目標値: 普通(0.5)を基準に、満腹・社交・親友・国情で上下する。
+    // 喜び(joy)を更新: 仲間・伴侶と過ごし、満ち足りていると湧く（社交欲は synSoc で個人差）。
+    const socSat = CP.socialNeed * (h.synSoc || 1);
+    let dj = 0;
+    if (company > 0) dj += 0.06;
+    if (h.partner && h.partner.alive) dj += 0.05;
+    if (h.food > 0.6) dj += 0.05;
+    h.joy = Math.min(1, (h.joy || 0) + dj);
+
+    // 機嫌の目標値: 普通(0.5)を基準に、満腹・社交・親友・国情＋感情で上下する。
     let target = 0.5 + (h.food - 0.5) * 0.4;
-    if (company >= CP.socialNeed) target += 0.08; else if (company === 0) target -= 0.12;
+    if (company >= socSat) target += 0.08; else if (company === 0) target -= 0.12;
     const friends = h.bonds ? h.bonds.length : 0;
     if (friends > 0) target += 0.012 * (friends > 3 ? 3 : friends); // 親しい仲間がいると心安らか
     if (h.partner && h.partner.alive) target += 0.03;   // 伴侶の支え
     if (k.famine) target -= 0.22;
     if (this._count(k.wars) > 0) target -= 0.12;
     target += (40 - (k.unrest || 0)) * 0.0015;          // 安定した国は人心も穏やか
+    target += 0.12 * (h.joy || 0) - 0.18 * (h.fear || 0); // 感情が気分を彩る
     if (target < 0) target = 0; else if (target > 1) target = 1;
     h.mood += (target - h.mood) * 0.15 - grief;         // ゆっくり推移＋喪失の悲嘆
     if (h.mood < 0) h.mood = 0; else if (h.mood > 1) h.mood = 1;
@@ -2036,6 +2052,14 @@
     // 知性(wit)が判断の質を左右する: 賢い者ほど脅威に早く気づき、状況に応じて
     // 適切に立ち回り（転職）、肥沃な農地を選ぶ。これにより wit に選択圧がかかる。
     const wit = h.wit || 1;
+    // 視野: その人が世界をどれだけ見渡せるか。知性で広く、夜は狭く、幼少・老齢では
+    // やや狭い。以降の脅威察知・採餌はこの視野の内側だけを「知覚」する。
+    const ageF = h.age < CP.adultAge ? 0.78 : (h.age >= CP.elderAge ? 0.85 : 1);
+    const sight = h.sight = CP.sightBase * (0.7 + 0.3 * wit) * (this._night ? 0.62 : 1) * ageF;
+    // 感情の自然減衰（時間とともに落ち着く）。出来事が以下で高ぶらせる。
+    h.fear = (h.fear || 0) * 0.7;
+    h.anger = (h.anger || 0) * 0.72;
+    h.joy = (h.joy || 0) * 0.8;
     // 近傍の土地を確保（足下は毎ティック）。
     this._claimNeighbors(h, k, world);
     // 社会的な交わり（会話）と機嫌の更新。人々が互いに影響し合い社会を形づくる。
@@ -2080,12 +2104,15 @@
     {
       const cr = Game.state.creatures, ents = Game.state.entities;
       if (cr && ents && cr.nearestAnimal) {
-        const pi = cr.nearestAnimal(h.x, h.y, Game.SPECIES.PREDATOR, 3 + 1.6 * wit); // 賢いほど早く察知
+        const pi = cr.nearestAnimal(h.x, h.y, Game.SPECIES.PREDATOR, sight); // 視野内の捕食者だけ知覚
         if (pi !== -1 && ents.alive[pi]) {
           const dx = ents.x[pi] - h.x, dy = ents.y[pi] - h.y, d2 = dx * dx + dy * dy;
+          h.fear = Math.min(1, (h.fear || 0) + 1.2 / (1 + d2)); // 近い猛獣ほど強い恐怖
           const armed = h.role === ROLE.SOLDIER || (h.gear || 0) > 0;
-          if (armed) {
-            if (d2 < 2.2) { ents.kill(pi); h.food = h.food + 0.3 > 1 ? 1 : h.food + 0.3; } // 撃退・狩り
+          // 闘うか逃げるか: 勇気＝勇敢さ＋怒り−恐怖。安全志向(synSafe)が高いほど退きやすい。
+          const courage = (h.brave || 1) + (h.anger || 0) * 0.5 - (h.fear || 0) * 0.9 - ((h.synSafe || 1) - 1);
+          if (armed && courage > 0.7) {
+            if (d2 < 2.2) { ents.kill(pi); h.food = h.food + 0.3 > 1 ? 1 : h.food + 0.3; h.anger = Math.min(1, (h.anger || 0) + 0.3); } // 撃退・狩り
             else { h.gx = ents.x[pi] | 0; h.gy = ents.y[pi] | 0; h.state = 16; return; }
           } else {
             if (d2 < 2.5) h.food = h.food - 0.05 > 0 ? h.food - 0.05 : 0; // 襲われ負傷
@@ -2097,12 +2124,13 @@
       }
     }
 
-    // 0.5) 戦時の民間人は侵入してきた敵兵から逃げる（賢いほど早く危険を察知して逃げる）。
+    // 0.5) 戦時の民間人は侵入してきた敵兵から逃げる（視野内で察知すると恐怖に駆られて逃げる）。
     if (h.role !== ROLE.SOLDIER && this._count(k.wars) > 0) {
-      const foe = this._scan(h.x, h.y, 4 + 2.5 * wit, function (o) {
+      const foe = this._scan(h.x, h.y, sight * 1.2, function (o) {
         return (o.kid !== h.kid && o.kid !== 0 && o.role === ROLE.SOLDIER && self._atWar(h.kid, o.kid)) ? 2 : 0;
       }).best;
       if (foe) {
+        h.fear = Math.min(1, (h.fear || 0) + 0.6);
         // 敵から離れる向き＋自国の町方向へ退避。
         const ax = h.x - foe.x, ay = h.y - foe.y;
         h.gx = Game.utils.clamp((h.x + ax + (hcx - h.x) * 0.3) | 0, 0, world.width - 1);
@@ -2111,15 +2139,16 @@
       }
     }
 
-    // 1) 強い空腹 → 記憶した食料地、無ければ近くの可食地を探す（空間記憶＝賢い採食）。
-    if (h.food < 0.4) {
+    // 1) 空腹 → 記憶した食料地、無ければ視野内の可食地を探す（空間記憶＝賢い採食）。
+    //    食欲シナプス(synFood)が強い人ほど早めに食料を求める。
+    if (h.food < 0.4 * (h.synFood || 1)) {
       let t = null;
       if (h.memFood) {
         const mi = h.memFood.y * world.width + h.memFood.x;
         if (tile.isEdible(world.terrain[mi])) t = h.memFood; else h.memFood = null;
       }
       if (!t) {
-        t = this._nearestTile(h, world, 5, function (terr) { return tile.isEdible(terr); });
+        t = this._nearestTile(h, world, Math.round(sight), function (terr) { return tile.isEdible(terr); });
         if (t) h.memFood = { x: t.x, y: t.y };
       }
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 1; return; }
@@ -2169,9 +2198,10 @@
       });
       const e = scan.best;
       h._enemy = e;
+      if (e) { h.anger = Math.min(1, (h.anger || 0) + 0.35); h.fear = Math.min(1, (h.fear || 0) + 0.2); } // 戦意と恐怖
       // 士気: 局所的に大きく劣勢なら退却して味方と合流する（無謀な突撃を避ける）。
-      // 勇敢な兵ほど劣勢でも踏みとどまり、臆病な兵は早く退く（個性が戦場を左右する）。
-      const grit = 0.4 + 1.2 * (h.brave || 1); // 臆病~1.3 / 勇敢~1.9
+      // 勇敢で怒る兵ほど劣勢でも踏みとどまり、恐怖に駆られた兵は早く退く（感情が戦場を左右する）。
+      const grit = 0.4 + 1.2 * (h.brave || 1) + 0.5 * (h.anger || 0) - 0.7 * (h.fear || 0);
       if (e && scan.count2 > scan.count + grit) {
         h.gx = hcx; h.gy = hcy; h.state = 14; return;
       }
@@ -2655,8 +2685,9 @@
           const other = this.kingdoms[e.kid];
           const m1 = this._military(k), m2 = other ? this._military(other) : 1;
           const edge = m1 / (m1 + m2);
-          // 個の武勇: 勇敢で歴戦（高練度）の壮年兵ほど大きな損害を与える。
-          e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) * (0.55 + 0.45 * ability(h, "brave"));
+          // 個の武勇: 勇敢で歴戦（高練度）の壮年兵ほど、また怒りに燃えるほど痛打を与える。
+          e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) *
+            (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0));
           practice(h); // 実戦で武を磨く
           if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); h.prestige = (h.prestige || 0) + 1.2; } // 戦死させ武功を上げる
         }

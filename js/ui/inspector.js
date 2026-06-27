@@ -214,6 +214,12 @@
           bar("練度", Math.round(Math.max(0, Math.min(1, p.skill || 0)) * 100), false) +
           bar("機嫌", Math.round(Math.max(0, Math.min(1, p.mood == null ? 0.6 : p.mood)) * 100), false);
       }
+      // 感情・視野（実装されていれば表示）。今その人を支配している感情を示す。
+      if (p.fear !== undefined) {
+        const emo = emotion(p);
+        html += row("感情", emo) +
+          row("視野", (p.sight != null ? p.sight.toFixed(1) : "—") + " 圏");
+      }
       // 人間関係（伴侶・親友・名声）。
       if (p.pid !== undefined) {
         const rel = [];
@@ -306,6 +312,16 @@
     function mark(v) { return v >= 1.1 ? "▲" : v <= 0.9 ? "▽" : "・"; }
     return "体" + mark(ents.gene[i] || 1) + " 速" + mark(ents.geneSpd[i] || 1) +
       " 感" + mark(ents.geneSense[i] || 1) + " 産" + mark(ents.geneFert[i] || 1);
+  }
+
+  // その人を今いちばん支配している感情を言葉にする（無ければ平静）。
+  function emotion(p) {
+    const fear = p.fear || 0, anger = p.anger || 0, joy = p.joy || 0;
+    let m = "😐 平静", v = 0.25;
+    if (fear > v && fear >= anger && fear >= joy) { m = "😨 恐怖"; v = fear; }
+    else if (anger > v && anger >= joy) { m = "😠 怒り"; v = anger; }
+    else if (joy > v) { m = "😊 喜び"; v = joy; }
+    return m;
   }
 
   function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
