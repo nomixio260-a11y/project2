@@ -304,6 +304,41 @@ test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   assert.equal(civ.kingdoms.length - 1, founded);
 });
 
+test("CivSystem: 交易で双方が富み、余剰国から飢饉国へ食料が流れる", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const a = civ.foundAt(5, 5);
+  const b = civ.foundAt(20, 5);
+  const ka = civ.kingdoms[a], kb = civ.kingdoms[b];
+  // 隣国として接触させる（平和・交易路あり）。
+  ka.borders[b] = 0; kb.borders[a] = 0;
+  // 比較優位: 産物を相補的に（a は鉱石、b は漁場）。
+  ka.res = { ore: 10, fish: 0, gems: 0 };
+  kb.res = { ore: 0, fish: 10, gems: 0 };
+  ka.humanCount = 20; kb.humanCount = 20;
+
+  const wa0 = ka.wealth, wb0 = kb.wealth;
+  const traded = civ._trade(a, b, ka, kb);
+  assert.ok(traded, "交易が成立しない");
+  assert.ok(ka.wealth > wa0 && kb.wealth > wb0, "交易で双方が富まない（比較優位の利益）");
+  assert.ok(ka.partners && ka.partners[b] > 0, "交易相手が記録されない");
+
+  // 交易路の無い遠国（隣接せず・非同盟・航海術なし）とは交易できない。
+  const c = civ.foundAt(28, 28);
+  const kc = civ.kingdoms[c];
+  assert.equal(civ._tradeRoute(a, c, ka, kc), null, "交易路が無いのに通商してしまう");
+
+  // 食料: a に余剰・b は飢饉。交易で食料が b へ流れ、対価の富が a へ向かう。
+  ka.food = 40; kb.food = 0; kb.famine = true; kb.wealth = 100;
+  const fa0 = ka.food, fb0 = kb.food, wkb0 = kb.wealth, wka0 = ka.wealth;
+  civ._trade(a, b, ka, kb);
+  assert.ok(kb.food > fb0, "飢饉国へ食料が流れない");
+  assert.ok(ka.food < fa0, "余剰国の食料が減らない");
+  assert.ok(kb.wealth < wkb0 && ka.wealth > wka0, "食料の対価（富）が動かない");
+});
+
 test("CivSystem: 放浪者(人間)が集まって自ら国を興す", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   const w = new Game.World(40, 40);
