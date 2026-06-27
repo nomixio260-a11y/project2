@@ -152,7 +152,10 @@
       const act = p.sailing ? "海を渡っている" : (ACT[p.state] || "活動中");
       const hp = Math.round(Math.max(0, Math.min(1, p.food)) * 100);
       const gear = p.gear ? ("装備 Lv" + p.gear) : "素手";
-      this.titleEl.textContent = (k ? "🧑 " + role : "🚶 放浪者");
+      // 称号つきの名前を見出しに（名のある人物は称号を冠する）。
+      const nameTitle = p.name ? esc(p.name) : (k ? role : "放浪者");
+      this.titleEl.innerHTML = (k ? "🧑 " : "🚶 ") + nameTitle +
+        (p._famed ? ' <span class="insp-tag good">★ ' + esc(title(p)) + "</span>" : "");
       let html =
         row("所属", k ? swatch(k.color) + " " + esc(k.name) : "なし（放浪者）") +
         row("役割", role + "（" + stage + "）") +
@@ -165,6 +168,15 @@
           row("気質", persona(p)) +
           bar("練度", Math.round(Math.max(0, Math.min(1, p.skill || 0)) * 100), false) +
           bar("機嫌", Math.round(Math.max(0, Math.min(1, p.mood == null ? 0.6 : p.mood)) * 100), false);
+      }
+      // 人間関係（伴侶・親友・名声）。
+      if (p.pid !== undefined) {
+        const rel = [];
+        if (p.partner && p.partner.alive) rel.push("💞 " + esc(p.partner.name || "伴侶"));
+        const fr = p.bonds ? p.bonds.filter(function (b) { return b.ref && b.ref.alive; }).length : 0;
+        if (fr > 0) rel.push("🤝 親友" + fr + "人");
+        if (rel.length) html += row("縁", rel.join(" "));
+        if ((p.prestige || 0) >= 1) html += row("名声", "★ " + Math.round(p.prestige));
       }
       this.bodyEl.innerHTML = html;
       return;
@@ -191,8 +203,11 @@
       row("都市", String(k.cities.length) + " · 領土 " + k.tileCount) +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
       bar("不満", Math.round(k.unrest), true) +
+      (info && info.morale != null ? bar("民心", info.morale, false) : "") +
       row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "")) +
       row("資源", resStr) +
+      ((info && info.figure) || k.figure
+        ? row("英傑", "★ " + esc((info && info.figure ? info.figure : k.figure).name) + "（" + esc((info && info.figure ? info.figure : k.figure).title) + "）") : "") +
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +
       (info && (info.wars.length || info.allies.length)
         ? row("外交", (info.wars.length ? "⚔" + info.wars.length + " " : "") + (info.allies.length ? "🤝" + info.allies.length : "")) : "");
@@ -217,6 +232,20 @@
     }
     if (bd < 0.06) return "平凡";
     return best.v >= 1 ? best.hi : best.lo;
+  }
+
+  // 名のある人物の称号（civ.titleOf と対応。役割・賢さ・齢から定める）。
+  function title(p) {
+    const R = { SOLDIER: 3, PRIEST: 6, MERCHANT: 5, SMITH: 4, FARMER: 1 };
+    if (p.role === R.SOLDIER) return "英雄";
+    if (p.role === R.PRIEST) return "聖人";
+    if (p.role === R.MERCHANT) return "豪商";
+    if (p.role === R.SMITH) return "名工";
+    if (p.role === R.FARMER) return "篤農";
+    if ((p.wit || 1) >= 1.18) return "賢者";
+    const LIFE = Game.lifeStages || { elder: 2600 };
+    if ((p.age || 0) >= LIFE.elder) return "古老";
+    return "名士";
   }
 
   function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }

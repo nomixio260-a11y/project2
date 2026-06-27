@@ -513,6 +513,13 @@
           ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, uu);
         }
       }
+      // 名のある人物（英傑・賢人）には金の輝きを頭上に灯す（社会の傑物を可視化）。
+      if (person._famed) {
+        const tw = 0.6 + 0.4 * Math.sin(t * 4 + p); // きらめき
+        ctx.fillStyle = "rgba(255,224,120," + tw.toFixed(2) + ")";
+        ctx.fillRect(sx, sy - 8 * uu + ob, uu, uu);          // 上の光点
+        ctx.fillRect(sx - uu, sy - 7 * uu + ob, 3 * uu, uu); // 横の光（小さな星形）
+      }
 
       // 道具・武器（子供は持たない。役割と装備段階 gear で見た目が変わる＝実際に持って使う）。
       if (!isChild) {
