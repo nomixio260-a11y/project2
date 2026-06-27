@@ -197,13 +197,14 @@
       const act = p.sailing ? "海を渡っている" : (ACT[p.state] || "活動中");
       const hp = Math.round(Math.max(0, Math.min(1, p.food)) * 100);
       const gear = p.gear ? ("装備 Lv" + p.gear) : "素手";
-      // 称号つきの名前を見出しに（名のある人物は称号を冠する）。
-      const nameTitle = p.name ? esc(p.name) : (k ? role : "放浪者");
-      this.titleEl.innerHTML = (k ? "🧑 " : "🚶 ") + nameTitle +
+      // 称号つきの姓名を見出しに（名＋家名。名のある人物は称号を冠する）。
+      const fullName = (p.name ? esc(p.name) : (k ? role : "放浪者")) + (p.sur ? " " + esc(p.sur) : "");
+      this.titleEl.innerHTML = (k ? "🧑 " : "🚶 ") + fullName +
         (p._famed ? ' <span class="insp-tag good">★ ' + esc(title(p)) + "</span>" : "");
       let html =
         row("所属", k ? swatch(k.color) + " " + esc(k.name) : "なし（放浪者）") +
         row("役割", role + "（" + stage + "）") +
+        (p.sur ? row("家系", esc(p.sur) + "家 ・ 第" + (p.gen || 1) + "世代") : "") +
         row("行動", act) +
         bar("体力", hp, false) +
         row("装備", gear);
