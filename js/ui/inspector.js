@@ -204,8 +204,13 @@
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
       bar("不満", Math.round(k.unrest), true) +
       (info && info.morale != null ? bar("民心", info.morale, false) : "") +
-      row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "")) +
+      row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "") +
+        (info && info.foodTrade ? (info.foodTrade > 0 ? " （輸入+" + info.foodTrade + "）" : " （輸出" + info.foodTrade + "）") : "")) +
       row("資源", resStr) +
+      (info && info.partners && info.partners.length
+        ? row("交易", "🐫 " + info.partners.length + "国 ＋💰" + info.tradeIncome +
+            "<br><span class='insp-sub'>" + info.partners.slice(0, 3).map(function (p) { return esc(p.name); }).join("・") + "</span>")
+        : "") +
       ((info && info.figure) || k.figure
         ? row("英傑", "★ " + esc((info && info.figure ? info.figure : k.figure).name) + "（" + esc((info && info.figure ? info.figure : k.figure).title) + "）") : "") +
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +

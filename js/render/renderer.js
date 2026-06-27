@@ -720,16 +720,22 @@
         const frac = Math.sin(t * 0.35 + id * 1.3 + c * 2.1) * 0.5 + 0.5;
         wagon(cap.x, cap.y, city.x, city.y, frac);
       }
-      // 交易路: 同盟首都間を金色寄りの荷馬車が往来。
-      if (k.allies) {
-        for (const bStr in k.allies) {
+      // 交易路: 実際に交易のある首都間を金色寄りの荷馬車が往来（活発な路ほど多くの隊商）。
+      if (k.partners) {
+        for (const bStr in k.partners) {
           const b = +bStr;
           if (b <= id) continue;
           const kb = ks[b];
           if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+          const vol = k.partners[b] || 0;
+          if (vol < 0.5) continue;
           const cap2 = kb.cities[0];
-          const frac = (t * 0.06 + id * 0.7 + b * 0.37) % 1;
-          wagon(cap.x, cap.y, cap2.x, cap2.y, frac, "#9a7a3a");
+          // 交易量に応じて1〜3台の隊商を時間差で走らせる。
+          const wagons = vol > 8 ? 3 : vol > 3 ? 2 : 1;
+          for (let wagi = 0; wagi < wagons; wagi++) {
+            const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
+            wagon(cap.x, cap.y, cap2.x, cap2.y, frac, "#9a7a3a");
+          }
         }
       }
     }
@@ -769,7 +775,7 @@
     ctx.restore();
   };
 
-  // 交易路: 同盟国どうしの首都を金色の点線で結ぶ。
+  // 交易路: 実際に交易のある国どうしの首都を金色の点線で結ぶ（太さは交易量に比例）。
   Renderer.prototype.drawTradeRoutes = function (camera) {
     const civ = Game.state.civ;
     if (!civ || !civ.kingdoms) return;
@@ -779,19 +785,23 @@
     const ctx = this.ctx;
     const ks = civ.kingdoms;
     ctx.save();
-    ctx.strokeStyle = "rgba(240,200,90,0.55)";
-    ctx.lineWidth = Math.max(1, scale * 0.14);
     ctx.setLineDash([Math.max(3, scale), Math.max(2, scale * 0.7)]);
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
-      if (!k || !k.alive || !k.allies) continue;
+      if (!k || !k.alive || !k.partners || !k.cities || !k.cities.length) continue;
       const c0 = k.cities[0];
-      for (const bStr in k.allies) {
+      for (const bStr in k.partners) {
         const b = +bStr;
         if (b <= id) continue;
         const kb = ks[b];
-        if (!kb || !kb.alive) continue;
+        if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+        const vol = k.partners[b] || 0;
+        if (vol < 0.5) continue;
         const c1 = kb.cities[0];
+        // 交易量で線の濃さ・太さを変える（活発な通商路ほど太く明るい）。
+        const a = Math.min(0.7, 0.2 + vol * 0.04);
+        ctx.strokeStyle = "rgba(240,200,90," + a.toFixed(2) + ")";
+        ctx.lineWidth = Math.max(1, scale * (0.08 + Math.min(0.16, vol * 0.012)));
         ctx.beginPath();
         ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
         ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));

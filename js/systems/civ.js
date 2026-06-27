@@ -101,6 +101,17 @@
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
+    // 交易（取引）: 文明どうしが余剰と不足を交換し、双方が富む（比較優位）。
+    //   文明により交易力が違う＝政体(共和制)・気質(商才)・技術(車輪/航海)・資源・市場・商人。
+    tradeBase: 2.4,       // 交易量の基準係数
+    tradeAllyBonus: 1.8,  // 同盟国との通商条約は交易を大きく増やす
+    tradeSeaPenalty: 0.55, // 海路交易（航海術）は陸路よりやや細い
+    tradeWheelBonus: 1.5, // 車輪は陸路交易を増やす
+    tradeMarketW: 0.35,   // 市場1棟あたりの交易力寄与
+    tradeMerchantW: 0.05, // 商人1人あたりの交易力寄与
+    tradeRoadBonus: 0.4,  // 街道網の交易力寄与
+    tradeFoodPrice: 0.7,  // 食料1単位の取引価格（富）。飢饉国へ食料が流れる
+    tradeFoodMax: 12,     // 1回の評価で動かせる食料の上限
     // 生産・装備（専門職が施設で働いて生み出す）
     workRadius: 3,       // 施設からこの距離以内なら「就労中」
     toolRate: 0.02,      // 鍛冶が1ティックに作る道具・武具
@@ -382,6 +393,10 @@
       unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
       plague: 0,     // 疫病の残り評価回数（>0 で流行中）
       res: { ore: 0, fish: 0, gems: 0 }, // 領有資源（_tallyResources が更新）
+      tradeVol: 0,    // 直近の交易量（活況の指標。毎評価で減衰し交易で増える）
+      tradeIncome: 0, // 直近評価での交易による富の増分（表示用）
+      foodTrade: 0,   // 直近の食料の純流入（+輸入 / -輸出）。飢饉の緩和を示す
+      partners: null, // 主要な交易相手 id→直近交易量（描画・UI用）
       alive: true,
     };
     this.kingdoms.push(k);
@@ -1072,6 +1087,100 @@
     this._setRel(a, b, 70);
   };
 
+  // ===== 交易（取引）=====
+  // 文明どうしが余剰と不足を交換し、双方が富む経済の根幹。交易の力は文明により異なる:
+  //   政体（共和制は商業的）・気質（商才）・市場・商人・技術（車輪=陸路 / 航海術=海路）・治安。
+  // 比較優位: 産物の構成が異なる相手ほど交換の利益が大きい。
+  // 食料は飢えた国へ流れ、対価の富と引き換えに飢饉を和らげる（経済→人口の因果）。
+
+  // 文明の交易力（市場・商人・車輪・政体・気質・治安で決まる）。
+  CivSystem.prototype._tradeCapacity = function (k) {
+    const fac = k.facilities || {};
+    const order = 1 - (k.unrest || 0) / 200;
+    let cap = (1 + (fac.market || 0) * CP.tradeMarketW + (k.roleCount[ROLE.MERCHANT] || 0) * CP.tradeMerchantW) *
+      this._eff(k, "trade") * order;
+    if (hasTech(k, "wheel")) cap *= CP.tradeWheelBonus;
+    return cap;
+  };
+
+  // 交易路の有無と通行のしやすさ。陸続きの隣国・同盟・（航海術があれば）海路で結ばれる。
+  CivSystem.prototype._tradeRoute = function (a, b, ka, kb) {
+    const ally = !!ka.allies[b];
+    const neighbor = this._isNeighbor(ka, b);
+    let f = 0, sea = false;
+    if (neighbor) f = 1;                                  // 陸続きの隣国
+    else if (ally) f = 0.85;                              // 同盟は遠国でも通商路を保つ
+    else if (hasTech(ka, "sail") && hasTech(kb, "sail")) { f = CP.tradeSeaPenalty; sea = true; } // 海路交易
+    if (f === 0) return null;
+    if (ally) f *= CP.tradeAllyBonus;                     // 通商同盟は交易を太くする
+    return { f: f, sea: sea, ally: ally };
+  };
+
+  // 産物の構成ベクトル（鉱石・漁獲・宝石・道具・食料）。微小な下駄で汎用財の交易も担保。
+  function goodVec(k) {
+    const r = k.res || {};
+    return [(r.ore || 0) + 0.1, (r.fish || 0) + 0.1, (r.gems || 0) + 0.1,
+      (k.tools || 0) * 0.2 + 0.1, (k.food > 0 ? k.food : 0) * 0.04 + 0.1];
+  }
+  // 比較優位の度合い（0=同質, ~1=異質）。産物が違うほど交換の利益が大きい。
+  function complementarity(va, vb) {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < va.length; i++) { dot += va[i] * vb[i]; na += va[i] * va[i]; nb += vb[i] * vb[i]; }
+    const cos = dot / (Math.sqrt(na * nb) || 1);
+    return 1 - cos;
+  }
+  function addPartner(k, id, vol) {
+    if (!k.partners) k.partners = {};
+    k.partners[id] = (k.partners[id] || 0) + vol;
+  }
+
+  // 2国間の交易を1回ぶん実行する。交易が成立すれば true。
+  CivSystem.prototype._trade = function (a, b, ka, kb) {
+    const route = this._tradeRoute(a, b, ka, kb);
+    if (!route) return false;
+    const capA = this._tradeCapacity(ka), capB = this._tradeCapacity(kb);
+    const mass = Math.min(ka.humanCount, kb.humanCount); // 交易は小さい方の経済規模に律速
+    const comp = complementarity(goodVec(ka), goodVec(kb));
+    // 交易の利益（双方が得る富）。比較優位が大きいほど、また通商路が太いほど大きい。
+    const gain = CP.tradeBase * Math.min(capA, capB) * route.f * (0.4 + 1.2 * comp) * (0.3 + mass * 0.02);
+    if (gain > 0) {
+      ka.wealth += gain; kb.wealth += gain;
+      ka.tradeIncome += gain; kb.tradeIncome += gain;
+      ka.tradeVol += gain; kb.tradeVol += gain;
+      addPartner(ka, b, gain); addPartner(kb, a, gain);
+    }
+
+    // 食料の取引: 余剰のある国から、不足する国（特に飢饉国）へ食料が流れる。
+    // 買い手は富で支払う（富が乏しければ買える量が減る）＝富→食料→人口の因果。
+    this._tradeFood(a, b, ka, kb, route);
+    this._tradeFood(b, a, kb, ka, route);
+    return true;
+  };
+
+  // seller→buyer の方向に食料を売る（buyer が不足し seller に余剰があるときのみ）。
+  CivSystem.prototype._tradeFood = function (sa, ba, seller, buyer, route) {
+    const sFac = seller.facilities || {};
+    const sMax = CP.foodStoreBase + (sFac.granary || 0) * CP.foodStoreGranary;
+    const surplus = seller.food - sMax * 0.35;       // 備蓄に余裕がある分だけ売る
+    if (surplus <= 1) return;
+    // 買い手の不足度（飢饉なら最大、平時でも乏しければ少し買う）。
+    const need = buyer.famine ? CP.tradeFoodMax : Math.max(0, CP.foodStoreBase * 0.4 - buyer.food);
+    if (need <= 0.5) return;
+    let amount = Math.min(surplus, need, CP.tradeFoodMax * route.f);
+    if (amount <= 0.2) return;
+    // 代金（富）。買い手の富で支払える範囲に抑える。
+    const price = CP.tradeFoodPrice;
+    let cost = amount * price;
+    if (buyer.wealth < cost) { amount = buyer.wealth / price; cost = buyer.wealth; }
+    if (amount <= 0.2) return;
+    seller.food -= amount; buyer.food += amount;
+    seller.wealth += cost; buyer.wealth -= cost;
+    seller.foodTrade -= amount; buyer.foodTrade += amount;
+    seller.tradeVol += cost; buyer.tradeVol += cost;
+    addPartner(seller, ba, cost); addPartner(buyer, sa, cost);
+    // 飢饉国が食料を輸入できれば飢えが和らぐ（飢饉フラグはこの後の評価で見直される）。
+  };
+
   // イベント駆動の外交・経済・社会評価。
   CivSystem.prototype._diplomacy = function () {
     const ks = this.kingdoms;
@@ -1093,6 +1202,9 @@
       this._recountFacilities(ka);
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0 };
+      // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
+      ka.tradeVol *= 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0;
+      ka.tradeIncome = 0; ka.foodTrade = 0; ka.partners = null;
       // 治安（不満）が生産を左右する: 高い不満は混乱を生み、富・技術・食料・武具の
       //   産出を落とす（=失政の国は衰える負の連鎖）。order: 0.5(不満100)〜1.0(不満0)。
       const order = 1 - ka.unrest / 200;
@@ -1231,12 +1343,11 @@
           }
         }
 
-        // 交易: 戦争でなければ双方が富む（同盟は倍。商才・政体で増す）。少し友好も育む。
+        // 交易（取引）: 戦争でなければ、余剰と不足を交換して双方が富む（比較優位）。
+        // 交易力は文明により異なり、食料は飢えた国へ流れて飢饉を和らげる。
         if (!ka.wars[b]) {
-          const trade = Math.min(ka.tileCount, kb.tileCount) * 0.012 *
-            (ka.allies[b] ? 2 : 1) * ((this._eff(ka, "trade") + this._eff(kb, "trade")) * 0.5);
-          ka.wealth += trade; kb.wealth += trade;
-          if (!ka.allies[b]) this._setRel(a, b, rel + 0.4);
+          const traded = this._trade(a, b, ka, kb);
+          if (traded && !ka.allies[b]) this._setRel(a, b, rel + 0.5); // 通商は友好を育む
         }
 
         if (ka.wars[b]) {
@@ -1399,6 +1510,15 @@
         latestTechs: k.discovered ? k.discovered.slice(-3) : [],
         morale: k.moodAvg != null ? Math.round(k.moodAvg * 100) : null,
         figure: k.figure || null,
+        trade: Math.round(k.tradeVol || 0),
+        tradeIncome: Math.round(k.tradeIncome || 0),
+        foodTrade: Math.round(k.foodTrade || 0),
+        partners: k.partners ? (function () {
+          const out = [];
+          for (const id in k.partners) { const kb = ks[+id]; if (kb && kb.alive) out.push({ name: kb.name, vol: k.partners[id] }); }
+          out.sort(function (x, y) { return y.vol - x.vol; });
+          return out;
+        })() : [],
       });
     }
     out.sort(function (x, y) { return y.pop - x.pop; });
