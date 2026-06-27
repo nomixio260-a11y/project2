@@ -488,12 +488,13 @@
       // 個体の見た目を一度だけ決める（描画専用なので乱数で可）。
       let lk = person.look;
       if (lk === undefined) { lk = person.look = (Math.random() * 0x7fffffff) | 0; }
-      const skin = SKIN[lk % SKIN.length];
+      // 肌・髪は人種から（civ が設定）。未設定なら従来のランダム配色にフォールバック。
+      const skin = person.skinCol || SKIN[lk % SKIN.length];
       const LIFE = Game.lifeStages || LIFE_DEFAULT;
       const age = person.age || 0;
       const isChild = age < LIFE.adult;
       const isElder = age >= LIFE.elder;
-      const hair = isElder ? "#dcdcdc" : HAIR[(lk >> 5) % HAIR.length];
+      const hair = isElder ? "#dcdcdc" : (person.hairCol || HAIR[(lk >> 5) % HAIR.length]);
       // 年齢で体格が変わる（誕生時0.55→成人で1.0、老人は0.95）。
       const grow = isChild ? (0.55 + 0.45 * (age / LIFE.adult)) : (isElder ? 0.95 : 1);
       const uu = Math.max(1, Math.round(u * grow));
