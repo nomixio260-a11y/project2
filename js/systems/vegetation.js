@@ -58,9 +58,13 @@
     const terr = world.terrain;
     const moist = world.moisture;
     const temp = world.temperature;
-    const season = Game.state.clock.season || Game.SEASONS[0];
+    const clk = Game.state.clock;
+    const season = (clk && clk.season) || Game.SEASONS[0];
     const growth = cfg.vegGrowth * season.growth;
-    const tOff = season.tempOffset;
+    // 長期気候: 多雨は植生容量を上げ、乾燥は枯らす。温暖/寒冷は体感気温を押し引きする。
+    const wetness = clk ? (clk.wetness || 0) : 0;
+    const warmth = clk ? (clk.warmth || 0) : 0;
+    const capClim = 1 + 0.22 * wetness; // 容量への気候補正（多雨で繁茂・乾燥で痩せる）
 
     const y0 = this.cursor;
     const y1 = Math.min(H, y0 + cfg.vegBandRows);
@@ -72,32 +76,45 @@
         const cap = baseCapacity(t);
         if (cap <= 0) continue; // 植生不能タイル
 
-        // 容量へ向けて成長（湿度で容量を変調）。
+        // 容量へ向けて成長（湿度＋長期気候で容量を変調）。
         const m = moist[i];
-        const localCap = cap * (0.55 + 0.45 * m);
+        let localCap = cap * (0.55 + 0.45 * m) * capClim;
+        if (localCap > 1) localCap = 1;
         let v = f[i];
         v += (localCap - v) * growth;
         if (v > 1) v = 1; else if (v < 0) v = 0;
         f[i] = v;
 
-        // 体感気温（季節補正込み）。
-        const et = temp[i] + tOff;
+        // 生物群系の判定には「長期気候」の体感気温を使う（季節の寒暖では生物群系は
+        //   変わらない＝毎冬ツンドラ化するような暴走を防ぐ）。季節は成長率にのみ効く。
+        //   bt: 基準気温＋長期の温暖/寒冷のうねり。気候のエポックで境界が緩やかに動く。
+        const bt = temp[i] + warmth * 0.2;
 
-        // 地形遷移（植生密度と気候に応じた自然変化）。
+        // 地形遷移（植生密度と長期気候に応じた自然変化）:
+        //   温暖多雨は森林・密林を広げ、寒冷化は凍土を、灼熱乾燥は砂漠を広げる。
         let nt = t;
         if (t === T.SCORCHED) {
           if (v > 0.3) nt = T.GRASS; // 焼け地の回復
         } else if (t === T.SAND) {
           // 十分に湿った砂地のみ草地化（乾いた砂浜・砂漠周縁は砂のまま）。
-          if (v > 0.55 && m >= th.forestMoisture && et > th.cold && et < th.hot) nt = T.GRASS;
+          if (v > 0.55 && m >= th.forestMoisture && bt > th.cold && bt < th.hot) nt = T.GRASS;
         } else if (t === T.GRASS) {
-          if (v > 0.82 && m >= th.forestMoisture && et > th.cold && et < th.hot) nt = T.FOREST;
+          if (bt < th.cold - 0.04) nt = T.TUNDRA;                           // 寒冷化で凍土へ
+          else if (bt > th.hot + 0.02 && m < th.desertMoisture) nt = T.SAVANNA; // 高温乾燥で疎林化
+          else if (v > 0.82 && m >= th.forestMoisture && bt < th.hot) nt = T.FOREST;
         } else if (t === T.SAVANNA) {
-          if (v > 0.85 && m >= th.jungleMoisture && et > th.hot) nt = T.JUNGLE;
+          if (v > 0.85 && m >= th.jungleMoisture && bt > th.hot) nt = T.JUNGLE;
+          else if (v < 0.25 && m < th.desertMoisture && bt > th.hot + 0.02) nt = T.DESERT; // 砂漠化
+          else if (bt < th.hot - 0.04 && m >= th.forestMoisture) nt = T.GRASS; // 冷涼・湿潤化で草地へ
         } else if (t === T.FOREST) {
-          if (v < 0.18) nt = T.GRASS; // 立ち枯れ
+          if (v < 0.18) nt = T.GRASS;                                       // 立ち枯れ
+          else if (bt < th.cold - 0.04) nt = T.TUNDRA;                      // 寒冷化
         } else if (t === T.JUNGLE) {
           if (v < 0.2) nt = T.SAVANNA;
+        } else if (t === T.DESERT) {
+          if (m >= th.forestMoisture && bt < th.hot) nt = T.SAVANNA;        // 緑化（雨で甦る）
+        } else if (t === T.TUNDRA) {
+          if (bt > th.cold + 0.02) nt = T.GRASS;                            // 温暖化で解ける（植生量は問わない）
         }
 
         if (nt !== t) {

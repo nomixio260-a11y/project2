@@ -1434,8 +1434,12 @@
       const fert = Game.state.vegetation ? (0.55 + 0.55 * this._landFertility(ka)) : 1; // 0.55〜1.1
       const season = Game.state.clock && Game.state.clock.season;
       const seasonF = season ? (0.55 + 0.45 * season.growth) : 1; // 冬≈0.66 夏≈1.16
+      // 長期気候: 多雨で実り、乾燥で痩せる。温暖は概ね恵み（平均0中心なので経済の均衡は不変、
+      //   ただし「豊穣の時代／旱魃の時代」という起伏を作る）。植生のある環境でのみ反映。
+      const clk = Game.state.clock;
+      const climF = Game.state.vegetation && clk ? (1 + 0.3 * (clk.wetness || 0) + 0.1 * (clk.warmth || 0)) : 1;
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
-        res.fish * CP.foodFish + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * order;
+        res.fish * CP.foodFish + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order;
       const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary;
