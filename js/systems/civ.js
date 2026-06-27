@@ -1077,6 +1077,7 @@
       winner.humanCount++; winner.roleCount[o.role]++;
     }
     this._logEvent("🏰 " + winner.name + " が " + loser.name + " の都市を併合した");
+    this._fuse(winner, loser); // 被征服文明の技術・信仰を取り込む（融合）
     if (loser.cities.length === 0 || loser.tileCount <= 0) {
       loser.alive = false;
       this._logEvent("☠ " + loser.name + " が滅亡した");
@@ -1088,6 +1089,116 @@
     ka.allies[b] = true; kb.allies[a] = true;
     delete ka.wars[b]; delete kb.wars[a];
     this._setRel(a, b, 70);
+  };
+
+  // ===== 文明の文化交流・同化・融合 =====
+  // 文明どうしは接触（隣国・交易・同盟・征服）を通じて影響し合い、自国の時代や流儀に
+  // 合わない技術・宗教・政体さえ「何らかの理由で」取り込む。
+  //  - 受容度(openness): 商業的・同盟・相手が強大で成功しているほど外来を受け入れる。
+  //  - 技術伝播: 後進国は接触する先進国の技を模倣し、時代に先んじても直接借用する。
+  //  - 宗教/政体の迎合: 栄える隣国・盟主に倣い、合わなくても改宗・政体移行が起きる。
+  //  - 征服の融合: 併合・征服した相手の技術や信仰を逆に取り込む（被征服文化の浸透）。
+
+  // 相手(other)の文化をどれだけ受け入れるか。商業的・同盟・相手の繁栄で高まる。
+  CivSystem.prototype._openness = function (k, other, allied) {
+    let o = 0.5 * this._eff(k, "trade");           // 商業的な文明ほど開放的
+    if (allied) o *= 1.6;                           // 同盟は交流が密
+    // 相手が大きく富み進んでいる＝文化的な引力（憧れ・権威への迎合）。
+    const mine = k.humanCount + k.wealth * 0.04 + k.tech + 1;
+    const theirs = other.humanCount + other.wealth * 0.04 + other.tech;
+    o *= Math.min(2.4, 0.5 + theirs / mine * 0.7);
+    return o;
+  };
+
+  // recv が donor の持つ未獲得技術を、接触ゆえに直接取り込む（時代に先んじても）。
+  // 「時代的に合わなくても」借用できるのが要点（模倣・亡命者・交易による伝播）。
+  CivSystem.prototype._adoptTech = function (recv, donor, openness) {
+    if (!donor.techBits) return;
+    for (let ti = 0; ti < TECHS.length; ti++) {
+      const T = TECHS[ti];
+      if (!donor.techBits[T.id] || recv.techBits[T.id]) continue;
+      const ahead = recv.tech < T.at;                // 自国の時代より早い借用か
+      const chance = (ahead ? 0.05 : 0.13) * Math.min(2.5, openness);
+      if (this.rand() < chance) {
+        recv.techBits[T.id] = true;
+        recv.discovered.push(T.name);
+        if (recv.tech < T.at) recv.tech = T.at * 0.85; // 借用で底上げ（完全な自力到達ではない）
+        this._logEvent("📜 " + recv.name + " が " + donor.name + " から「" + T.name + "」を" +
+          (ahead ? "時代に先んじて" : "") + "取り入れた");
+        return; // 1評価につき1件まで
+      }
+    }
+  };
+
+  // 接触する2文明の文化交流（技術・宗教・政体の伝播と迎合）。
+  CivSystem.prototype._culturalExchange = function (a, b, ka, kb) {
+    const allied = !!ka.allies[b];
+    const trading = !!(ka.partners && ka.partners[b]);
+    if (!this._isNeighbor(ka, b) && !allied && !trading) return; // 接触が無ければ交流しない
+    const oab = this._openness(ka, kb, allied); // ka が kb を受け入れる度合い
+    const oba = this._openness(kb, ka, allied);
+
+    // 技術伝播: 後進国は先進国へ緩やかに追いつき、時に時代を超えて技を借用する。
+    const adv = ka.tech >= kb.tech ? ka : kb;
+    const bwd = ka.tech >= kb.tech ? kb : ka;
+    if (adv.tech > bwd.tech + 4) {
+      const oBwd = bwd === ka ? oab : oba;
+      bwd.tech += (adv.tech - bwd.tech) * 0.03 * Math.min(2, oBwd); // 模倣による追い上げ
+      this._adoptTech(bwd, adv, oBwd);
+    }
+
+    // 宗教の迎合・伝播: 権威ある／栄える相手の信仰へ、合わなくても改宗しうる。
+    if (ka.religion !== kb.religion) {
+      if (this.rand() < 0.035 * oab * this._eff(kb, "faith")) {
+        ka.religion = kb.religion;
+        this._logEvent("☽ " + ka.name + " が " + kb.name + " に倣い " + kb.religion + " に改宗した");
+      } else if (this.rand() < 0.035 * oba * this._eff(ka, "faith")) {
+        kb.religion = ka.religion;
+        this._logEvent("☽ " + kb.name + " が " + ka.name + " に倣い " + ka.religion + " に改宗した");
+      }
+    }
+
+    // 政体の迎合: 不振の国が、際立って栄える別政体の相手に倣って政体を変える（合わずとも）。
+    this._emulateGov(ka, kb, oab);
+    this._emulateGov(kb, ka, oba);
+  };
+
+  // 不振の国 k が、明らかに繁栄する別政体の相手 other に倣って政体を移行する。
+  CivSystem.prototype._emulateGov = function (k, other, openness) {
+    if (k.gov === other.gov) return;
+    const better = (other.wealth + other.tech * 4) > (k.wealth + k.tech * 4) * 1.6;
+    if (!better) return;
+    if (k.unrest < 45 && k.humanCount >= other.humanCount * 0.8) return; // 安定・互角なら現状維持
+    if (this.rand() < 0.04 * Math.min(2, openness)) {
+      const gi = GOV_TYPES.indexOf(other.gov);
+      if (gi >= 0) {
+        k.gov = other.gov; k.govMod = GOV_MODS[gi];
+        k.unrest = Math.min(100, k.unrest + 6); // 改革の動揺
+        this._logEvent("⚖ " + k.name + " が " + other.name + " に倣い " + other.gov + " へ移行した");
+      }
+    }
+  };
+
+  // 征服・併合での融合: 勝者が被征服文明の技術・信仰を取り込む（被征服文化の浸透）。
+  CivSystem.prototype._fuse = function (winner, loser) {
+    // 技術の捕獲: 敗者が持ち勝者に無い技を、亡命する学者・職人がもたらす。
+    if (loser.techBits) {
+      for (let ti = 0; ti < TECHS.length; ti++) {
+        const T = TECHS[ti];
+        if (loser.techBits[T.id] && !winner.techBits[T.id] && this.rand() < 0.5) {
+          winner.techBits[T.id] = true;
+          winner.discovered.push(T.name);
+          if (winner.tech < T.at) winner.tech = T.at * 0.9;
+          this._logEvent("📜 " + winner.name + " が " + loser.name + " の「" + T.name + "」を受け継いだ");
+        }
+      }
+    }
+    // 信仰の浸透: 大きな被征服民は、むしろ征服者の信仰を塗り替えることがある（取り込まれる）。
+    if (winner.religion !== loser.religion &&
+        loser.humanCount > winner.humanCount * 0.6 && this.rand() < 0.3) {
+      winner.religion = loser.religion;
+      this._logEvent("☽ " + winner.name + " は征服した " + loser.name + " の " + loser.religion + " に染まった");
+    }
   };
 
   // ===== 交易（取引）と市場 =====
@@ -1401,11 +1512,13 @@
         if (!kb || !kb.alive) continue;
         const rel = ka.relations[b];
 
-        // 文化的影響: 国力で勝る国の宗教が広まる（敬虔さ・政体で強まる）。
+        // 文化交流・同化: 接触する文明どうしが技術・宗教・政体を伝え合い、合わなくても
+        // 何らかの理由で一部を取り込む（迎合・融合）。国力で勝る国の宗教も依然広まる。
         if (ka.religion !== kb.religion) {
           if (ka.humanCount > kb.humanCount * 1.6 && this.rand() < 0.1 * this._eff(ka, "faith")) kb.religion = ka.religion;
           else if (kb.humanCount > ka.humanCount * 1.6 && this.rand() < 0.1 * this._eff(kb, "faith")) ka.religion = kb.religion;
         }
+        this._culturalExchange(a, b, ka, kb);
 
         // 疫病の伝播: 流行国に国境を接する隣国へ広がる。
         if (this._isNeighbor(ka, b)) {
@@ -2552,6 +2665,7 @@
                 other.cities.splice(c, 1);
                 captured.capital = false;
                 k.cities.push(captured);
+                this._fuse(k, other); // 占領した都市の文明（技術・信仰）を取り込む（融合）
                 if (other.cities.length === 0) {
                   other.alive = false; // 最後の都市を失い国家崩壊
                   this._logEvent("☠ " + other.name + " が " + k.name + " に征服された");
