@@ -68,10 +68,23 @@
         if (d < bcd) { bcd = d; bc = k; }
       }
     }
-    // 近い人を優先。少し離れていれば近くの町（国）。さらに緩めて人。
+    // 最寄りの野生生物（エンティティ）。
+    let be = -1, bed = 1e9;
+    const ents = Game.state.entities;
+    if (ents) {
+      for (let i = 0; i < ents.count; i++) {
+        if (!ents.alive[i]) continue;
+        const dx = ents.x[i] - cxp, dy = ents.y[i] - cyp, d = dx * dx + dy * dy;
+        if (d < bed) { bed = d; be = i; }
+      }
+    }
+
+    // 選択の優先順位: ごく近い人 → 近い野生生物 → 近くの町(国) → 少し離れた人。
     if (bp && bpd < 1.8 * 1.8) this.sel = { kind: "person", ref: bp };
+    else if (be >= 0 && bed < 1.8 * 1.8) this.sel = { kind: "creature", idx: be };
     else if (bc && bcd < 6 * 6) this.sel = { kind: "nation", id: bc.id };
     else if (bp && bpd < 4 * 4) this.sel = { kind: "person", ref: bp };
+    else if (be >= 0 && bed < 4 * 4) this.sel = { kind: "creature", idx: be };
     else { this.clear(); return; }
 
     this.el.classList.add("show");
@@ -113,6 +126,14 @@
         const c = k ? k.color : [150, 140, 122];
         color = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
       }
+    } else if (this.sel.kind === "creature") {
+      const ents = Game.state.entities;
+      const i = this.sel.idx;
+      if (!ents || !ents.alive[i]) dead = true;
+      else {
+        sx = ents.x[i]; sy = ents.y[i];
+        color = ents.type[i] === Game.SPECIES.PREDATOR ? "rgb(220,90,74)" : "rgb(216,192,116)";
+      }
     } else {
       const k = civ.kingdoms[this.sel.id];
       if (!k || !k.alive) dead = true;
@@ -138,6 +159,29 @@
 
   Inspector._render = function (dead) {
     const civ = Game.state.civ;
+    if (this.sel.kind === "creature") {
+      const ents = Game.state.entities;
+      const i = this.sel.idx;
+      if (dead || !ents || !ents.alive[i]) {
+        this.titleEl.textContent = "🐾 ある生き物";
+        this.bodyEl.innerHTML = '<div class="insp-dead">この生き物は息絶えました。</div>';
+        return;
+      }
+      const pred = ents.type[i] === Game.SPECIES.PREDATOR;
+      const young = (ents.age[i] || 0) < 140; // creatures.js の youngAge と対応
+      const gene = ents.gene[i] || 1;
+      const build = gene >= 1.12 ? "大柄" : gene <= 0.88 ? "小柄" : "中肉";
+      const hp = Math.round(Math.max(0, Math.min(1, ents.energy[i])) * 100);
+      const thirst = Math.round(Math.max(0, Math.min(1, ents.thirst[i] || 0)) * 100);
+      this.titleEl.textContent = (pred ? "🐺 " : "🦌 ") + (pred ? "肉食動物" : "草食動物");
+      this.bodyEl.innerHTML =
+        row("種別", pred ? "捕食者（狩りをする）" : "草食獣（草を食む）") +
+        row("成長", young ? "仔" : "成獣") +
+        row("体格", build + "（遺伝 " + gene.toFixed(2) + "）") +
+        bar("活力", hp, false) +
+        bar("渇き", thirst, true);
+      return;
+    }
     if (this.sel.kind === "person") {
       const p = this.sel.ref;
       if (dead) {
