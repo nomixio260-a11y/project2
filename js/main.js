@@ -129,6 +129,7 @@
     if (Game.inspector) Game.inspector.init();
     if (Game.settings) Game.settings.init();
     if (Game.overview) Game.overview.init();
+    if (Game.mapview) Game.mapview.init();
     if (Game.toasts) Game.toasts.init();
     if (Game.help) Game.help.init();
 

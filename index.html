@@ -25,6 +25,14 @@
     </div>
     <div class="topbar-right">
       <span id="clock" class="topbar-clock">🌸 春 1年 1日</span>
+      <select id="mapview" class="topbar-select" title="地図の表示区分" aria-label="地図の表示区分">
+        <option value="nation">🗺 文明</option>
+        <option value="gov">🏛 政体</option>
+        <option value="religion">☽ 宗教</option>
+        <option value="dynasty">👑 王朝</option>
+        <option value="culture">🎭 文化</option>
+        <option value="era">⏳ 時代</option>
+      </select>
       <button id="overview-toggle" class="topbar-btn" title="世界の概観" aria-label="世界の概観">📊</button>
       <button id="settings-toggle" class="topbar-btn" title="設定" aria-label="設定">⚙</button>
     </div>
@@ -68,6 +76,9 @@
   <!-- インスペクタ（inspector.js が中身を生成。調べるツールで人/国を選択） -->
   <div id="inspector" class="inspector panel"></div>
 
+  <!-- 地図ビューの凡例（mapview.js が中身を生成。区分ビュー選択時に表示） -->
+  <div id="mapview-legend" class="mapview-legend"></div>
+
   <!-- ミニマップ（minimap.js が描画） -->
   <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
 
@@ -103,6 +114,7 @@
   <script src="js/ui/inspector.js"></script>
   <script src="js/ui/settings.js"></script>
   <script src="js/ui/overview.js"></script>
+  <script src="js/ui/mapview.js"></script>
   <script src="js/ui/toasts.js"></script>
   <script src="js/ui/help.js"></script>
   <script src="js/engine/engine.js"></script>

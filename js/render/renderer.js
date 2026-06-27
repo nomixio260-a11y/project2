@@ -115,7 +115,7 @@
     else if (y > 0 && owner[(y - 1) * W + x] !== id) edge = true;
     else if (y < H - 1 && owner[(y + 1) * W + x] !== id) edge = true;
     if (!edge) { bctx.clearRect(x, y, 1, 1); return; }
-    const c = civ.colorOf(id);
+    const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
     if (!c) { bctx.clearRect(x, y, 1, 1); return; }
     // 視認性のため明るめに。
     const br = function (v) { return Math.min(255, (v * 1.25 + 40) | 0); };
@@ -137,7 +137,7 @@
       if (id === 0 || !civ) {
         tctx.clearRect(x, y, 1, 1);
       } else {
-        const c = civ.colorOf(id);
+        const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
         if (c) {
           tctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
           tctx.fillRect(x, y, 1, 1);
@@ -153,6 +153,25 @@
       if (y < H - 1) this._updateBorderAt(x, y + 1, civ);
     }
     this.territoryDirty.length = 0;
+  };
+
+  // 領土・国境を全タイル塗り直す（地図ビュー＝区分の切替時に呼ぶ）。
+  Renderer.prototype.repaintTerritory = function () {
+    const world = this.world, civ = Game.state.civ;
+    const W = world.width, H = world.height, owner = world.owner;
+    const tctx = this.territoryCtx, bctx = this.borderCtx;
+    tctx.clearRect(0, 0, W, H);
+    if (bctx) bctx.clearRect(0, 0, W, H);
+    if (!civ) return;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const id = owner[y * W + x];
+        if (id === 0) continue;
+        const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
+        if (c) { tctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")"; tctx.fillRect(x, y, 1, 1); }
+      }
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) this._updateBorderAt(x, y, civ);
   };
 
   // 1タイルの陰影係数。標高＋北西から当たる光による起伏の立体感（レリーフ）＋
