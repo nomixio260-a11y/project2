@@ -360,6 +360,65 @@
     return k ? k.color : null;
   };
 
+  // ===== 地図ビュー（区分の可視化）=====
+  // 政体・宗教・時代ごとの配色。区分が同じ国は同じ色で塗られ、勢力図が一目で分かる。
+  const GOV_COLORS = [
+    [196, 88, 72],   // 君主制（赤）
+    [78, 150, 210],  // 共和制（青）
+    [200, 150, 60],  // 部族連合（橙）
+    [150, 110, 210], // 神権制（紫）
+    [90, 180, 120],  // 氏族制（緑）
+  ];
+  const REL_COLORS = [
+    [230, 190, 70], [150, 170, 220], [110, 180, 110],
+    [120, 210, 200], [200, 130, 90], [180, 140, 220],
+  ];
+  const ERA_COLORS = [
+    [120, 110, 96], [150, 120, 80], [120, 140, 160],
+    [200, 180, 110], [150, 170, 200], [220, 210, 160],
+  ];
+  // 文字列（家名）から決定的に色を作る（王朝ビュー: 同じ王朝＝同じ色）。
+  function hashColor(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+    const hue = h % 360, c = 150, l = 110;
+    // 簡易 HSL→RGB（彩度・明度は固定で見やすく）。
+    const k = hue / 60, x = c * (1 - Math.abs((k % 2) - 1));
+    let r = 0, g = 0, b = 0;
+    if (k < 1) { r = c; g = x; } else if (k < 2) { r = x; g = c; } else if (k < 3) { g = c; b = x; }
+    else if (k < 4) { g = x; b = c; } else if (k < 5) { r = x; b = c; } else { r = c; b = x; }
+    return [(r + l) | 0, (g + l) | 0, (b + l) | 0];
+  }
+  // 文化値(0..1)を冷→暖のグラデーションに（文化ビュー: 近い文化＝近い色）。
+  function cultureColor(v) {
+    v = v < 0 ? 0 : v > 1 ? 1 : v;
+    return [(80 + v * 160) | 0, (120 + (0.5 - Math.abs(v - 0.5)) * 120) | 0, (220 - v * 150) | 0];
+  }
+
+  // 現在の地図ビューに応じた国 id の表示色。renderer が領土の塗りに用いる。
+  CivSystem.prototype.viewColorOf = function (id) {
+    const k = this.kingdoms[id];
+    if (!k) return null;
+    const mode = (Game.state && Game.state.mapView) || "nation";
+    if (mode === "gov") return GOV_COLORS[GOV_TYPES.indexOf(k.gov)] || k.color;
+    if (mode === "religion") return REL_COLORS[RELIGIONS.indexOf(k.religion)] || k.color;
+    if (mode === "era") { let i = (k.tech / TECH_PER_ERA) | 0; if (i >= ERA_COLORS.length) i = ERA_COLORS.length - 1; if (i < 0) i = 0; return ERA_COLORS[i]; }
+    if (mode === "dynasty") return k.dynasty ? hashColor(k.dynasty) : k.color;
+    if (mode === "culture") return cultureColor(k.cultureAvg == null ? 0.5 : k.cultureAvg);
+    return k.color; // nation（既定）
+  };
+
+  // 現在のビューの凡例（UI用）: [{label, color}]。
+  CivSystem.prototype.viewLegend = function (mode) {
+    mode = mode || (Game.state && Game.state.mapView) || "nation";
+    const out = [];
+    if (mode === "gov") for (let i = 0; i < GOV_TYPES.length; i++) out.push({ label: GOV_TYPES[i], color: GOV_COLORS[i] });
+    else if (mode === "religion") for (let i = 0; i < RELIGIONS.length; i++) out.push({ label: RELIGIONS[i], color: REL_COLORS[i] });
+    else if (mode === "era") for (let i = 0; i < ERAS.length; i++) out.push({ label: ERAS[i], color: ERA_COLORS[i] });
+    else if (mode === "culture") { out.push({ label: "文化 A", color: cultureColor(0.1) }); out.push({ label: "中間", color: cultureColor(0.5) }); out.push({ label: "文化 B", color: cultureColor(0.9) }); }
+    return out;
+  };
+
   const NAME_A = ["Ar", "Bel", "Cor", "Dra", "El", "Fen", "Gor", "Hal", "Ish", "Kor", "Lor", "Mor", "Nor", "Or", "Per", "Quel", "Rho", "Syl", "Tor", "Ul", "Var", "Wyn", "Xan", "Yor", "Zar"];
   const NAME_B = ["a", "e", "i", "o", "u", "ae", "ia", "or", "en", "an"];
   const NAME_C = ["dor", "gard", "heim", "land", "mar", "nia", "ria", "thal", "vale", "wick", "stead", "moor", "fell", "reach"];
@@ -784,8 +843,9 @@
       h.food -= CP.metab;
       h.social += CP.socialRise;
       if (h.repro > 0) h.repro--;
-      // 民心の集計（社会→国家の因果: 平均的な機嫌が不満に跳ね返る）。
+      // 民心・文化の集計（社会→国家の因果＋地図の文化ビュー用）。
       k._moodS = (k._moodS || 0) + h.mood; k._moodN = (k._moodN || 0) + 1;
+      k._cultS = (k._cultS || 0) + (h.culture == null ? 0.5 : h.culture);
       // 最も名高い人物を追う（国を代表する英傑・賢人）。
       if ((h.prestige || 0) > (k._topP || 0)) { k._topP = h.prestige; k._topRef = h; }
 
@@ -854,6 +914,7 @@
       if (k._moodN) {
         const avg = k._moodS / k._moodN;
         k.moodAvg = avg;
+        k.cultureAvg = k._cultS / k._moodN; // 国の平均的な文化（地図の文化ビュー用）
         k.unrest = (k.unrest || 0) + (0.55 - avg) * 0.05;
         if (k.unrest < 0) k.unrest = 0; else if (k.unrest > 100) k.unrest = 100;
       }
@@ -863,7 +924,7 @@
       } else if (k.figure && (!k._topRef || !k._topRef.alive)) {
         k.figure = null;
       }
-      k._moodS = 0; k._moodN = 0; k._topP = 0; k._topRef = null;
+      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._topP = 0; k._topRef = null;
     }
 
     // 出生を追加。
