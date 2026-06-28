@@ -121,6 +121,42 @@
     dangerR: 6,          // 記憶した危険地を避ける半径
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
     aspireFamily: 1.4,   // 家族の志を持つ者の繁殖意欲
+    aspireCreate: 1.5,   // 創造の志を持つ者の閃きの起きやすさ
+    // 創造（個の閃き＝文明の自律進化）。人が自ら工夫・発明・作品を生み、その知が国に
+    //   蓄積して技術・工芸・文化を押し上げる。閃きは創造性×知×練度×心の余裕と、交流・
+    //   平穏・余裕・文字といった環境から創発する（系が強いるのではなく人から湧く）。
+    insightBase: 0.0011,  // 1回の熟考で閃きが訪れる基準確率
+    insightTech: 0.32,    // 平凡な閃き1つが国の知の蓄積(insight)へ寄せる量
+    insightCap: 7.0,      // 1評価あたり蓄積された知が技術へ転化する上限（暴走防止）
+    insightFame: 0.07,    // 閃き1つで創造者が得る名声
+    insightCraftCap: 0.14, // 工人の閃きが工芸目標へ寄せる上限
+    breakthroughChance: 0.018, // 閃きのうち画期的な発明となる確率（高創造ほど起きやすい）
+    breakthroughTech: 6.5,  // 画期的発明が国の知へ与える跳躍
+    breakthroughFame: 3.2,  // 画期的発明で創造者が得る名声
+    artChance: 0.02,      // 閃きのうち不朽の傑作（作品）となる確率
+    artFame: 2.4,         // 傑作で創造者が得る名声
+    artCalm: 1.1,         // 傑作が国の不満を和らげる量（文化の結束）
+    // 革新(innovation): 創造が分野ごとの永続的な「強み」として国に根づく。6分野
+    //   (技術/工芸/商/農/軍/文化)それぞれに 0..1 の水準があり、平凡な閃きで僅かに、
+    //   画期的発明で大きく高まる。各分野は具体的な恩恵（研究・生産・交易・食料・軍・
+    //   結束）を国にもたらし、創造が文明を広く形づくる。維持されねば緩やかに薄れる。
+    innovGain: 0.006,     // 平凡な閃きが分野水準を高める量（×創造力）
+    innovBreak: 0.07,     // 画期的発明が分野水準を高める量
+    innovDecay: 0.997,    // 維持されぬ革新が1評価ごとに薄れる係数
+    innovTechW: 0.45,     // 技術革新→研究速度
+    innovCraftW: 0.30,    // 工芸革新→工芸力
+    innovTradeW: 0.28,    // 商業革新→富
+    innovFoodW: 0.24,     // 農業革新→食料
+    innovWarW: 0.22,      // 軍事革新→軍事力
+    innovArtW: 2.6,       // 文化革新→不満の緩和
+    innovArtFaithW: 0.12, // 文化革新→信仰
+    innovSpread: 0.05,    // 接触する文明へ革新が伝播する速さ（知は世界へ広がる）
+    // 名声(renown): 不朽の傑作が国にもたらす文化的威信。世界に知られ、諸国の敬意を
+    //   集め（外交が和らぐ）、国民の誇りとなって結束を生む。語り継がれ緩やかに薄れる。
+    renownGain: 1.0,      // 傑作1つが国の文化的威信へ与える量
+    renownDecay: 0.992,   // 文化的威信が1評価ごとに薄れる係数
+    renownCalm: 0.04,     // 文化的威信が国の不満を和らげる係数
+    renownDiplo: 0.018,   // 文化的威信が外交の友好へ寄与する係数
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
     cellSize: 6,
@@ -166,6 +202,8 @@
     warPressure: 0.55,   // 土地不足の隣国どうしは領土紛争で開戦しやすい
     maxAllies: 3,        // 1国が結べる同盟の上限（同盟の乱立を防ぐ）
     reignSpan: 1500,     // 君主の標準的な治世（これを超えると代替わりしうる）
+    // 黄金時代・暗黒時代は固定の発生確率や持続期間を持たない。実測の活力(fortune)が
+    //   持続して閾値を越えたときに「認識」されるだけで、興亡は既存の因果系が生み出す。
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
@@ -394,13 +432,15 @@
   }
   // 志（人生の長期目標）: 最も際立つ素質から定まる生き方。行動の持続的な偏りになる。
   //   0=立身(均衡・出世) 1=武功(勇) 2=探求(知) 3=蓄財(勤) 4=家族(社交)。
-  const ASPIRE_NAMES = ["立身", "武功", "探求", "蓄財", "家族"];
+  //   5=創造(閃き) … 工夫・発明・作品を生み、文明を自ら推し進める生き方。
+  const ASPIRE_NAMES = ["立身", "武功", "探求", "蓄財", "家族", "創造"];
   function pickAspire(h) {
     let best = 0, bv = 1.08;
     if ((h.brave || 1) > bv) { bv = h.brave; best = 1; }
     if ((h.wit || 1) > bv) { bv = h.wit; best = 2; }
     if ((h.dili || 1) > bv) { bv = h.dili; best = 3; }
     if ((h.synSoc || 1) > bv) { bv = h.synSoc; best = 4; }
+    if ((h.creat || 1) > bv) { bv = h.creat; best = 5; }
     return best;
   }
   // 生まれたばかり/置かれたばかりの人に内面を授ける。親(pa,pb)があれば遺伝する。
@@ -411,6 +451,9 @@
     h.brave = heritTrait(rand, pa && pa.brave, pb && pb.brave);
     h.wit = heritTrait(rand, pa && pa.wit, pb && pb.wit);
     h.vigor = heritTrait(rand, pa && pa.vigor, pb && pb.vigor);
+    // 創造性（閃き・独創）: 工夫・発明・作品を生む素質。遺伝し、配偶者選択と名声を通じて
+    //   淘汰を受ける――創造が報われる土地では世代を経て集団が自ずと創造的に進化する。
+    h.creat = heritTrait(rand, pa && pa.creat, pb && pb.creat);
     // ② シナプス配線: 競合する欲求の重みづけ（脳の個性）。遺伝し、選択を受ける。
     //    安全志向 / 食欲 / 社交欲 をどれだけ優先するかが人により異なる。
     h.synSafe = heritTrait(rand, pa && pa.synSafe, pb && pb.synSafe);
@@ -513,6 +556,25 @@
     return "名士";
   }
   const FAME_THRESHOLD = 6; // この名声を超えると「名のある人物」として歴史に刻まれる
+  // 創造の産物の名。領域(発明の分野)ごとに、人が「生み出した」ものを彩る語彙。
+  //   0=技術 1=工芸 2=商 3=農 4=軍 5=文化/芸術。役割・志から領域が定まる。
+  const INVENT_NAMES = [
+    ["灌漑の工夫", "測量の術", "歯車仕掛け", "暦の改良", "梃子の応用", "水車", "滑車装置", "風車"],
+    ["新たな鍛造法", "精巧な意匠", "頑健な工具", "合わせ鋼", "焼入れの妙", "細工物"],
+    ["両替の仕組み", "為替手形", "隊商路の図", "複式の帳簿", "度量衡の統一"],
+    ["輪作の知恵", "新たな農具", "貯蔵の工夫", "品種の選抜", "堆肥の術"],
+    ["連弩の試作", "攻城の機巧", "陣形の編み出し", "鋼の鎧", "狼煙の符牒"],
+    ["叙事詩", "壁画", "聖歌", "彫像", "写本", "舞踏", "神話の編纂"],
+  ];
+  function inventDomain(h) {
+    if (h.aspire === 5) return 5;            // 創造の志は芸術へ傾く
+    if (h.role === ROLE.SMITH) return 1;
+    if (h.role === ROLE.MERCHANT) return 2;
+    if (h.role === ROLE.FARMER) return 3;
+    if (h.role === ROLE.SOLDIER) return 4;
+    if (h.role === ROLE.PRIEST) return 5;
+    return 0;
+  }
   // 親友関係の上限（1人が深く結びつく相手の数）。
   const MAX_BONDS = 4;
 
@@ -1447,7 +1509,9 @@
     const techMul = 1 + (hasTech(k, "bronze") ? 0.15 : 0) + (hasTech(k, "iron") ? 0.2 : 0) + (hasTech(k, "gunpowder") ? 0.5 : 0);
     // 騎兵: 馬を持つ国は機動力で軍事力が増す（上限つき）。
     const cav = 1 + Math.min(0.5, (k.res ? (k.res.horses || 0) : 0) * CP.horseMil);
-    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav;
+    // 軍事革新（兵器・戦術の工夫）で戦力が増す。
+    const innovMil = 1 + ((k.innov && k.innov[4]) || 0) * CP.innovWarW;
+    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -1636,6 +1700,19 @@
       const oBwd = bwd === ka ? oab : oba;
       bwd.tech += (adv.tech - bwd.tech) * 0.03 * Math.min(2, oBwd); // 模倣による追い上げ
       this._adoptTech(bwd, adv, oBwd);
+    }
+
+    // 革新の伝播: 創造の成果（分野ごとの強み）は、接触する文明へ広まっていく。各分野で
+    //   水準の低い側が高い側へ歩み寄る――知は国境を越えて世界へ広がり、創造が一国に
+    //   留まらず文明圏全体を押し上げる（交易・同盟ほど速く伝わる）。
+    if (ka.innov || kb.innov) {
+      const ia = ka.innov || (ka.innov = [0, 0, 0, 0, 0, 0]);
+      const ib = kb.innov || (kb.innov = [0, 0, 0, 0, 0, 0]);
+      const sp = CP.innovSpread;
+      for (let d = 0; d < 6; d++) {
+        if (ia[d] > ib[d]) ib[d] += (ia[d] - ib[d]) * sp * Math.min(2, oba);
+        else if (ib[d] > ia[d]) ia[d] += (ib[d] - ia[d]) * sp * Math.min(2, oab);
+      }
     }
 
     // 宗教の迎合・伝播: 権威ある／栄える相手の信仰へ、合わなくても改宗しうる。
@@ -2001,16 +2078,43 @@
       const king = ka.rulerRef;
       const kingDili = king && king.alive ? (0.7 + 0.3 * (king.dili || 1)) : 1;
       const kingWit = king && king.alive ? (0.7 + 0.3 * (king.wit || 1)) : 1;
-      // 工芸力: 鍛冶場・鍛冶職人・金属・進んだ冶金（青銅/鉄）で育つ「ものづくりの力」。
+      // 黄金時代・暗黒時代は系が強制するものではなく、いくつもの因果（富・治安・人口・平和・
+      //   統治者の資質）が重なって生じる「状態」である。ここではそれらの実測値から緩やかな
+      //   活力(fortune)を導き、持続した高揚・沈滞をヒステリシス付きで「認識」して年代記に
+      //   刻むのみ――産出には一切の人為補正をかけない。盛衰は既存の因果系がそのまま生み出す。
+      const cap = this._capacity(ka);
+      const able = king && king.alive ? ((king.wit || 1) + (king.dili || 1)) * 0.5 : 0.9;
+      const fWar = this._count(ka.wars);
+      const wealthN = clamp01(ka.wealth / Math.max(1, ka.tileCount) / 0.9);
+      const orderN = clamp01((order - 0.5) * 2);
+      const popN = clamp01(ka.humanCount / Math.max(1, cap));
+      const peaceN = fWar === 0 ? 1 : clamp01(1 - fWar * 0.4);
+      const leaderN = clamp01((able - 0.7) / 0.6);
+      const crisisN = (ka.famine ? 0.22 : 0) + (ka.plague > 0 ? 0.18 : 0);
+      const fRaw = clamp01(wealthN * 0.26 + orderN * 0.24 + popN * 0.16 + peaceN * 0.18 + leaderN * 0.16 - crisisN);
+      // 緩やかな指数平滑（瞬間値ではなく持続した状態を映す＝自然なヒステリシス）。
+      ka.fortune = ka.fortune === undefined ? fRaw : ka.fortune + (fRaw - ka.fortune) * 0.12;
+      if (ka.fortune > 0.72) { if (!ka.goldenAge) this._logEvent("✨ " + ka.name + " が黄金時代を迎えた"); ka.goldenAge = 1; ka.darkAge = 0; }
+      else if (ka.fortune < 0.6 && ka.goldenAge) { ka.goldenAge = 0; this._logEvent("　" + ka.name + " の黄金時代が過ぎ去った"); }
+      if (ka.fortune < 0.28) { if (!ka.darkAge) this._logEvent("🌑 " + ka.name + " が暗黒時代に陥った"); ka.darkAge = 1; ka.goldenAge = 0; }
+      else if (ka.fortune > 0.4 && ka.darkAge) { ka.darkAge = 0; this._logEvent("　" + ka.name + " が暗黒時代を脱した"); }
+      // 革新(創造の分野別の強み): 維持されねば緩やかに薄れる。各分野が以下の産出に効く。
+      const innov = ka.innov || (ka.innov = [0, 0, 0, 0, 0, 0]);
+      for (let di = 0; di < 6; di++) if (innov[di] > 0) { innov[di] *= CP.innovDecay; if (innov[di] < 0.001) innov[di] = 0; }
+      // 文化的威信: 不朽の傑作が積もり、語り継がれ緩やかに薄れる（外交・結束に効く）。
+      if (ka.renown > 0) { ka.renown *= CP.renownDecay; if (ka.renown < 0.05) ka.renown = 0; }
+      // 工芸力: 鍛冶場・鍛冶職人・金属・進んだ冶金（青銅/鉄）と工芸革新で育つ「ものづくりの力」。
       const smiths = ka.roleCount[ROLE.SMITH] || 0;
       const metalAvail = (res.ore > 0) || (fac.mine > 0);
       const metalF = metalAvail ? 1 : 0.35;
       let craftTgt = clamp01((fac.smithy * 0.22 + smiths * 0.025) / Math.max(1, ka.cities.length) +
-        (hasTech(ka, "bronze") ? 0.1 : 0) + (hasTech(ka, "iron") ? 0.12 : 0)) * metalF;
+        (hasTech(ka, "bronze") ? 0.1 : 0) + (hasTech(ka, "iron") ? 0.12 : 0) +
+        Math.min(CP.insightCraftCap, ka.craftLore || 0) + innov[1] * CP.innovCraftW) * metalF; // 工人の閃き・工芸革新
+      ka.craftLore = (ka.craftLore || 0) * 0.6; // 蓄えた工夫は緩やかに常態化していく
       ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW);
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -2027,8 +2131,15 @@
         ka.coin *= 0.98; if (ka.coin < 0.01) ka.coin = 0; // 貨幣を未だ持たぬ国（鋳造手段の喪失）
       }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
-      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
+      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech + innov[0] * CP.innovTechW;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
+      // 人々の閃きの蓄積（創造システム）を技術へ転化する。文明は建物だけでなく「人」が進める。
+      //   一評価あたりの転化は上限を設け、人口増による暴走を防ぐ（残りは次評価へ持ち越し）。
+      if (ka.insight > 0) {
+        const conv = Math.min(CP.insightCap, ka.insight);
+        ka.tech += conv * this._eff(ka, "tech") * order;
+        ka.insight -= conv;
+      }
       // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。鍛造の量は燃料(炭=森林)が支える――
       //   炉に火を入れられねば多くは打てない。富からの調達(輸入)は燃料に依らない。治安で増減。
       const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
@@ -2058,17 +2169,17 @@
 
       // 信仰の篤さ: 神殿・記念碑・神官が育み、政体(神権制)・敬虔な君主が増幅する。
       const devote = (fac.temple * 0.4 + fac.wonder * 0.6 + (ka.roleCount[ROLE.PRIEST] || 0) * 0.2) / Math.max(1, ka.cities.length);
-      let faithTgt = clamp01(0.12 + devote * 0.28) * this._eff(ka, "faith");
+      let faithTgt = clamp01(0.12 + devote * 0.28 + innov[5] * CP.innovArtFaithW) * this._eff(ka, "faith");
       if (faithTgt > 1) faithTgt = 1;
       ka.faith = (ka.faith || 0) + (faithTgt - (ka.faith || 0)) * 0.1; // ゆっくり推移
       // 不満: 戦争・過密・貧困で上昇、平和・繁栄・神殿・穀倉・信仰で低下（性格・政体で変調）。
-      const cap = this._capacity(ka);
       let dU = -1.5;
       const warCount = this._count(ka.wars);
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
       dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0) + ka.faith * CP.faithCalm; // 信仰・食料・酒場・漁場・記念碑・法典で安定
+      dU -= innov[5] * CP.innovArtW + (ka.renown || 0) * CP.renownCalm; // 文化革新・文化的威信が国民の誇りと結束を生む
 
       // 食料経済: 農民・農場・漁場・採集で生産し、人口が消費する。穀倉が備蓄上限を上げる。
       // 因果の要: 生産は「土地の肥沃度（=植生。干ばつ・火災・噴火で低下）」と「季節
@@ -2085,7 +2196,7 @@
       const clk = Game.state.clock;
       const climF = Game.state.vegetation && clk ? (1 + 0.3 * (clk.wetness || 0) + 0.1 * (clk.warmth || 0)) : 1;
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
-        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order;
+        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order * (1 + innov[3] * CP.innovFoodW); // 農業革新で増産
       const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary + (res.salt || 0) * CP.saltStore; // 塩で保存（備蓄増）
@@ -2196,6 +2307,9 @@
         // 信仰と外交: 同じ信仰の国は親しみ合い、異教の国とは隔たる（接触下でのみ働く）。
         if (this._isNeighbor(ka, b) || ka.allies[b] || (ka.partners && ka.partners[b])) {
           this._setRel(a, b, ka.relations[b] + (ka.religion === kb.religion ? CP.faithDiploPull : -CP.faithDiploFric));
+          // 文化的威信と外交: 不朽の傑作で世界に名を馳せた国は諸国の敬意を集め、関係が和らぐ。
+          const adm = ((kb.renown || 0) + (ka.renown || 0)) * CP.renownDiplo;
+          if (adm > 0) this._setRel(a, b, ka.relations[b] + adm);
         }
 
         // 疫病の伝播: 流行国に国境を接する隣国へ広がる。
@@ -2773,6 +2887,64 @@
     if (target < 0) target = 0; else if (target > 1) target = 1;
     h.mood += (target - h.mood) * 0.15 - grief;         // ゆっくり推移＋喪失の悲嘆
     if (h.mood < 0) h.mood = 0; else if (h.mood > 1) h.mood = 1;
+
+    // 創造の閃き: 語らい（着想の交換）を経た心から、工夫・発明・作品が生まれうる。
+    this._invent(h, k, company);
+  };
+
+  // 創造（個の閃き）: 人が自ら工夫・発明・作品を生み出す。閃きは個の素質（創造性×知×
+  //   練度×心の余裕）と環境（交流・平穏・余裕・文字）から創発し、生まれた知は国の蓄積
+  //   (k.insight)へ流れ込んで技術・工芸・文化を内側から押し上げる。多くは無名の小さな工夫
+  //   だが、稀に画期的な発明や不朽の傑作が現れ、その名は歴史に刻まれる。これにより文明は
+  //   建物の数ではなく「人」によって自律的に進化し、創造性は名声と配偶者選択を通じて淘汰
+  //   を受ける（創造が報われる地ほど集団が創造的に育つ）。
+  CivSystem.prototype._invent = function (h, k, company) {
+    if (h.age < CP.adultAge) return;            // 創造は成熟した心から
+    const creat = h.creat || 1;
+    // 個の創造力: 創造性が主、知と練度と心の余裕が支える。志が創造なら一段高ぶる。
+    const power = creat * (0.55 + 0.45 * (h.wit || 1)) * (0.3 + 0.7 * (h.skill || 0)) *
+      moodFactor(h.mood) * (h.aspire === 5 ? CP.aspireCreate : 1);
+    // 環境: 人との交わり（着想の交換）・国の多様性・平穏・暮らしの余裕・文字が閃きを育む。
+    const exchange = 1 + Math.min(0.6, (company || 0) * 0.12) + (k.diversity || 0) * 0.5;
+    const ease = (h.food > 0.55 ? 1.15 : 0.8) * (this._count(k.wars) > 0 ? 0.7 : 1) * (k.famine ? 0.5 : 1);
+    const literacy = 1 + (hasTech(k, "writing") ? 0.3 : 0) + (hasTech(k, "printing") ? 0.4 : 0);
+    const spark = CP.insightBase * power * exchange * ease * literacy;
+    if (this.rand() >= spark) return;
+    // 閃きが訪れた。創造はそれ自体が喜びであり、腕を磨き、名を高める。
+    practice(h);
+    h.joy = clamp01((h.joy || 0) + 0.18);
+    h.prestige = (h.prestige || 0) + CP.insightFame * power;
+    const dom = inventDomain(h);
+    const innov = k.innov || (k.innov = [0, 0, 0, 0, 0, 0]);
+    // 生まれた知は国の蓄積（技術）へ。さらに分野ごとの永続的な「強み」(革新)として根づく。
+    k.insight = (k.insight || 0) + CP.insightTech * power;
+    if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.02 * power;
+    innov[dom] = Math.min(1, innov[dom] + CP.innovGain * power);
+    // 画期的発明: 高い創造力ほど起きやすい。国の知と分野の強みを跳ね上げ、創造者は名を刻む。
+    if (this.rand() < CP.breakthroughChance * Math.min(2.5, power)) {
+      k.insight += CP.breakthroughTech * (0.6 + 0.4 * power);
+      if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.06 * power;
+      innov[dom] = Math.min(1, innov[dom] + CP.innovBreak * (0.6 + 0.4 * power));
+      h.prestige += CP.breakthroughFame;
+      const pool = INVENT_NAMES[dom];
+      const name = pool[(this.rand() * pool.length) | 0];
+      h.invention = name;
+      (k.inventions || (k.inventions = [])).push(name);
+      if (k.inventions.length > 12) k.inventions.shift();
+      this._logEvent("💡 " + h.name + "（" + k.name + "）が「" + name + "」を生み出した");
+    } else if (h.aspire === 5 && this.rand() < CP.artChance * Math.min(2.5, power)) {
+      // 不朽の傑作: 文化の強みと国の文化的威信(renown)を高め、不満を和らげ、名を遺す。
+      h.prestige += CP.artFame;
+      if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.artCalm);
+      innov[5] = Math.min(1, innov[5] + CP.innovBreak * (0.5 + 0.4 * power));
+      k.renown = (k.renown || 0) + CP.renownGain;
+      const pool = INVENT_NAMES[5];
+      const name = pool[(this.rand() * pool.length) | 0];
+      h.masterwork = name;
+      (k.artworks || (k.artworks = [])).push(name);
+      if (k.artworks.length > 12) k.artworks.shift();
+      this._logEvent("🎨 " + h.name + "（" + k.name + "）が傑作「" + name + "」を遺した");
+    }
   };
 
   // AI: 欲求と役割を勘案して目標(gx,gy)を決める「熟考」。thinkInterval 毎にのみ実行。
@@ -3316,9 +3488,12 @@
         return o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.age <= CP.elderAge &&
           o.food >= CP.reproFood && o.repro <= 0 && !closeKin(h, o);
       };
-      // ①独身・別血統・健康で素質のある相手（外婚＋性淘汰）。
+      // ①独身・別血統・健康で素質のある相手（外婚＋性淘汰）。健やかさに加え、創意に富み
+      //    名声ある者は配偶者として好まれる――創造性は性淘汰を通じ世代を超えて選ばれる。
       partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
-        return (eligible(o) && !o.partner && o.clan !== h.clan && o.food > 0.65 && (o.vigor || 1) >= 1.0) ? 2 : 0;
+        if (!(eligible(o) && !o.partner && o.clan !== h.clan && o.food > 0.65)) return 0;
+        const merit = (o.vigor || 1) >= 1.0 || (o.creat || 1) >= 1.08 || (o.prestige || 0) >= FAME_THRESHOLD * 0.5;
+        return merit ? 2 : 0;
       }).best;
       // ②独身・別血統。
       if (!partner) partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {

@@ -232,6 +232,8 @@
         if (fr > 0) rel.push("🤝 親友" + fr + "人");
         if (rel.length) html += row("縁", rel.join(" "));
         if ((p.prestige || 0) >= 1) html += row("名声", "★ " + Math.round(p.prestige));
+        if (p.invention) html += row("発明", "💡 「" + esc(p.invention) + "」");
+        if (p.masterwork) html += row("傑作", "🎨 「" + esc(p.masterwork) + "」");
       }
       this.bodyEl.innerHTML = html;
       return;
@@ -253,6 +255,8 @@
       " ・ 鉱石" + (ci.ore ? "有" : "無") + " ・ 炭" + ci.fuel + "）") : null;
     const moneyStr = hasCoin ? ("鋳貨 🪙" + Math.round(k.coin || 0)) : "物々交換";
     this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
+      (k.goldenAge > 0 ? ' <span class="insp-tag good">✨ 黄金時代</span>' : "") +
+      (k.darkAge > 0 ? ' <span class="insp-tag bad">🌑 暗黒時代</span>' : "") +
       (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +
       (k.famine ? ' <span class="insp-tag bad">🌾 飢饉</span>' : "");
     const rmix = civ.raceMixOf ? civ.raceMixOf(k) : [];
@@ -283,6 +287,19 @@
       ((info && info.figure) || k.figure
         ? row("英傑", "★ " + esc((info && info.figure ? info.figure : k.figure).name) + "（" + esc((info && info.figure ? info.figure : k.figure).title) + "）") : "") +
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +
+      (k.inventions && k.inventions.length ? row("発明", "💡 " + esc(k.inventions.slice(-3).join("・"))) : "") +
+      (k.artworks && k.artworks.length ? row("作品", "🎨 " + esc(k.artworks.slice(-3).join("・"))) : "") +
+      (function () {
+        if (!k.innov) return "";
+        const LABELS = ["技術", "工芸", "商業", "農業", "軍事", "文化"];
+        const parts = [];
+        for (let d = 0; d < 6; d++) {
+          const v = k.innov[d] || 0;
+          if (v >= 0.08) parts.push(LABELS[d] + (v >= 0.5 ? "◎" : v >= 0.25 ? "○" : "・"));
+        }
+        return parts.length ? row("革新", esc(parts.join(" "))) : "";
+      })() +
+      ((k.renown || 0) >= 0.5 ? row("威信", "🏛 文化的威信 " + Math.round(k.renown)) : "") +
       (info && (info.wars.length || info.allies.length)
         ? row("外交", (info.wars.length ? "⚔" + info.wars.length + " " : "") + (info.allies.length ? "🤝" + info.allies.length : "")) : "") +
       (function () {
@@ -305,6 +322,7 @@
       { v: p.brave || 1, hi: "勇敢", lo: "臆病" },
       { v: p.wit || 1, hi: "聡明", lo: "純朴" },
       { v: p.vigor || 1, hi: "頑健", lo: "病弱" },
+      { v: p.creat || 1, hi: "独創", lo: "凡庸" },
     ];
     let best = axes[0], bd = 0;
     for (let i = 0; i < axes.length; i++) {

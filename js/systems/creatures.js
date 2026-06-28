@@ -149,9 +149,16 @@
 
     this._buildGrid();
 
-    // 長期気候: 寒冷な時代は基礎代謝が上がり（寒さに耐えるため）個体数が抑えられる。
+    // 気候・季節と生態: 寒い季節・寒冷期ほど基礎代謝が上がって飢えやすく（冬枯れ）、暑い
+    //   ほど渇きが早まる（夏は水場へ集まる）。これで個体数に季節の波が生まれる（現実の生態）。
     const clk = Game.state.clock;
-    const coldF = 1 + Math.max(0, -(clk ? (clk.warmth || 0) : 0)) * 0.5;
+    const seasonOff = (clk && clk.season) ? (clk.season.tempOffset || 0) : 0;
+    const effWarmth = (clk ? (clk.warmth || 0) : 0) + seasonOff;
+    // 種で寒さへの強さが違う: 肉食(毛皮・高活動)は寒さに比較的強く、草食はより堪える。
+    const coldNeg = Math.max(0, -effWarmth);
+    const coldF = 1 + coldNeg * 0.45;                    // 草食基準の寒さ燃費
+    const coldFp = 1 + coldNeg * 0.28;                   // 肉食は寒さに比較的強い
+    const thirstMul = 1 + Math.max(0, effWarmth) * 0.8;  // 暑いほど渇きが早い
     const tickN = this._tickN = (this._tickN || 0) + 1;
     // 植生・炎システムの参照をループ外で1回だけ解決（毎個体の lookup を避ける）。
     const veg = Game.state.vegetation;
@@ -175,7 +182,7 @@
       const gSpd = e.geneSpd[i] || 1;    // 俊敏
       const gSense = e.geneSense[i] || 1; // 感覚
       ageA[i] += 1;
-      energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * coldF; // 大型ほど・寒冷ほど燃費が悪い
+      energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * (type === 0 ? coldF : coldFp); // 大型ほど・寒冷ほど燃費が悪い（肉食は寒さに強い）
 
       const tx = ex[i] | 0, ty = ey[i] | 0;
       const idx = ty * W + tx;
@@ -186,8 +193,8 @@
       // 炎に巻かれると消耗する。
       if (burnArr && burnArr[idx] > 0) energy[i] -= 0.06;
 
-      // 渇き: 進行し、岸（浅瀬隣接）で飲んでリセット。限界で消耗（岸の確認は4ティックに1回）。
-      thirst[i] += P.thirstRate;
+      // 渇き: 進行し（暑いほど早い）、岸（浅瀬隣接）で飲んでリセット。限界で消耗。
+      thirst[i] += P.thirstRate * thirstMul;
       if (((i + tickN) & 3) === 0 && this._nearWater(world, tx, ty)) thirst[i] = 0;
       else if (thirst[i] > 0.85) { energy[i] -= P.dehydration; if (thirst[i] > 1) thirst[i] = 1; }
 
