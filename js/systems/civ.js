@@ -2199,6 +2199,9 @@
         const fi = ka._fuelTile, Wd = this.world.width;
         this.world.terrain[fi] = Game.TERRAIN.GRASS;
         if (this.renderer && this.renderer.markDirty) this.renderer.markDirty(fi % Wd, (fi / Wd) | 0);
+        // 伐採のアニメーション: 木が瞬時に消えるのではなく倒れていく様子を描画側に伝える。
+        const fl = Game.state.fellings || (Game.state.fellings = []);
+        if (fl.length < 64) fl.push({ x: fi % Wd, y: (fi / Wd) | 0, age: 0 });
         ka._fuelTile = -1;
       }
       // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
