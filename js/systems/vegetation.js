@@ -52,6 +52,9 @@
     for (let i = 0; i < n; i++) {
       f[i] = baseCapacity(terr[i]) * 0.85;
     }
+    // 水循環の基準湿度: 生成時の気候湿度を「その土地の気候の素地」として保存する。
+    //   以後、実際の湿度はこれを基準に降雨と蒸発で動的に増減する。
+    world.moistureBase = Float32Array.from(world.moisture);
   };
 
   VegetationSystem.prototype.tick = function (world) {
@@ -71,6 +74,17 @@
     const warmth = clk ? (clk.warmth || 0) : 0;
     const capClim = 1 + 0.22 * wetness; // 容量への気候補正（多雨で繁茂・乾燥で痩せる）
 
+    // 水循環（hydrology）: 各タイルの湿度を、生成時の気候(moistureBase)を基準に、長期気候
+    //   と季節・気温による蒸発で緩やかに均衡へ近づける（降雨は weather が上乗せ）。
+    let mb = world.moistureBase;
+    if (!mb || mb.length !== moist.length) { mb = world.moistureBase = Float32Array.from(moist); }
+    const hydroRate = cfg.hydroRate || 0.06;
+    const hydroClimW = cfg.hydroClimW || 0.25;
+    const evapWarmW = cfg.evapWarmW || 0.5;
+    const evapSeasonW = cfg.evapSeasonW || 0.35;
+    const seep = cfg.seepMoisture || 0.55;
+    const seasonEvap = season ? (season.name === "夏" ? 1 + evapSeasonW : season.name === "冬" ? 1 - evapSeasonW : 1) : 1;
+
     const y0 = this.cursor;
     const y1 = Math.min(H, y0 + cfg.vegBandRows);
 
@@ -81,8 +95,21 @@
         const cap = baseCapacity(t);
         if (cap <= 0) continue; // 植生不能タイル
 
+        // 水循環: 湿度を気候基準へ蒸発・浸透で近づける（降雨は weather が上乗せ）。
+        const bt0 = temp[i] + warmth * 0.2;                                  // 体感気温（蒸発の強さ）
+        const evapDef = Math.max(0, bt0 - th.cold) * evapWarmW * seasonEvap * 0.35; // 高温・夏ほど乾く
+        let target = mb[i] * (1 + hydroClimW * wetness) - evapDef;
+        // 水辺の染み出し: 隣接タイルが水なら最低湿度を保つ。
+        if ((x > 0 && tile.isWater(terr[i - 1])) || (x < W - 1 && tile.isWater(terr[i + 1])) ||
+            (y > 0 && tile.isWater(terr[i - W])) || (y < H - 1 && tile.isWater(terr[i + W]))) {
+          if (target < seep) target = seep;
+        }
+        if (target < 0) target = 0; else if (target > 1) target = 1;
+        let m = moist[i] + (target - moist[i]) * hydroRate;
+        if (m < 0) m = 0; else if (m > 1) m = 1;
+        moist[i] = m;
+
         // 容量へ向けて成長（湿度＋長期気候で容量を変調）。
-        const m = moist[i];
         let localCap = cap * (0.55 + 0.45 * m) * capClim;
         if (localCap > 1) localCap = 1;
         let v = f[i];
