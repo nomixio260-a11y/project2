@@ -232,6 +232,8 @@
         if (fr > 0) rel.push("🤝 親友" + fr + "人");
         if (rel.length) html += row("縁", rel.join(" "));
         if ((p.prestige || 0) >= 1) html += row("名声", "★ " + Math.round(p.prestige));
+        if (p.invention) html += row("発明", "💡 「" + esc(p.invention) + "」");
+        if (p.masterwork) html += row("傑作", "🎨 「" + esc(p.masterwork) + "」");
       }
       this.bodyEl.innerHTML = html;
       return;
@@ -285,6 +287,8 @@
       ((info && info.figure) || k.figure
         ? row("英傑", "★ " + esc((info && info.figure ? info.figure : k.figure).name) + "（" + esc((info && info.figure ? info.figure : k.figure).title) + "）") : "") +
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +
+      (k.inventions && k.inventions.length ? row("発明", "💡 " + esc(k.inventions.slice(-3).join("・"))) : "") +
+      (k.artworks && k.artworks.length ? row("作品", "🎨 " + esc(k.artworks.slice(-3).join("・"))) : "") +
       (info && (info.wars.length || info.allies.length)
         ? row("外交", (info.wars.length ? "⚔" + info.wars.length + " " : "") + (info.allies.length ? "🤝" + info.allies.length : "")) : "") +
       (function () {
@@ -307,6 +311,7 @@
       { v: p.brave || 1, hi: "勇敢", lo: "臆病" },
       { v: p.wit || 1, hi: "聡明", lo: "純朴" },
       { v: p.vigor || 1, hi: "頑健", lo: "病弱" },
+      { v: p.creat || 1, hi: "独創", lo: "凡庸" },
     ];
     let best = axes[0], bd = 0;
     for (let i = 0; i < axes.length; i++) {

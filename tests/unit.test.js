@@ -1062,3 +1062,48 @@ test("CivSystem: 黄金/暗黒時代は強制ではなく実測の活力(fortune
   assert.ok(k.fortune < 0.5, "危機が続けば活力は下がるはず: " + k.fortune);
   assert.ok(!k.goldenAge, "活力が下がれば黄金時代は自然に終わるはず");
 });
+
+test("CivSystem: 創造システム — 人の閃きが文明を内側から進め、創造性は遺伝・淘汰される", () => {
+  const Game = loadCore({ mapWidth: 48, mapHeight: 48 });
+  const w = new Game.World(48, 48);
+  Game.worldgen.generate(w, 11);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  const A = civ.foundAt(24, 24);
+  assert.ok(A >= 0, "建国できるはず");
+  const k = civ.kingdoms[A];
+
+  // 「創造」の志が新設され公開されている。
+  assert.equal(civ.aspireName(5), "創造");
+
+  // 生まれた人には創造性(creat)が授けられている。
+  const h = civ.people.find((p) => p.kid === A);
+  assert.equal(typeof h.creat, "number", "創造性が授けられているはず");
+
+  // 高い創造力の大人が閃きを重ねると、国の知(insight)と本人の名声が育ち、
+  //   やがて画期的発明か不朽の傑作が現れる（系の強制ではなく人から湧く）。
+  h.age = 900; h.creat = 1.35; h.wit = 1.3; h.skill = 0.9; h.mood = 0.95; h.food = 0.95; h.aspire = 5;
+  const p0 = h.prestige || 0;
+  let creations = 0;
+  const orig = civ._logEvent.bind(civ);
+  civ._logEvent = (m) => { if (m.indexOf("生み出した") >= 0 || m.indexOf("傑作") >= 0) creations++; return orig(m); };
+  for (let i = 0; i < 5000; i++) civ._invent(h, k, 2);
+  assert.ok((k.insight || 0) > 0, "閃きが国の知を蓄積するはず: " + (k.insight || 0));
+  assert.ok((h.prestige || 0) > p0, "創造は名声を高めるはず");
+  assert.ok(creations > 0, "繰り返せば発明・傑作が歴史に刻まれるはず");
+  assert.ok((h.invention || h.masterwork), "創造者にその産物が記録されるはず");
+
+  // 蓄積された知は技術へ転化される（成長ループを跨ぐ）。
+  const t0 = k.tech;
+  k.insight = (k.insight || 0) + 5;
+  for (let t = 0; t < 200; t++) civ.tick(w);
+  assert.ok(k.tech > t0, "蓄積された知が技術へ転化されるはず");
+
+  // 創造性は遺伝する: 創造力の高い親同士からは創造的な子が生まれやすい（自律進化の土台）。
+  const pa = { creat: 1.3 }, pb = { creat: 1.3 };
+  let sum = 0, n = 0;
+  for (let i = 0; i < 50; i++) {
+    const c = civ._spawnHuman(k, 24, 24, h.clan, 0, 0.7, pa, pb);
+    if (c) { sum += c.creat; n++; }
+  }
+  assert.ok(n > 0 && sum / n > 1.05, "高創造の親からは創造性の高い子が生まれやすいはず: " + (sum / n));
+});

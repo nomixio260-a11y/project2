@@ -121,6 +121,21 @@
     dangerR: 6,          // 記憶した危険地を避ける半径
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
     aspireFamily: 1.4,   // 家族の志を持つ者の繁殖意欲
+    aspireCreate: 1.5,   // 創造の志を持つ者の閃きの起きやすさ
+    // 創造（個の閃き＝文明の自律進化）。人が自ら工夫・発明・作品を生み、その知が国に
+    //   蓄積して技術・工芸・文化を押し上げる。閃きは創造性×知×練度×心の余裕と、交流・
+    //   平穏・余裕・文字といった環境から創発する（系が強いるのではなく人から湧く）。
+    insightBase: 0.0011,  // 1回の熟考で閃きが訪れる基準確率
+    insightTech: 0.32,    // 平凡な閃き1つが国の知の蓄積(insight)へ寄せる量
+    insightCap: 7.0,      // 1評価あたり蓄積された知が技術へ転化する上限（暴走防止）
+    insightFame: 0.07,    // 閃き1つで創造者が得る名声
+    insightCraftCap: 0.14, // 工人の閃きが工芸目標へ寄せる上限
+    breakthroughChance: 0.018, // 閃きのうち画期的な発明となる確率（高創造ほど起きやすい）
+    breakthroughTech: 6.5,  // 画期的発明が国の知へ与える跳躍
+    breakthroughFame: 3.2,  // 画期的発明で創造者が得る名声
+    artChance: 0.02,      // 閃きのうち不朽の傑作（作品）となる確率
+    artFame: 2.4,         // 傑作で創造者が得る名声
+    artCalm: 1.1,         // 傑作が国の不満を和らげる量（文化の結束）
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
     cellSize: 6,
@@ -396,13 +411,15 @@
   }
   // 志（人生の長期目標）: 最も際立つ素質から定まる生き方。行動の持続的な偏りになる。
   //   0=立身(均衡・出世) 1=武功(勇) 2=探求(知) 3=蓄財(勤) 4=家族(社交)。
-  const ASPIRE_NAMES = ["立身", "武功", "探求", "蓄財", "家族"];
+  //   5=創造(閃き) … 工夫・発明・作品を生み、文明を自ら推し進める生き方。
+  const ASPIRE_NAMES = ["立身", "武功", "探求", "蓄財", "家族", "創造"];
   function pickAspire(h) {
     let best = 0, bv = 1.08;
     if ((h.brave || 1) > bv) { bv = h.brave; best = 1; }
     if ((h.wit || 1) > bv) { bv = h.wit; best = 2; }
     if ((h.dili || 1) > bv) { bv = h.dili; best = 3; }
     if ((h.synSoc || 1) > bv) { bv = h.synSoc; best = 4; }
+    if ((h.creat || 1) > bv) { bv = h.creat; best = 5; }
     return best;
   }
   // 生まれたばかり/置かれたばかりの人に内面を授ける。親(pa,pb)があれば遺伝する。
@@ -413,6 +430,9 @@
     h.brave = heritTrait(rand, pa && pa.brave, pb && pb.brave);
     h.wit = heritTrait(rand, pa && pa.wit, pb && pb.wit);
     h.vigor = heritTrait(rand, pa && pa.vigor, pb && pb.vigor);
+    // 創造性（閃き・独創）: 工夫・発明・作品を生む素質。遺伝し、配偶者選択と名声を通じて
+    //   淘汰を受ける――創造が報われる土地では世代を経て集団が自ずと創造的に進化する。
+    h.creat = heritTrait(rand, pa && pa.creat, pb && pb.creat);
     // ② シナプス配線: 競合する欲求の重みづけ（脳の個性）。遺伝し、選択を受ける。
     //    安全志向 / 食欲 / 社交欲 をどれだけ優先するかが人により異なる。
     h.synSafe = heritTrait(rand, pa && pa.synSafe, pb && pb.synSafe);
@@ -515,6 +535,25 @@
     return "名士";
   }
   const FAME_THRESHOLD = 6; // この名声を超えると「名のある人物」として歴史に刻まれる
+  // 創造の産物の名。領域(発明の分野)ごとに、人が「生み出した」ものを彩る語彙。
+  //   0=技術 1=工芸 2=商 3=農 4=軍 5=文化/芸術。役割・志から領域が定まる。
+  const INVENT_NAMES = [
+    ["灌漑の工夫", "測量の術", "歯車仕掛け", "暦の改良", "梃子の応用", "水車", "滑車装置", "風車"],
+    ["新たな鍛造法", "精巧な意匠", "頑健な工具", "合わせ鋼", "焼入れの妙", "細工物"],
+    ["両替の仕組み", "為替手形", "隊商路の図", "複式の帳簿", "度量衡の統一"],
+    ["輪作の知恵", "新たな農具", "貯蔵の工夫", "品種の選抜", "堆肥の術"],
+    ["連弩の試作", "攻城の機巧", "陣形の編み出し", "鋼の鎧", "狼煙の符牒"],
+    ["叙事詩", "壁画", "聖歌", "彫像", "写本", "舞踏", "神話の編纂"],
+  ];
+  function inventDomain(h) {
+    if (h.aspire === 5) return 5;            // 創造の志は芸術へ傾く
+    if (h.role === ROLE.SMITH) return 1;
+    if (h.role === ROLE.MERCHANT) return 2;
+    if (h.role === ROLE.FARMER) return 3;
+    if (h.role === ROLE.SOLDIER) return 4;
+    if (h.role === ROLE.PRIEST) return 5;
+    return 0;
+  }
   // 親友関係の上限（1人が深く結びつく相手の数）。
   const MAX_BONDS = 4;
 
@@ -2028,7 +2067,9 @@
       const metalAvail = (res.ore > 0) || (fac.mine > 0);
       const metalF = metalAvail ? 1 : 0.35;
       let craftTgt = clamp01((fac.smithy * 0.22 + smiths * 0.025) / Math.max(1, ka.cities.length) +
-        (hasTech(ka, "bronze") ? 0.1 : 0) + (hasTech(ka, "iron") ? 0.12 : 0)) * metalF;
+        (hasTech(ka, "bronze") ? 0.1 : 0) + (hasTech(ka, "iron") ? 0.12 : 0) +
+        Math.min(CP.insightCraftCap, ka.craftLore || 0)) * metalF; // 工人の閃きが工芸を高める
+      ka.craftLore = (ka.craftLore || 0) * 0.6; // 蓄えた工夫は緩やかに常態化していく
       ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君で増減）。
@@ -2051,6 +2092,13 @@
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
+      // 人々の閃きの蓄積（創造システム）を技術へ転化する。文明は建物だけでなく「人」が進める。
+      //   一評価あたりの転化は上限を設け、人口増による暴走を防ぐ（残りは次評価へ持ち越し）。
+      if (ka.insight > 0) {
+        const conv = Math.min(CP.insightCap, ka.insight);
+        ka.tech += conv * this._eff(ka, "tech") * order;
+        ka.insight -= conv;
+      }
       // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。鍛造の量は燃料(炭=森林)が支える――
       //   炉に火を入れられねば多くは打てない。富からの調達(輸入)は燃料に依らない。治安で増減。
       const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
@@ -2794,6 +2842,59 @@
     if (target < 0) target = 0; else if (target > 1) target = 1;
     h.mood += (target - h.mood) * 0.15 - grief;         // ゆっくり推移＋喪失の悲嘆
     if (h.mood < 0) h.mood = 0; else if (h.mood > 1) h.mood = 1;
+
+    // 創造の閃き: 語らい（着想の交換）を経た心から、工夫・発明・作品が生まれうる。
+    this._invent(h, k, company);
+  };
+
+  // 創造（個の閃き）: 人が自ら工夫・発明・作品を生み出す。閃きは個の素質（創造性×知×
+  //   練度×心の余裕）と環境（交流・平穏・余裕・文字）から創発し、生まれた知は国の蓄積
+  //   (k.insight)へ流れ込んで技術・工芸・文化を内側から押し上げる。多くは無名の小さな工夫
+  //   だが、稀に画期的な発明や不朽の傑作が現れ、その名は歴史に刻まれる。これにより文明は
+  //   建物の数ではなく「人」によって自律的に進化し、創造性は名声と配偶者選択を通じて淘汰
+  //   を受ける（創造が報われる地ほど集団が創造的に育つ）。
+  CivSystem.prototype._invent = function (h, k, company) {
+    if (h.age < CP.adultAge) return;            // 創造は成熟した心から
+    const creat = h.creat || 1;
+    // 個の創造力: 創造性が主、知と練度と心の余裕が支える。志が創造なら一段高ぶる。
+    const power = creat * (0.55 + 0.45 * (h.wit || 1)) * (0.3 + 0.7 * (h.skill || 0)) *
+      moodFactor(h.mood) * (h.aspire === 5 ? CP.aspireCreate : 1);
+    // 環境: 人との交わり（着想の交換）・国の多様性・平穏・暮らしの余裕・文字が閃きを育む。
+    const exchange = 1 + Math.min(0.6, (company || 0) * 0.12) + (k.diversity || 0) * 0.5;
+    const ease = (h.food > 0.55 ? 1.15 : 0.8) * (this._count(k.wars) > 0 ? 0.7 : 1) * (k.famine ? 0.5 : 1);
+    const literacy = 1 + (hasTech(k, "writing") ? 0.3 : 0) + (hasTech(k, "printing") ? 0.4 : 0);
+    const spark = CP.insightBase * power * exchange * ease * literacy;
+    if (this.rand() >= spark) return;
+    // 閃きが訪れた。創造はそれ自体が喜びであり、腕を磨き、名を高める。
+    practice(h);
+    h.joy = clamp01((h.joy || 0) + 0.18);
+    h.prestige = (h.prestige || 0) + CP.insightFame * power;
+    const dom = inventDomain(h);
+    // 生まれた知は国の蓄積へ。工人の閃きは工芸へも効く。
+    k.insight = (k.insight || 0) + CP.insightTech * power;
+    if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.02 * power;
+    // 画期的発明: 高い創造力ほど起きやすい。国の知を跳ね上げ、創造者は歴史に名を刻む。
+    if (this.rand() < CP.breakthroughChance * Math.min(2.5, power)) {
+      k.insight += CP.breakthroughTech * (0.6 + 0.4 * power);
+      if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.06 * power;
+      h.prestige += CP.breakthroughFame;
+      const pool = INVENT_NAMES[dom];
+      const name = pool[(this.rand() * pool.length) | 0];
+      h.invention = name;
+      (k.inventions || (k.inventions = [])).push(name);
+      if (k.inventions.length > 12) k.inventions.shift();
+      this._logEvent("💡 " + h.name + "（" + k.name + "）が「" + name + "」を生み出した");
+    } else if (h.aspire === 5 && this.rand() < CP.artChance * Math.min(2.5, power)) {
+      // 不朽の傑作: 文化の結束を生み、不満を和らげ、創造者の名を遺す。
+      h.prestige += CP.artFame;
+      if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.artCalm);
+      const pool = INVENT_NAMES[5];
+      const name = pool[(this.rand() * pool.length) | 0];
+      h.masterwork = name;
+      (k.artworks || (k.artworks = [])).push(name);
+      if (k.artworks.length > 12) k.artworks.shift();
+      this._logEvent("🎨 " + h.name + "（" + k.name + "）が傑作「" + name + "」を遺した");
+    }
   };
 
   // AI: 欲求と役割を勘案して目標(gx,gy)を決める「熟考」。thinkInterval 毎にのみ実行。
@@ -3337,9 +3438,12 @@
         return o.kid === h.kid && o !== h && o.age >= CP.adultAge && o.age <= CP.elderAge &&
           o.food >= CP.reproFood && o.repro <= 0 && !closeKin(h, o);
       };
-      // ①独身・別血統・健康で素質のある相手（外婚＋性淘汰）。
+      // ①独身・別血統・健康で素質のある相手（外婚＋性淘汰）。健やかさに加え、創意に富み
+      //    名声ある者は配偶者として好まれる――創造性は性淘汰を通じ世代を超えて選ばれる。
       partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
-        return (eligible(o) && !o.partner && o.clan !== h.clan && o.food > 0.65 && (o.vigor || 1) >= 1.0) ? 2 : 0;
+        if (!(eligible(o) && !o.partner && o.clan !== h.clan && o.food > 0.65)) return 0;
+        const merit = (o.vigor || 1) >= 1.0 || (o.creat || 1) >= 1.08 || (o.prestige || 0) >= FAME_THRESHOLD * 0.5;
+        return merit ? 2 : 0;
       }).best;
       // ②独身・別血統。
       if (!partner) partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
