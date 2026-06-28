@@ -38,6 +38,7 @@
     herdSpacing: 1.6, // これより近ければ寄らない（密集しすぎない）
     mateRadius: 4,   // 繁殖時に配偶者を探す距離（有性生殖）
     mateMinEnergy: 0.5, // 配偶者がこのエネルギー以上なら繁殖できる
+    thinkEvery: 2, // 重い近傍探索の間隔(ティック)。大きいほど低負荷（移動・採食・捕食は毎ティック）
   };
 
   // 遺伝子を継承（軽い変異つき、0.7..1.3 にクランプ）。
@@ -61,6 +62,11 @@
     this.ncells = this.gw * this.gh;
     this.head = new Int32Array(this.ncells * 2).fill(-1); // [type0 セル..., type1 セル...]
     this.nextLink = new Int32Array(entities.capacity);
+    // 行動キャッシュ: 重い近傍探索を間引くため、対象（捕食対象/脅威）と意図方向を保持する。
+    this.ct = new Int32Array(entities.capacity).fill(-1);
+    this.cdx = new Float32Array(entities.capacity);
+    this.cdy = new Float32Array(entities.capacity);
+    this.cflag = new Uint8Array(entities.capacity);
   }
 
   CreatureSystem.prototype.setWorld = function (world) {
@@ -146,179 +152,138 @@
     // 長期気候: 寒冷な時代は基礎代謝が上がり（寒さに耐えるため）個体数が抑えられる。
     const clk = Game.state.clock;
     const coldF = 1 + Math.max(0, -(clk ? (clk.warmth || 0) : 0)) * 0.5;
-    // 群れ凝集を間引くための位相（4ティックで一巡）。
-    this._tickN = (this._tickN || 0) + 1;
-    const herdPhase = this._tickN & 3;
-    // 植生システムの参照をループ外で1回だけ解決（毎個体の lookup を避ける）。
+    const tickN = this._tickN = (this._tickN || 0) + 1;
+    // 植生・炎システムの参照をループ外で1回だけ解決（毎個体の lookup を避ける）。
     const veg = Game.state.vegetation;
     const vegOK = !!(veg && veg.world === world);
-    // 炎システムの参照（延焼中のみ生物が火を恐れて逃げる。平時は走査しない）。
     const fireSys = Game.state.fire;
     const fireActive = !!(fireSys && fireSys.world === world && fireSys.active.length > 0);
     const burnArr = fireActive ? fireSys.burn : null;
+    // ホットループ用に TypedArray 参照を局所化。
+    const ex = e.x, ey = e.y, et = e.type, energy = e.energy, alive = e.alive, thirst = e.thirst, ageA = e.age;
+    const ct = this.ct, cdx = this.cdx, cdy = this.cdy, cfl = this.cflag;
+    const THH = P.thinkEvery | 0 || 1; // 草食の探索間引き（多数派）。肉食は少数なので毎ティック探索する
+    const DW = Game.TERRAIN.DEEP_WATER;
+    const clampF = Game.utils.clamp;
+    const PI = Math.PI, Wm = W - 1, Hm = H - 1;
 
     const n = e.count; // 今ティックの個体のみ処理（新生は次ティック）
     for (let i = 0; i < n; i++) {
-      if (!e.alive[i]) continue;
-      const type = e.type[i];
-
+      if (!alive[i]) continue;
+      const type = et[i];
       const gene = e.gene[i] || 1;       // 体格
       const gSpd = e.geneSpd[i] || 1;    // 俊敏
       const gSense = e.geneSense[i] || 1; // 感覚
-      e.age[i] += 1;
-      e.energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * coldF; // 大型ほど・寒冷ほど燃費が悪い
+      ageA[i] += 1;
+      energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * coldF; // 大型ほど・寒冷ほど燃費が悪い
 
-      const tx = e.x[i] | 0;
-      const ty = e.y[i] | 0;
+      const tx = ex[i] | 0, ty = ey[i] | 0;
       const idx = ty * W + tx;
       const here = terrain[idx];
 
       // 溺死（陸生が深海に出た）。
-      if (here === Game.TERRAIN.DEEP_WATER) {
-        e.energy[i] -= 0.08;
-      }
-      // 炎に巻かれると消耗する（火災は生物に致命的＝逃げる動機）。
-      if (burnArr && burnArr[idx] > 0) e.energy[i] -= 0.06;
+      if (here === DW) energy[i] -= 0.08;
+      // 炎に巻かれると消耗する。
+      if (burnArr && burnArr[idx] > 0) energy[i] -= 0.06;
 
-      // 渇き: 進行し、岸（浅瀬隣接）で飲んでリセット。限界で消耗。
-      // 渇きの進行は緩やかなので、岸の確認（3x3走査）は4ティックに1回に間引く。
-      e.thirst[i] += P.thirstRate;
-      if (((i + this._tickN) & 3) === 0 && this._nearWater(world, tx, ty)) {
-        e.thirst[i] = 0;
-      } else if (e.thirst[i] > 0.85) {
-        e.energy[i] -= P.dehydration;
-        if (e.thirst[i] > 1) e.thirst[i] = 1;
-      }
+      // 渇き: 進行し、岸（浅瀬隣接）で飲んでリセット。限界で消耗（岸の確認は4ティックに1回）。
+      thirst[i] += P.thirstRate;
+      if (((i + tickN) & 3) === 0 && this._nearWater(world, tx, ty)) thirst[i] = 0;
+      else if (thirst[i] > 0.85) { energy[i] -= P.dehydration; if (thirst[i] > 1) thirst[i] = 1; }
 
-      let dirX = 0;
-      let dirY = 0;
-      let fleeing = false;
-      let chasing = false;
-      let firePanic = false;
-
-      // 炎から逃げる（あらゆる本能に優先する生存反応。延焼中のみ近傍を走査する）。
-      if (fireActive) {
-        const ff = this._fleeFire(world, tx, ty, burnArr);
-        if (ff) { dirX = ff.x; dirY = ff.y; fleeing = true; firePanic = true; }
+      // 採食: 草食は足下が食べられるタイルなら毎ティック草を食む。
+      if (type === S.HERBIVORE && tile.isEdible(here)) {
+        if (vegOK) { const eaten = veg.graze(idx); if (eaten > 0) energy[i] = Math.min(1, energy[i] + eaten * P.grazeGainScale); }
+        else energy[i] = Math.min(1, energy[i] + P.grazeGain);
       }
 
-      // 渇きが強ければ水を最優先で探す（火から逃げている間は除く）。
-      if (!firePanic && e.thirst[i] > P.thirstSeek) {
-        const wseek = this._seekWater(world, tx, ty);
-        dirX = wseek.x;
-        dirY = wseek.y;
-      }
-
-      if (type === S.HERBIVORE) {
-        // 捕食者から逃げる（採食・渇きより最優先＝生存本能）。感覚が鋭いほど早く気づく。
-        const pred = firePanic ? -1 : this._nearest(e.x[i], e.y[i], S.PREDATOR, P.fleeRadius * (0.6 + 0.4 * gSense), -1);
-        if (pred !== -1) {
-          const dx = e.x[i] - e.x[pred];
-          const dy = e.y[i] - e.y[pred];
-          const dl = Math.sqrt(dx * dx + dy * dy) || 1;
-          dirX = dx / dl; dirY = dy / dl;
-          fleeing = true;
-        }
-        // 採食（植生 fertility を消費。未接続時はフォールバック）。
-        if (tile.isEdible(here)) {
-          if (vegOK) {
-            const eaten = veg.graze(idx);
-            if (eaten > 0) e.energy[i] = Math.min(1, e.energy[i] + eaten * P.grazeGainScale);
-          } else {
-            e.energy[i] = Math.min(1, e.energy[i] + P.grazeGain);
-          }
-        }
-        // 逃走中でなく、空腹かつ水も探していないなら、食べられるタイルへ寄る。
-        if (!fleeing && dirX === 0 && dirY === 0 && e.energy[i] < 0.6) {
-          const f = this._seekFood(world, tx, ty);
-          dirX = f.x;
-          dirY = f.y;
-        }
-        // 群れ行動: 逃走・採食でなく満ち足りているときは仲間に寄り集まる
-        // （数の安全）。緩やかな凝集なので個体ごとに4ティックに1回だけ評価して負荷を抑える。
-        if (!fleeing && dirX === 0 && dirY === 0 && ((e.age[i] + i) & 3) === herdPhase) {
-          const mate = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.herdRadius, i);
-          if (mate !== -1) {
-            const dx = e.x[mate] - e.x[i], dy = e.y[mate] - e.y[i];
-            const dl = Math.sqrt(dx * dx + dy * dy) || 1;
-            if (dl > P.herdSpacing) { dirX = dx / dl * 0.6; dirY = dy / dl * 0.6; }
-          }
-        }
-      } else if (dirX === 0 && dirY === 0 && e.energy[i] < P.satiation) {
-        // 肉食: 満腹でないときだけ近くの草食を追って捕食する。感覚が鋭いほど遠くの獲物に気づく。
-        // 飽食した捕食者は獲物を見過ごす＝捕食を必要分に抑え、被食者の乱獲・崩壊を防ぐ。
-        const prey = this._nearest(e.x[i], e.y[i], S.HERBIVORE, P.huntRadius * (0.6 + 0.4 * gSense), i);
-        if (prey !== -1) {
-          const dx = e.x[prey] - e.x[i];
-          const dy = e.y[prey] - e.y[i];
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist <= P.eatRadius) {
-            // 多くの狩りは失敗する（獲物の警戒・逃げ足＝避難の余地）。これが
-            // 捕食圧を和らげ、被食者を絶滅させずに捕食者と共存させる安定化要素。
-            // 体格の大きな捕食者ほど仕留めやすい（体格遺伝子への選択圧）。
-            if (rand() < P.catchChance * (0.6 + 0.4 * gene)) {
-              e.kill(prey);
-              e.energy[i] = Math.min(1, e.energy[i] + P.preyGain);
+      // ---- 重い近傍探索は thinkEvery ティックに1回だけ（位相分散）。対象・意図をキャッシュ ----
+      // 移動・採食・捕食の判定そのものは毎ティック行うため、挙動はほぼ保たれる。
+      const th = type === S.PREDATOR ? 1 : THH; // 肉食は毎ティック（捕食を保つ）、草食は間引く
+      if (((i + tickN) % th) === 0) {
+        let tgt = -1, fx = 0, fy = 0, panic = 0;
+        if (type === S.HERBIVORE) {
+          // 炎から逃げる（最優先）。
+          if (fireActive) { const ff = this._fleeFire(world, tx, ty, burnArr); if (ff) { panic = 1; fx = ff.x; fy = ff.y; } }
+          if (!panic) {
+            // 捕食者の探知（脅威の index をキャッシュ。方向は毎ティック再計算で機敏に逃げる）。
+            tgt = this._nearest(ex[i], ey[i], S.PREDATOR, P.fleeRadius * (0.6 + 0.4 * gSense), -1);
+            if (tgt === -1) {
+              // 脅威が無ければ意図を決める: 渇き(水が見つかれば)＞採食＞群れ＞徘徊。
+              if (thirst[i] > P.thirstSeek) { const w = this._seekWater(world, tx, ty); fx = w.x; fy = w.y; }
+              if (fx === 0 && fy === 0 && energy[i] < 0.6) { const f = this._seekFood(world, tx, ty); fx = f.x; fy = f.y; }
+              if (fx === 0 && fy === 0) {
+                const m = this._nearest(ex[i], ey[i], S.HERBIVORE, P.herdRadius, i);
+                if (m !== -1) { const dx = ex[m] - ex[i], dy = ey[m] - ey[i], dl = Math.sqrt(dx * dx + dy * dy) || 1; if (dl > P.herdSpacing) { fx = dx / dl * 0.6; fy = dy / dl * 0.6; } }
+              }
             }
-          } else {
-            dirX = dx / dist;
-            dirY = dy / dist;
-            chasing = true;
+          }
+        } else {
+          // 肉食: 渇いて水が見つかれば水を優先。さもなくば満腹でない限り獲物を探す。
+          // （水が近くに無い渇いた捕食者も狩りは続ける＝原行動。これが無いと餓死する。）
+          if (thirst[i] > P.thirstSeek) { const w = this._seekWater(world, tx, ty); fx = w.x; fy = w.y; }
+          if (fx === 0 && fy === 0 && energy[i] < P.satiation) { tgt = this._nearest(ex[i], ey[i], S.HERBIVORE, P.huntRadius * (0.6 + 0.4 * gSense), i); }
+        }
+        ct[i] = tgt; cdx[i] = fx; cdy[i] = fy; cfl[i] = panic;
+
+        // 繁殖（探索を伴うため think 時のみ。頻度を TH 倍して総繁殖率を保つ）。
+        let canRepro = energy[i] > P.reproduceAt[type] && e.live < maxEntities &&
+          rand() < P.reproduceChance[type] * (0.6 + 0.4 * (e.geneFert[i] || 1)) * th;
+        if (canRepro && type === S.HERBIVORE && vegOK && fertArr[idx] < P.herbReproFert) canRepro = false;
+        if (canRepro) {
+          const mate = this._nearest(ex[i], ey[i], type, P.mateRadius, i);
+          if (mate !== -1 && energy[mate] > P.mateMinEnergy) {
+            const child = e.spawn(type, ex[i], ey[i], P.offspringEnergy,
+              mutate(rand, (gene + (e.gene[mate] || 1)) * 0.5),
+              mutate(rand, (gSpd + (e.geneSpd[mate] || 1)) * 0.5),
+              mutate(rand, (gSense + (e.geneSense[mate] || 1)) * 0.5),
+              mutate(rand, ((e.geneFert[i] || 1) + (e.geneFert[mate] || 1)) * 0.5));
+            if (child !== -1) { energy[i] -= P.reproCost[type]; energy[mate] -= P.reproCost[type] * 0.5; if (child < ct.length) ct[child] = -1; }
           }
         }
       }
 
-      // 徘徊（食料方向が無ければランダム）。
-      if (dirX === 0 && dirY === 0) {
-        dirX = rand() - 0.5;
-        dirY = rand() - 0.5;
-      }
-      const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-      let sp = P.speed[type] * (0.7 + 0.3 * gene) * (0.7 + 0.3 * gSpd); // 体格＋俊敏で速度が決まる
-      if (fleeing) sp *= P.fleeBoost;   // 逃走で加速
-      if (chasing) sp *= P.chaseBoost;  // 追跡で加速（獲物を捕らえる）
-      const stepX = (dirX / len) * sp;
-      const stepY = (dirY / len) * sp;
-      e.heading[i] = Math.atan2(stepY, stepX); // 描画の向き
-      let nxp = e.x[i] + stepX;
-      let nyp = e.y[i] + stepY;
-      // 水へ踏み込まない（陸生）。境界もクランプ。
-      const ntx = Game.utils.clamp(nxp | 0, 0, W - 1);
-      const nty = Game.utils.clamp(nyp | 0, 0, H - 1);
-      if (!tile.isWater(terrain[nty * W + ntx])) {
-        e.x[i] = Game.utils.clamp(nxp, 0, W - 1);
-        e.y[i] = Game.utils.clamp(nyp, 0, H - 1);
+      // ---- 毎ティックの行動解決（キャッシュした対象・意図から方向を定める）----
+      let dirX = 0, dirY = 0, fleeing = false, chasing = false;
+      const tg = ct[i];
+      if (type === S.HERBIVORE) {
+        if (cfl[i]) { dirX = cdx[i]; dirY = cdy[i]; fleeing = true; }              // 炎から逃走
+        else if (tg >= 0 && alive[tg]) {
+          // 捕食者から逃走（距離は毎ティック確認し、脅威が範囲外へ離れたら通常行動に戻る）。
+          const dx = ex[i] - ex[tg], dy = ey[i] - ey[tg], d2 = dx * dx + dy * dy;
+          const fr = P.fleeRadius * (0.6 + 0.4 * gSense);
+          if (d2 < fr * fr) { const dl = Math.sqrt(d2) || 1; dirX = dx / dl; dirY = dy / dl; fleeing = true; }
+          else { dirX = cdx[i]; dirY = cdy[i]; }
+        }
+        else { dirX = cdx[i]; dirY = cdy[i]; }                                      // 採食・群れ・徘徊
+      } else {
+        if (tg >= 0 && alive[tg] && energy[i] < P.satiation) {
+          const dx = ex[tg] - ex[i], dy = ey[tg] - ey[i], dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist <= P.eatRadius) {
+            // 多くの狩りは失敗する（被食者の避難余地＝共存の安定化）。体格で成否が変わる。
+            if (rand() < P.catchChance * (0.6 + 0.4 * gene)) { e.kill(tg); energy[i] = Math.min(1, energy[i] + P.preyGain); ct[i] = -1; }
+          } else { dirX = dx / dist; dirY = dy / dist; chasing = true; }
+        } else { dirX = cdx[i]; dirY = cdy[i]; }
       }
 
-      // 繁殖。新個体は次ティックの _buildGrid で登録される
-      // （ここでグリッドへ挿し込むと、解放スロット再利用時に
-      //  リンクリストが循環し _nearest が無限ループするため挿さない）。
-      // 多産遺伝子(geneFert)が高いほど繁殖しやすい（多産戦略への選択圧）。
-      let canRepro = e.energy[i] > P.reproduceAt[type] && e.live < maxEntities &&
-        rand() < P.reproduceChance[type] * (0.6 + 0.4 * (e.geneFert[i] || 1));
-      // 草食は局所の食料(fertility)が乏しいと繁殖を控える（密度依存で暴走を防ぐ）。
-      if (canRepro && type === S.HERBIVORE && vegOK && fertArr[idx] < P.herbReproFert) canRepro = false;
-      if (canRepro) {
-        // 有性生殖: 近くに繁殖可能な同種の配偶者が要る（無ければ繁殖しない＝個体が
-        // 散ると増えにくいアリー効果）。子の遺伝子は両親の中間＋変異＝遺伝的組換え。
-        const mate = this._nearest(e.x[i], e.y[i], type, P.mateRadius, i);
-        if (mate !== -1 && e.energy[mate] > P.mateMinEnergy) {
-          const child = e.spawn(type, e.x[i], e.y[i], P.offspringEnergy,
-            mutate(rand, (gene + (e.gene[mate] || 1)) * 0.5),
-            mutate(rand, (gSpd + (e.geneSpd[mate] || 1)) * 0.5),
-            mutate(rand, (gSense + (e.geneSense[mate] || 1)) * 0.5),
-            mutate(rand, ((e.geneFert[i] || 1) + (e.geneFert[mate] || 1)) * 0.5));
-          if (child !== -1) {
-            e.energy[i] -= P.reproCost[type];
-            e.energy[mate] -= P.reproCost[type] * 0.5; // 配偶者も子育ての負担を分かつ
-          }
-        }
+      // 徘徊（目的の意図が無ければ毎ティック軽くランダムに動く＝原行動に近い拡散）。
+      if (dirX === 0 && dirY === 0) { dirX = rand() - 0.5; dirY = rand() - 0.5; }
+      if (dirX !== 0 || dirY !== 0) {
+        const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+        let sp = P.speed[type] * (0.7 + 0.3 * gene) * (0.7 + 0.3 * gSpd);
+        if (fleeing) sp *= P.fleeBoost;
+        if (chasing) sp *= P.chaseBoost;
+        const stepX = (dirX / len) * sp, stepY = (dirY / len) * sp;
+        // 向きは左右の判定のみに使う（renderer は cos(heading)<0 で左向き）。atan2 を避ける。
+        e.heading[i] = stepX < 0 ? PI : 0;
+        let nxp = ex[i] + stepX, nyp = ey[i] + stepY;
+        if (nxp < 0) nxp = 0; else if (nxp > Wm) nxp = Wm;
+        if (nyp < 0) nyp = 0; else if (nyp > Hm) nyp = Hm;
+        if (!tile.isWater(terrain[(nyp | 0) * W + (nxp | 0)])) { ex[i] = nxp; ey[i] = nyp; }
       }
 
       // 死亡判定。
-      if (e.energy[i] <= 0 || e.age[i] > P.maxAge[type]) {
-        e.kill(i);
-      }
+      if (energy[i] <= 0 || ageA[i] > P.maxAge[type]) e.kill(i);
     }
   };
 

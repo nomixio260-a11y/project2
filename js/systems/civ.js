@@ -1845,7 +1845,9 @@
 
     // 領有資源を集計（鉱石・漁場・宝石）。
     this._tallyResources();
-    this._tallyFuel(); // 製錬の燃料（森林＝炭）を集計
+    // 製錬の燃料（森林＝炭）は変化が緩やかなので、全マップ走査は数回に1回に間引く。
+    this._fuelEval = (this._fuelEval || 0) + 1;
+    if (this._fuelEval % 3 === 1) this._tallyFuel();
 
     // --- 国家ごと: 経済(富・技術) と 社会(不満) ---
     for (let a = 1; a < ks.length; a++) {
