@@ -170,6 +170,7 @@
     vassalRevoltMil: 0.7,// 宗主の軍がこの倍率を下回ると属国が独立を試みる
     truceTicks: 1200,    // 講和後の休戦期間（この間は再戦しない）
     // 戦術（地形・防備）
+    steerEvery: 3,       // 操舵(経路再計算)の間隔。間は前回の速度で前進（移動は毎ティック滑らか）
     homeDefense: 0.5,    // 自国領で戦う守備兵が受ける被害の軽減
     fortDefense: 0.5,    // 砦(KEEP)のある都市タイルの攻略しにくさ（防備）
     // 交易と平和（経済的相互依存は戦争を抑える）
@@ -3305,6 +3306,18 @@
 
   CivSystem.prototype._move = function (h, k, world) {
     const W = world.width, H = world.height;
+    // 操舵の間引き: 多くのティックは前回の速度(hx,hy)でそのまま前進し（移動は毎ティック
+    //   滑らか）、経路・慣性・障害回避の再計算は steerEvery ティックに1回だけ行う。
+    //   進路が水/外なら位相に関わらず即座に再操舵する（水侵入を防ぐ）。
+    if (((this._tickN + (h.pid || 0)) % CP.steerEvery) !== 0 && (h.hx || h.hy)) {
+      let nxp = h.x + h.hx, nyp = h.y + h.hy;
+      if (nxp < 0) nxp = 0; else if (nxp > W - 1) nxp = W - 1;
+      if (nyp < 0) nyp = 0; else if (nyp > H - 1) nyp = H - 1;
+      const ni = (nyp | 0) * W + (nxp | 0);
+      const fr = Game.state.fire, bn = (fr && fr.burn) ? fr.burn : null;
+      if (tile.isLand(world.terrain[ni]) && !(bn && bn[ni] > 0)) { h.x = nxp; h.y = nyp; return; }
+      // 進路が塞がれている → 下の通常処理で再操舵する。
+    }
     let dux = h.gx + 0.5 - h.x;
     let duy = h.gy + 0.5 - h.y;
     const dist = Math.sqrt(dux * dux + duy * duy);
