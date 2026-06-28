@@ -271,6 +271,7 @@
       row("人口", String(k.humanCount) + " 人") +
       row("都市", String(k.cities.length) + " · 領土 " + k.tileCount) +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
+      ((k.industry || 0) >= 0.08 ? row("産業", "🏭 " + (k.industry >= 0.6 ? "高" : k.industry >= 0.3 ? "中" : "低") + "（" + Math.round(k.industry * 100) + "）") : "") +
       bar("不満", Math.round(k.unrest), true) +
       (info && info.morale != null ? bar("民心", info.morale, false) : "") +
       row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "") +

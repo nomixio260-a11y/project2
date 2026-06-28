@@ -139,9 +139,9 @@
         const x = (Math.random() * W) | 0, y = (Math.random() * H) | 0;
         if (tile.isLand(w.terrain[y * W + x]) && civ.foundAt(x, y) > 0) founded++;
       }
-      // 野生（草食を広く、肉食をひとつまみ）。
-      const nH = Math.min(1500, Math.round(area / 900));
-      const nP = Math.round(nH * 0.08);
+      // 野生（草食はほどほどに。多すぎないよう控えめに撒き、あとは生態系が自然に増やす）。
+      const nH = Math.min(480, Math.round(area / 2600));
+      const nP = Math.round(nH * 0.14);
       const rg = () => 0.8 + Math.random() * 0.4;
       let herb = 0, pred = 0;
       for (let a = 0; a < nH * 8 && herb < nH; a++) {

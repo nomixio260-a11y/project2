@@ -751,11 +751,24 @@
     const range = camera.visibleTileRange();
     const size = Math.max(3, scale * 0.5);
     const self = this;
+    const world = this.world, isWater = Game.tile.isWater;
     function wagon(ax, ay, bx, by, frac, col) {
       const x = ax + (bx - ax) * frac, y = ay + (by - ay) * frac;
       if (x < range.x0 - 1 || x > range.x1 + 1 || y < range.y0 - 1 || y > range.y1 + 1) return;
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
+      // 海上の区間では帆船で、陸上では荷馬車で描く（海路・陸路が見て分かる）。
+      const onSea = world && isWater(world.terrain[(y | 0) * world.width + (x | 0)]);
+      if (onSea) {
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.fillRect(sx - size * 0.5, sy + size * 0.34, size, size * 0.16);  // 影
+        ctx.fillStyle = "#5a3d24";                                            // 船体
+        ctx.fillRect(sx - size * 0.5, sy + size * 0.05, size, size * 0.32);
+        ctx.fillStyle = "#3a2716"; ctx.fillRect(sx - size * 0.06, sy - size * 0.5, size * 0.12, size * 0.6); // マスト
+        ctx.fillStyle = col === "#9a7a3a" ? "#efe4c2" : "#e9dcc0";            // 帆
+        ctx.fillRect(sx - size * 0.34, sy - size * 0.42, size * 0.68, size * 0.4);
+        return;
+      }
       ctx.fillStyle = "rgba(0,0,0,0.3)";
       ctx.fillRect(sx - size * 0.5, sy + size * 0.32, size, size * 0.18); // 影
       ctx.fillStyle = col || "#7a5230";
@@ -786,8 +799,8 @@
           const vol = k.partners[b] || 0;
           if (vol < 0.5) continue;
           const cap2 = kb.cities[0];
-          // 交易量に応じて1〜3台の隊商を時間差で走らせる。
-          const wagons = vol > 8 ? 3 : vol > 3 ? 2 : 1;
+          // 交易量に応じて1〜5の隊商／船を時間差で走らせる（活発な路ほど賑わう）。
+          const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
           for (let wagi = 0; wagi < wagons; wagi++) {
             const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
             wagon(cap.x, cap.y, cap2.x, cap2.y, frac, "#9a7a3a");
