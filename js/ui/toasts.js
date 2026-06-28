@@ -7,7 +7,7 @@
   const LIFE_MS = 4800;
   const MAX_VISIBLE = 4;
   // 通知する重要イベント（ありふれた戦争・時代進歩・交易は除外し、劇的な出来事のみ）。
-  const IMPORTANT = /☠|🏛|🌋|🌐|👑|✊|海の彼方|疫病が発生/;
+  const IMPORTANT = /☠|🏛|🌋|🌐|👑|✊|⚑|✨|🌑|海の彼方|疫病が発生/;
 
   const Toasts = { el: null, _acc: 0, _lastSeq: 0 };
 
