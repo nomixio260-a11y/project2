@@ -116,6 +116,11 @@
     cultInnovAmt: 0.18,  // 文化の革新の跳び幅
     raceGenesis: 0.015,  // 出生時に土地の気候に適応した民族へ変わる確率（民族の独自進化）
     sightBase: 5.2,      // 視野の基準半径（知性・年齢・昼夜で変化する）
+    // 高度な認知: 危険地の記憶（嫌悪学習）と人生の志（長期目標）。
+    dangerTtl: 900,      // 危険な目に遭った場所を覚えている期間(ティック)
+    dangerR: 6,          // 記憶した危険地を避ける半径
+    aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
+    aspireFamily: 1.4,   // 家族の志を持つ者の繁殖意欲
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
     cellSize: 6,
@@ -387,6 +392,17 @@
     if (a != null) return inheritTrait(rand, a);
     return randTrait(rand);
   }
+  // 志（人生の長期目標）: 最も際立つ素質から定まる生き方。行動の持続的な偏りになる。
+  //   0=立身(均衡・出世) 1=武功(勇) 2=探求(知) 3=蓄財(勤) 4=家族(社交)。
+  const ASPIRE_NAMES = ["立身", "武功", "探求", "蓄財", "家族"];
+  function pickAspire(h) {
+    let best = 0, bv = 1.08;
+    if ((h.brave || 1) > bv) { bv = h.brave; best = 1; }
+    if ((h.wit || 1) > bv) { bv = h.wit; best = 2; }
+    if ((h.dili || 1) > bv) { bv = h.dili; best = 3; }
+    if ((h.synSoc || 1) > bv) { bv = h.synSoc; best = 4; }
+    return best;
+  }
   // 生まれたばかり/置かれたばかりの人に内面を授ける。親(pa,pb)があれば遺伝する。
   // 内面は3層: ①生得形質(性格・体質) ②シナプス配線(判断の偏り・遺伝) ③感情(その場の状態)。
   function endow(h, rand, pa, pb) {
@@ -400,6 +416,8 @@
     h.synSafe = heritTrait(rand, pa && pa.synSafe, pb && pb.synSafe);
     h.synFood = heritTrait(rand, pa && pa.synFood, pb && pb.synFood);
     h.synSoc = heritTrait(rand, pa && pa.synSoc, pb && pb.synSoc);
+    // 志: 最も際立つ素質からその人の生き方が定まる（遺伝した形質に基づく）。
+    h.aspire = pickAspire(h);
     // ③ 感情（0..1, 時間で減衰。出来事で高ぶり、行動を左右する）。
     h.fear = 0; h.anger = 0; h.joy = 0;
     h.sight = 5; // 視野（_think で毎回再計算される初期値）
@@ -2552,7 +2570,8 @@
         o.repro <= 0 && !closeKin(h, o)) ? 2 : 0;
     }).best;
     if (!partner) return;
-    h.repro = CP.reproCooldown; partner.repro = CP.reproCooldown;
+    h.repro = (h.aspire === 4 ? CP.reproCooldown / CP.aspireFamily : CP.reproCooldown);
+    partner.repro = (partner.aspire === 4 ? CP.reproCooldown / CP.aspireFamily : CP.reproCooldown);
     h.food -= CP.reproCost; partner.food -= CP.reproCost;
     const child = {
       x: h.x, y: h.y, hx: 0, hy: 0,
@@ -2661,7 +2680,7 @@
     const grief = this._mournLost(h);
     // 名声: 練度・齢・徳がにじみ出て、ゆっくり高まる（功績＝武功・普請は別途加算）。
     // 熟達し齢を重ねた者ほど周囲に一目置かれ、やがて名のある人物となる（ごく一部）。
-    h.prestige = (h.prestige || 0) + 0.05 * (0.2 + (h.skill || 0)) * (h.age > CP.elderAge ? 1.6 : h.age > CP.adultAge ? 1 : 0.2);
+    h.prestige = (h.prestige || 0) + 0.05 * (0.2 + (h.skill || 0)) * (h.age > CP.elderAge ? 1.6 : h.age > CP.adultAge ? 1 : 0.2) * ((h.aspire === 0 || h.aspire === 3) ? CP.aspirePrestige : 1);
     // 名のある人物として歴史に登場（初めて閾値を超えたとき）。
     if (!h._famed && h.prestige >= FAME_THRESHOLD) {
       h._famed = true;
@@ -2803,7 +2822,7 @@
         k.roleCount[ROLE.FARMER] < k.humanCount * 0.3 && this.rand() < 0.12 * wit) {
       this._switchRole(h, k, ROLE.FARMER);
     } else if ((h.role === ROLE.EXPLORER || h.role === ROLE.BUILDER) && this._count(k.wars) > 0 &&
-        k.roleCount[ROLE.SOLDIER] < k.humanCount * 0.12 && this.rand() < 0.06 * wit) {
+        k.roleCount[ROLE.SOLDIER] < k.humanCount * 0.12 && this.rand() < 0.06 * wit * (h.aspire === 1 ? 1.8 : 1)) {
       this._switchRole(h, k, ROLE.SOLDIER);
     }
 
@@ -2834,12 +2853,13 @@
           h.fear = Math.min(1, (h.fear || 0) + 1.2 / (1 + d2)); // 近い猛獣ほど強い恐怖
           const armed = h.role === ROLE.SOLDIER || (h.gear || 0) > 0;
           // 闘うか逃げるか: 勇気＝勇敢さ＋怒り−恐怖。安全志向(synSafe)が高いほど退きやすい。
-          const courage = (h.brave || 1) + (h.anger || 0) * 0.5 - (h.fear || 0) * 0.9 - ((h.synSafe || 1) - 1);
+          const courage = (h.brave || 1) + (h.anger || 0) * 0.5 - (h.fear || 0) * 0.9 - ((h.synSafe || 1) - 1) + (h.aspire === 1 ? 0.4 : 0); // 武功の志は怯まない
           if (armed && courage > 0.7) {
             if (d2 < 2.2) { ents.kill(pi); h.food = h.food + 0.3 > 1 ? 1 : h.food + 0.3; h.anger = Math.min(1, (h.anger || 0) + 0.3); } // 撃退・狩り
             else { h.gx = ents.x[pi] | 0; h.gy = ents.y[pi] | 0; h.state = 16; return; }
           } else {
             if (d2 < 2.5) h.food = h.food - 0.05 > 0 ? h.food - 0.05 : 0; // 襲われ負傷
+            h.memDanger = { x: ents.x[pi] | 0, y: ents.y[pi] | 0, t: this._tickN }; // 危険地を記憶
             h.gx = Game.utils.clamp((h.x - dx * 1.4) | 0, 0, world.width - 1);
             h.gy = Game.utils.clamp((h.y - dy * 1.4) | 0, 0, world.height - 1);
             h.state = 8; return;
@@ -2855,11 +2875,27 @@
       }).best;
       if (foe) {
         h.fear = Math.min(1, (h.fear || 0) + 0.6);
+        h.memDanger = { x: foe.x | 0, y: foe.y | 0, t: this._tickN }; // 戦火の地を記憶
         // 敵から離れる向き＋自国の町方向へ退避。
         const ax = h.x - foe.x, ay = h.y - foe.y;
         h.gx = Game.utils.clamp((h.x + ax + (hcx - h.x) * 0.3) | 0, 0, world.width - 1);
         h.gy = Game.utils.clamp((h.y + ay + (hcy - h.y) * 0.3) | 0, 0, world.height - 1);
         h.state = 8; return;
+      }
+    }
+
+    // 0.7) 危険地の記憶（嫌悪学習）: 以前に襲われた/戦火に遭った場所の近くは、差し迫った
+    //      飢えが無ければ避ける（不安を覚え遠ざかる）。時間が経てば記憶は薄れる。
+    if (h.memDanger) {
+      if (this._tickN - h.memDanger.t > CP.dangerTtl) h.memDanger = null;
+      else if (h.food > 0.28) {
+        const ddx = h.x - (h.memDanger.x + 0.5), ddy = h.y - (h.memDanger.y + 0.5);
+        if (ddx * ddx + ddy * ddy < CP.dangerR * CP.dangerR) {
+          h.fear = Math.min(1, (h.fear || 0) + 0.2);
+          h.gx = Game.utils.clamp((h.x + ddx * 1.5) | 0, 0, world.width - 1);
+          h.gy = Game.utils.clamp((h.y + ddy * 1.5) | 0, 0, world.height - 1);
+          h.state = 8; return;
+        }
       }
     }
 
@@ -2907,7 +2943,8 @@
       else { h.gx = hcx; h.gy = hcy; h.state = 2; return; }
     }
     // 3) 行動範囲外 → 自分の町へ帰る（農民・建築家は狭く定住、開拓者・兵士は広く）。
-    const tether = (h.role === ROLE.EXPLORER || h.role === ROLE.SOLDIER) ? CP.tether : CP.tetherSettled;
+    let tether = (h.role === ROLE.EXPLORER || h.role === ROLE.SOLDIER) ? CP.tether : CP.tetherSettled;
+    if (h.aspire === 2) tether *= 1.3; else if (h.aspire === 4) tether *= 0.82; // 探求は広く、家族は近く
     if (hd2 > tether * tether) {
       h.gx = hcx; h.gy = hcy; h.state = 3; return;
     }
@@ -3436,6 +3473,7 @@
   };
   // 工芸の概況（UI 用）: 工芸力・標準の装備段階とその名。
   CivSystem.prototype.gearName = function (t) { return gearName(t); };
+  CivSystem.prototype.aspireName = function (i) { return ASPIRE_NAMES[i] || "立身"; };
   CivSystem.prototype.craftInfo = function (k) {
     const t = craftTier(k);
     const ore = !!((k.res && k.res.ore > 0) || (k.facilities && k.facilities.mine > 0));
