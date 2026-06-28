@@ -386,6 +386,13 @@ test("CivSystem: 金鉱石を集計し、鋳貨を得た国が貨幣を鋳造す
   k.techBits.coin = true;
   for (let t = 0; t < 300; t++) civ.tick(w);
   assert.ok(k.coin > 0, "鋳貨を得ても貨幣が鋳造されない");
+
+  // 文明・時代が合わなくても貨幣は使える: 金鉱石が無くても、交易が盛んなら外国の
+  // 貨幣が流通して貨幣を使える（商業を通じた貨幣の流入）。
+  k.res.gold = 0; w.resource[5 * 30 + 5] = 0; w.resourceList = [];
+  k.coin = 0; k.tradeVol = 50; // 活発な交易（外国貨幣の流入源）
+  for (let t = 0; t < 200; t++) { k.tradeVol = 50; civ.tick(w); }
+  assert.ok(k.coin > 0, "金鉱が無くても交易で貨幣が流通するはず");
 });
 
 test("CivSystem: 王国数は maxKingdoms を超えない", () => {
