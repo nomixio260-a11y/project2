@@ -344,16 +344,18 @@ test("再生成: 新しい世界ボタンでマップが変わる", async () => 
 
   const diff = await page.evaluate(() => {
     const w = Game.state.world;
-    const before = Array.from(w.terrain.slice(0, 2000));
+    // マップ全体を比較する（島マップの上端は一様に海なので、先頭だけの比較では
+    //   新シードでも差が出ず不安定になる。全タイルで比べれば内陸が必ず変わる）。
+    const before = Uint8Array.from(w.terrain);
     Game.regenerate();
-    const w2 = Game.state.world;
-    const after = Array.from(w2.terrain.slice(0, 2000));
+    const after = Game.state.world.terrain;
     let differences = 0;
-    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) differences++;
+    const n = Math.min(before.length, after.length);
+    for (let i = 0; i < n; i++) if (before[i] !== after[i]) differences++;
     return differences;
   });
 
-  assert.ok(diff > 0, "再生成してもマップが変わらない");
+  assert.ok(diff > 100, "再生成してもマップが変わらない: " + diff);
   assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
   await page.close();
 });
