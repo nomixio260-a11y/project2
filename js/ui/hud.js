@@ -27,15 +27,16 @@
     this.el = el;
     this.rows = {};
     this.history = [];
+    // [key, アイコン, 説明（ツールチップ）]
     const defs = [
-      ["pop", "総個体数"],
-      ["herb", "草食"],
-      ["pred", "肉食"],
-      ["kingdoms", "王国"],
-      ["civpop", "人口"],
-      ["nomads", "放浪"],
-      ["fires", "延焼"],
-      ["fps", "FPS"],
+      ["civpop", "👥", "人口"],
+      ["kingdoms", "🏰", "王国数"],
+      ["nomads", "🚶", "放浪者"],
+      ["pop", "🐾", "総個体数"],
+      ["herb", "🦌", "草食動物"],
+      ["pred", "🐺", "肉食動物"],
+      ["fires", "🔥", "延焼"],
+      ["fps", "⚡", "FPS"],
     ];
     el.innerHTML = "";
 
@@ -48,21 +49,26 @@
     this.spark = spark;
     this.sctx = spark.getContext("2d");
 
+    // チップ（アイコン＋値）のグリッド。
+    const chips = document.createElement("div");
+    chips.className = "hud-chips";
     for (let i = 0; i < defs.length; i++) {
       const key = defs[i][0];
-      const row = document.createElement("div");
-      row.className = "hud-row";
-      const l = document.createElement("span");
-      l.className = "hud-label";
-      l.textContent = defs[i][1];
+      const chip = document.createElement("div");
+      chip.className = "hud-chip";
+      chip.title = defs[i][2];
+      const ic = document.createElement("span");
+      ic.className = "hc-ic";
+      ic.textContent = defs[i][1];
       const v = document.createElement("span");
-      v.className = "hud-value";
+      v.className = "hc-val";
       v.textContent = "0";
-      row.appendChild(l);
-      row.appendChild(v);
-      el.appendChild(row);
+      chip.appendChild(ic);
+      chip.appendChild(v);
+      chips.appendChild(chip);
       this.rows[key] = v;
     }
+    el.appendChild(chips);
 
     this.clockEl = document.getElementById("clock");
   };
@@ -89,9 +95,11 @@
     const clk = Game.state.clock;
     if (!this.clockEl || !clk || !clk.season) return;
     const dayInSeason = ((clk.day % Game.config.sim.daysPerSeason) | 0) + 1;
+    // 平常時以外の長期気候（豊穣・旱魃・寒冷など）を併記する。
+    const clim = clk.climate && clk.climate !== "穏やか" ? "  · " + clk.climate : "";
     this.clockEl.textContent =
       clk.season.emoji + " " + clk.season.name +
-      "  " + clk.year + "年 " + dayInSeason + "日";
+      "  " + clk.year + "年 " + dayInSeason + "日" + clim;
   };
 
   Hud.sample = function () {

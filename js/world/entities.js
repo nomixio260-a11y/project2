@@ -17,7 +17,11 @@
     this.energy = new Float32Array(capacity);
     this.age = new Float32Array(capacity); // 経過ティック
     this.alive = new Uint8Array(capacity);
-    this.gene = new Float32Array(capacity); // 体格/俊敏の遺伝子(0.7..1.3)。大=速い・燃費悪い
+    // ===== 遺伝子（いずれも 0.7..1.3, 1.0=標準）。継承＋変異＋自然選択で進化する =====
+    this.gene = new Float32Array(capacity);      // 体格: 大=速い/強いが燃費悪い・大食い
+    this.geneSpd = new Float32Array(capacity);   // 俊敏: 移動速度（逃走・追跡に効く）
+    this.geneSense = new Float32Array(capacity); // 感覚: 危険察知・獲物発見の半径
+    this.geneFert = new Float32Array(capacity);  // 多産: 繁殖しやすさ
     this.thirst = new Float32Array(capacity); // 0..1 渇き
     this.heading = new Float32Array(capacity); // 進行方向(ラジアン)。描画の向き用
 
@@ -29,8 +33,8 @@
     this._freeTop = 0;
   }
 
-  // 新規スポーン。空きが無ければ -1。gene 省略時は 1.0（標準体格）。
-  Entities.prototype.spawn = function (type, x, y, energy, gene) {
+  // 新規スポーン。空きが無ければ -1。各遺伝子は省略時 1.0（標準）。
+  Entities.prototype.spawn = function (type, x, y, energy, gene, gSpd, gSense, gFert) {
     let i;
     if (this._freeTop > 0) {
       i = this._free[--this._freeTop];
@@ -46,6 +50,9 @@
     this.age[i] = 0;
     this.alive[i] = 1;
     this.gene[i] = gene === undefined ? 1 : gene;
+    this.geneSpd[i] = gSpd === undefined ? 1 : gSpd;
+    this.geneSense[i] = gSense === undefined ? 1 : gSense;
+    this.geneFert[i] = gFert === undefined ? 1 : gFert;
     this.thirst[i] = 0;
     this.live++;
     return i;
@@ -64,6 +71,19 @@
     for (let i = 0; i < this.count; i++) {
       if (this.alive[i]) cb(i);
     }
+  };
+
+  // 末尾の死スロットを切り詰めて count（走査上限）を下げる。個体数が激減した後でも
+  // ループが高水位のまま走り続けるのを防ぐ。free-list から count 以上の index を取り除き、
+  // 再利用で count が再拡大しないようにする（生存スロットの index は不変＝参照安全）。
+  Entities.prototype.trim = function () {
+    let c = this.count;
+    while (c > 0 && !this.alive[c - 1]) c--;
+    if (c === this.count) return;
+    this.count = c;
+    const free = this._free; let w = 0;
+    for (let r = 0; r < this._freeTop; r++) { if (free[r] < c) free[w++] = free[r]; }
+    this._freeTop = w;
   };
 
   // 全消去（再生成時）。

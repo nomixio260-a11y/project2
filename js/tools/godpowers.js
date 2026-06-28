@@ -9,6 +9,8 @@
   const classify = function (e, m, t) {
     return Game.tile.classify(e, m, t);
   };
+  // 初期個体に与える遺伝子のばらつき（0.85〜1.15）。これが自然選択の出発点になる。
+  function rg() { return 0.85 + Math.random() * 0.3; }
 
   // 地形を直接セットし、標高もその帯にスナップするヘルパ。
   function paintTerrain(world, x, y, terrain) {
@@ -119,7 +121,7 @@
         const ent = Game.state.entities;
         if (!ent) return;
         if (!Game.tile.isLand(world.getTerrain(x, y))) return;
-        ent.spawn(Game.SPECIES.HERBIVORE, x + 0.5, y + 0.5, 0.7);
+        ent.spawn(Game.SPECIES.HERBIVORE, x + 0.5, y + 0.5, 0.7, rg(), rg(), rg(), rg());
       },
     },
     {
@@ -133,7 +135,7 @@
         const ent = Game.state.entities;
         if (!ent) return;
         if (!Game.tile.isLand(world.getTerrain(x, y))) return;
-        ent.spawn(Game.SPECIES.PREDATOR, x + 0.5, y + 0.5, 0.7);
+        ent.spawn(Game.SPECIES.PREDATOR, x + 0.5, y + 0.5, 0.7, rg(), rg(), rg(), rg());
       },
     },
     {
@@ -238,6 +240,16 @@
           if (dx * dx + dy * dy <= r2 && Math.random() < 0.7) ent.kill(k);
         }
       },
+    },
+    {
+      // 調べる: クリックで人や国を選んで詳細を見る（地形には作用しない）。
+      // 実際の選択は input.applyAt が inspect を検知して Game.inspector に委ねる。
+      id: "inspect",
+      label: "調べる",
+      hotkey: "i",
+      group: "civ",
+      swatch: "#8fd0ff",
+      apply: function () { /* no-op: 選択は inspector が処理 */ },
     },
   ];
 

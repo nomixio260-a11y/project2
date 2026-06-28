@@ -6,6 +6,14 @@
 
   // 役割ごとの被り物の色（ROLE: 0=開拓者,1=農民,2=建築家,3=兵士,4=鍛冶,5=商人,6=神官）。
   const ROLE_HAT = [null, "#4fae4f", "#e08a2a", "#b9c2cc", "#6a6a72", "#d8b84a", "#ece9e0"];
+  // 建物タイプごとの相対サイズ（実世界の規模感に合わせる。index=建物タイプ）。
+  // 0小屋 1家 2邸宅 3砦 4神殿 5農場 6工房 7市場 8兵舎 9穀倉 10鉱山 11大記念碑
+  //              hut  house manor keep temple farm smith mkt barr gran mine wonder acad harbor tavern
+  const BUILD_SIZE = [0.78, 1.0, 1.28, 1.55, 1.4, 0.95, 1.02, 0.88, 1.2, 1.0, 0.85, 2.1, 1.45, 1.15, 0.98];
+  // 個人差の肌・髪の色（人ごとに一意に選ばれ、群衆が多様に見える）。
+  const SKIN = ["#f3cd9b", "#e8b887", "#d9a066", "#c68642", "#a9764b", "#8d5524"];
+  const HAIR = ["#2a1c10", "#4a3422", "#6b4f2a", "#caa84a", "#b5482f", "#15110b"];
+  const LIFE_DEFAULT = { adult: 200, elder: 2600 }; // civ の CP と一致（フォールバック）
 
   // 都市内の家の配置オフセット（タイル単位・安定配置）。
   const CITY_PATTERN = [
@@ -108,7 +116,7 @@
     else if (y > 0 && owner[(y - 1) * W + x] !== id) edge = true;
     else if (y < H - 1 && owner[(y + 1) * W + x] !== id) edge = true;
     if (!edge) { bctx.clearRect(x, y, 1, 1); return; }
-    const c = civ.colorOf(id);
+    const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
     if (!c) { bctx.clearRect(x, y, 1, 1); return; }
     // 視認性のため明るめに。
     const br = function (v) { return Math.min(255, (v * 1.25 + 40) | 0); };
@@ -130,7 +138,7 @@
       if (id === 0 || !civ) {
         tctx.clearRect(x, y, 1, 1);
       } else {
-        const c = civ.colorOf(id);
+        const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
         if (c) {
           tctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
           tctx.fillRect(x, y, 1, 1);
@@ -148,23 +156,62 @@
     this.territoryDirty.length = 0;
   };
 
+  // 領土・国境を全タイル塗り直す（地図ビュー＝区分の切替時に呼ぶ）。
+  Renderer.prototype.repaintTerritory = function () {
+    const world = this.world, civ = Game.state.civ;
+    const W = world.width, H = world.height, owner = world.owner;
+    const tctx = this.territoryCtx, bctx = this.borderCtx;
+    tctx.clearRect(0, 0, W, H);
+    if (bctx) bctx.clearRect(0, 0, W, H);
+    if (!civ) return;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const id = owner[y * W + x];
+        if (id === 0) continue;
+        const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
+        if (c) { tctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")"; tctx.fillRect(x, y, 1, 1); }
+      }
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) this._updateBorderAt(x, y, civ);
+  };
+
+  // 1タイルの陰影係数。標高＋北西から当たる光による起伏の立体感（レリーフ）＋
+  // タイルごとの微細なテクスチャゆらぎを掛け合わせ、平坦な塗りに質感を与える。
+  Renderer.prototype._tileShade = function (world, i, x, y) {
+    const elev = world.elevation, W = world.width;
+    const e = elev[i];
+    const elevShade = 0.80 + 0.20 * e;
+    // 北・西の標高との差で斜面を擬似ライティング（尾根は明るく谷は暗く）。
+    const west = x > 0 ? elev[i - 1] : e;
+    const north = y > 0 ? elev[i - W] : e;
+    let relief = 1 + ((e - west) + (e - north)) * 3.0;
+    if (relief < 0.70) relief = 0.70; else if (relief > 1.36) relief = 1.36;
+    // ハッシュ由来の微細なゆらぎ（同一バイオームの広い面の単調さを崩す。高所では控えめ）。
+    const hsh = (((x * 374761393) + (y * 668265263)) ^ (x * 19349663)) >>> 0 & 255;
+    const amp = e > 0.7 ? 0.04 : 0.066; // 雪・山頂など明るい高所はテクスチャを抑える
+    const tex = (1 - amp * 0.5) + (hsh / 255) * amp;
+    return elevShade * relief * tex;
+  };
+
   // world.terrain 全体を ImageData に書き出してオフスクリーンへ。
   Renderer.prototype.fullRedraw = function () {
     const world = this.world;
     const data = this.imageData.data;
     const rgb = Game.TERRAIN_RGB;
     const terrain = world.terrain;
-    const elev = world.elevation;
-    const n = world.width * world.height;
-    for (let i = 0; i < n; i++) {
-      const c = rgb[terrain[i]];
-      // 標高で軽くシェーディングして起伏を見せる。
-      const shade = 0.78 + 0.22 * elev[i];
-      const o = i * 4;
-      data[o] = c[0] * shade;
-      data[o + 1] = c[1] * shade;
-      data[o + 2] = c[2] * shade;
-      data[o + 3] = 255;
+    const W = world.width, H = world.height;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const c = rgb[terrain[i]];
+        let s = this._tileShade(world, i, x, y);
+        const o = i * 4;
+        let r = c[0] * s, g = c[1] * s, b = c[2] * s;
+        data[o] = r > 255 ? 255 : r;
+        data[o + 1] = g > 255 ? 255 : g;
+        data[o + 2] = b > 255 ? 255 : b;
+        data[o + 3] = 255;
+      }
     }
     this.terrainCtx.putImageData(this.imageData, 0, 0);
   };
@@ -185,9 +232,9 @@
       const y = this.dirty[k + 1];
       const i = y * world.width + x;
       const c = rgb[world.terrain[i]];
-      const shade = 0.78 + 0.22 * world.elevation[i];
-      tctx.fillStyle =
-        "rgb(" + ((c[0] * shade) | 0) + "," + ((c[1] * shade) | 0) + "," + ((c[2] * shade) | 0) + ")";
+      const shade = this._tileShade(world, i, x, y);
+      const r = Math.min(255, (c[0] * shade) | 0), g = Math.min(255, (c[1] * shade) | 0), b = Math.min(255, (c[2] * shade) | 0);
+      tctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
       tctx.fillRect(x, y, 1, 1);
     }
     this.dirty.length = 0;
@@ -243,11 +290,17 @@
     ctx.drawImage(this.borderCanvas, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
 
+    // 戦略資源（鉱石・漁場・宝石）。
+    this.drawResources(camera);
+
     // 街道（首都と各都市を結ぶ）。
     this.drawRoads(camera);
 
     // 交易路（同盟国の首都を結ぶ金色の線）。
     this.drawTradeRoutes(camera);
+
+    // 街道・交易路を行き交う荷馬車（経済が見える）。
+    this.drawCaravans(camera);
 
     // 炎オーバーレイ（地形の上、生物の下）。
     this.drawFire(camera);
@@ -255,11 +308,17 @@
     // 都市マーカー（領土の上）。
     this.drawCities(camera);
 
+    // 戦場の痕跡（戦死地点。生物・市民の下）。
+    this.drawMarks(camera);
+
     // 生物オーバーレイ。
     this.drawEntities(camera);
 
     // 市民（人間）エージェント。
     this.drawPeople(camera);
+
+    // 選択ハイライト（インスペクタで選んだ対象）。
+    this.drawSelection(camera);
 
     // 天候（雲の影・雨・落雷）。
     this.drawWeather(camera);
@@ -289,12 +348,12 @@
     const n = e.count;
 
     if (scale < 6) {
-      // 遠景: 種別ごとに一括（fillStyle 切替を最小化）。
-      const px = Math.max(1, scale * 0.55);
-      const half = px * 0.5;
+      // 遠景: 種別ごとに一括（fillStyle 切替を最小化）。肉食は小さめの点。
       const colors = ["#f2e3b0", "#e0473a"]; // [草食, 肉食]
+      const pxBy = [Math.max(1, scale * 0.52), Math.max(1, scale * 0.4)]; // [草食, 肉食]
       for (let sp = 0; sp < 2; sp++) {
         ctx.fillStyle = colors[sp];
+        const px = pxBy[sp], half = px * 0.5;
         for (let i = 0; i < n; i++) {
           if (!e.alive[i] || e.type[i] !== sp) continue;
           const x = e.x[i];
@@ -336,13 +395,23 @@
       if (sprites) {
         // 進行方向で左右反転。heading 0 = 右。
         const faceLeft = Math.cos(e.heading[i] || 0) < 0;
-        const dh = Math.max(6, scale * 1.0 * gene);
+        // 仔は小さく、成長で大人サイズへ（生まれて 140 ティックで一人前）。
+        const age = e.age ? e.age[i] : 999;
+        const grow = age < 140 ? (0.5 + 0.5 * (age / 140)) : 1;
+        // 種別で実寸が違う: 草食(鹿)は人よりやや大きく、肉食(狼)は人より小さい。
+        const species = type === SP.PREDATOR ? 0.66 : 0.96;
+        const dh = Math.max(5, scale * species * gene * grow);
         // 歩行: 脚の2コマ切替＋上下のバウンドで「動いてる感」を出す。
         const ph = moving ? t * 7 + i * 0.9 : 0;
         const frame = moving && Math.sin(ph) > 0 ? 1 : 0;
         const bob = moving ? Math.abs(Math.sin(ph)) * dh * 0.10 : 0;
         const spr = sprites.get(type, faceLeft, frame);
         const dw = dh * (spr.width / spr.height);
+        // 接地影（地面に落として立体感を出す。バウンドしても影は地面に固定）。
+        ctx.fillStyle = "rgba(0,0,0,0.22)";
+        ctx.beginPath();
+        ctx.ellipse(sx, sy + dh * 0.34, dw * 0.36, dh * 0.12, 0, 0, Math.PI * 2);
+        ctx.fill();
         ctx.drawImage(spr, sx - dw * 0.5, sy - dh * 0.5 - bob, dw, dh);
       } else {
         // フォールバック（スプライト未ロード時）。
@@ -385,6 +454,26 @@
       const col = k ? k.color : [150, 140, 122];
       const body = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
 
+      // 航海中の入植者は船で描く（海の上を進む）。
+      if (person.sailing) {
+        const uu = Math.max(1, Math.round(scale * 0.1));
+        const faceL = (person.hx || 0) < -0.001;
+        // 帆。
+        ctx.fillStyle = "#ece6d2";
+        ctx.fillRect(sx - uu, sy - 4 * uu, uu, 3 * uu);
+        ctx.fillStyle = "#6b4a2a"; // マスト
+        ctx.fillRect(sx, sy - 4 * uu, Math.max(1, uu * 0.5) | 0 || 1, 4 * uu);
+        // 船体。
+        ctx.fillStyle = "#5a3d24";
+        ctx.fillRect(sx - 3 * uu, sy, 6 * uu, 2 * uu);
+        ctx.fillStyle = "#7a5230";
+        ctx.fillRect(sx - 2 * uu, sy - uu, 4 * uu, uu);
+        // 航跡。
+        ctx.fillStyle = "rgba(220,235,255,0.5)";
+        ctx.fillRect(sx + (faceL ? 3 * uu : -4 * uu), sy + uu, uu, uu);
+        continue;
+      }
+
       if (!detailed) {
         // 遠景: 頭＋胴の2ドット。
         ctx.fillStyle = body;
@@ -394,78 +483,104 @@
         continue;
       }
 
-      // 近景: ちゃんとした人型（向きに応じて顔/腕を寄せる）。
+      // 近景: 個人差（肌・髪）と年齢段階（子供は小さく成長、老人は白髪）を持つ人型。
       const faceLeft = (person.hx || 0) < -0.001;
       const fd = faceLeft ? -1 : 1;
+      // 個体の見た目を一度だけ決める（描画専用なので乱数で可）。
+      let lk = person.look;
+      if (lk === undefined) { lk = person.look = (Math.random() * 0x7fffffff) | 0; }
+      // 肌・髪は人種から（civ が設定）。未設定なら従来のランダム配色にフォールバック。
+      const skin = person.skinCol || SKIN[lk % SKIN.length];
+      const LIFE = Game.lifeStages || LIFE_DEFAULT;
+      const age = person.age || 0;
+      const isChild = age < LIFE.adult;
+      const isElder = age >= LIFE.elder;
+      const hair = isElder ? "#dcdcdc" : (person.hairCol || HAIR[(lk >> 5) % HAIR.length]);
+      // 年齢で体格が変わる（誕生時0.55→成人で1.0、老人は0.95）。人種の体格(build)も乗算。
+      const ageGrow = isChild ? (0.55 + 0.45 * (age / LIFE.adult)) : (isElder ? 0.95 : 1);
+      const grow = ageGrow * (person.build || 1);
+      const uu = Math.max(1, Math.round(u * grow));
       // 歩行の振り（脚は前後、腕は逆位相）＋胴の小さなバウンド。
       const ph = moving ? t * 6 + p * 0.7 : 0;
-      const sw = moving ? Math.round(Math.sin(ph) * u) : 0; // -u..u
-      const ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * u * 0.5) : 0; // 上下動
+      const sw = moving ? Math.round(Math.sin(ph) * uu) : 0; // -uu..uu
+      const ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * uu * 0.5) : 0; // 上下動
       // 影。
       ctx.fillStyle = "rgba(0,0,0,0.30)";
-      ctx.fillRect(sx - 2 * u, sy + 3 * u, 4 * u, u);
+      ctx.fillRect(sx - 2 * uu, sy + 3 * uu, 4 * uu, uu);
       // 脚（暗・交互に踏み出す）。
       ctx.fillStyle = "#3a2f1e";
-      ctx.fillRect(sx - 2 * u + sw, sy + u, 2 * u, 2 * u);
-      ctx.fillRect(sx - sw, sy + u, 2 * u, 2 * u);
+      ctx.fillRect(sx - 2 * uu + sw, sy + uu, 2 * uu, 2 * uu);
+      ctx.fillRect(sx - sw, sy + uu, 2 * uu, 2 * uu);
       // 胴（王国色）。
       ctx.fillStyle = body;
-      ctx.fillRect(sx - 2 * u, sy - 2 * u + ob, 4 * u, 3 * u);
+      ctx.fillRect(sx - 2 * uu, sy - 2 * uu + ob, 4 * uu, 3 * uu);
       // 腕（肌・歩行で前後に振る＝脚と逆）。
-      ctx.fillStyle = "#e9bd8e";
-      ctx.fillRect(sx - 3 * u - sw, sy - 2 * u + ob, u, 2 * u);
-      ctx.fillRect(sx + 2 * u + sw, sy - 2 * u + ob, u, 2 * u);
+      ctx.fillStyle = skin;
+      ctx.fillRect(sx - 3 * uu - sw, sy - 2 * uu + ob, uu, 2 * uu);
+      ctx.fillRect(sx + 2 * uu + sw, sy - 2 * uu + ob, uu, 2 * uu);
       // 頭（肌）。
-      ctx.fillStyle = "#f3cd9b";
-      ctx.fillRect(sx - 2 * u, sy - 5 * u + ob, 4 * u, 3 * u);
-      // 髪（暗）。
-      ctx.fillStyle = "#4a3422";
-      ctx.fillRect(sx - 2 * u, sy - 5 * u + ob, 4 * u, u);
+      ctx.fillStyle = skin;
+      ctx.fillRect(sx - 2 * uu, sy - 5 * uu + ob, 4 * uu, 3 * uu);
+      // 髪（老人は白髪）。
+      ctx.fillStyle = hair;
+      ctx.fillRect(sx - 2 * uu, sy - 5 * uu + ob, 4 * uu, uu);
       // 目（向き側に1ドット）。
       ctx.fillStyle = "#2a1c10";
-      ctx.fillRect(sx + (fd > 0 ? u : -2 * u), sy - 4 * u + ob, u, u);
-      // 役割の帽子。
-      const hat = ROLE_HAT[person.role];
-      if (hat) {
-        ctx.fillStyle = hat;
-        ctx.fillRect(sx - 2 * u, sy - 6 * u + ob, 4 * u, u);
+      ctx.fillRect(sx + (fd > 0 ? uu : -2 * uu), sy - 4 * uu + ob, uu, uu);
+      // 役割の帽子（子供は被らない）。
+      if (!isChild) {
+        const hat = ROLE_HAT[person.role];
+        if (hat) {
+          ctx.fillStyle = hat;
+          ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, uu);
+        }
+      }
+      // 名のある人物（英傑・賢人）には金の輝きを頭上に灯す（社会の傑物を可視化）。
+      if (person._famed) {
+        const tw = 0.6 + 0.4 * Math.sin(t * 4 + p); // きらめき
+        ctx.fillStyle = "rgba(255,224,120," + tw.toFixed(2) + ")";
+        ctx.fillRect(sx, sy - 8 * uu + ob, uu, uu);          // 上の光点
+        ctx.fillRect(sx - uu, sy - 7 * uu + ob, 3 * uu, uu); // 横の光（小さな星形）
       }
 
-      // 道具・武器（役割と装備段階 gear で見た目が変わる＝実際に持って使う）。
-      const g = person.gear || 0;
-      const metal = g >= 4 ? "#e8eef4" : g >= 3 ? "#cdd6df" : g >= 2 ? "#c9a24a" : g >= 1 ? "#b98c4a" : "#9a9a9a";
-      const wood = "#6b4a2a";
-      const hxp = fd > 0 ? sx + 2 * u : sx - 3 * u; // 手の位置
-      switch (person.role) {
-        case 3: // 兵士: 槍（鋼が進むと剣に鍔がつく）
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * u + ob, u, 7 * u);
-          ctx.fillStyle = metal; ctx.fillRect(hxp, sy - 6 * u + ob, u, 2 * u);
-          if (g >= 3) { ctx.fillStyle = metal; ctx.fillRect(hxp - u, sy - 5 * u + ob, 3 * u, u); }
-          break;
-        case 1: // 農民: 鍬
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * u + ob, u, 6 * u);
-          ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? u : -u), sy - 4 * u + ob, u, u);
-          break;
-        case 2: // 建築家: 槌
-        case 4: // 鍛冶: 槌（頭は鉄黒）
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * u + ob, u, 5 * u);
-          ctx.fillStyle = person.role === 4 ? "#55585f" : metal;
-          ctx.fillRect(hxp - u, sy - 4 * u + ob, 3 * u, 2 * u);
-          break;
-        case 6: // 神官: 杖（先端が金色）
-          ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * u + ob, u, 7 * u);
-          ctx.fillStyle = "#e8d05a"; ctx.fillRect(hxp, sy - 6 * u + ob, u, u);
-          break;
-        case 5: // 商人: 背中の荷
-          ctx.fillStyle = "#7a5a32";
-          ctx.fillRect(fd > 0 ? sx - 3 * u : sx + 2 * u, sy - 2 * u + ob, u, 3 * u);
-          break;
+      // 道具・武器（子供は持たない。役割と装備段階 gear で見た目が変わる＝実際に持って使う）。
+      if (!isChild) {
+        const g = person.gear || 0;
+        const metal = g >= 4 ? "#e8eef4" : g >= 3 ? "#cdd6df" : g >= 2 ? "#c9a24a" : g >= 1 ? "#b98c4a" : "#9a9a9a";
+        const wood = "#6b4a2a";
+        const hxp = fd > 0 ? sx + 2 * uu : sx - 3 * uu; // 手の位置
+        switch (person.role) {
+          case 3: // 兵士: 槍（鋼が進むと剣に鍔がつく）
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob, uu, 7 * uu);
+            ctx.fillStyle = metal; ctx.fillRect(hxp, sy - 6 * uu + ob, uu, 2 * uu);
+            if (g >= 3) { ctx.fillStyle = metal; ctx.fillRect(hxp - uu, sy - 5 * uu + ob, 3 * uu, uu); }
+            break;
+          case 1: // 農民: 鍬
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * uu + ob, uu, 6 * uu);
+            ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? uu : -uu), sy - 4 * uu + ob, uu, uu);
+            break;
+          case 2: // 建築家: 槌
+          case 4: // 鍛冶: 槌（頭は鉄黒）
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * uu + ob, uu, 5 * uu);
+            ctx.fillStyle = person.role === 4 ? "#55585f" : metal;
+            ctx.fillRect(hxp - uu, sy - 4 * uu + ob, 3 * uu, 2 * uu);
+            break;
+          case 6: // 神官: 杖（先端が金色）
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob, uu, 7 * uu);
+            ctx.fillStyle = "#e8d05a"; ctx.fillRect(hxp, sy - 6 * uu + ob, uu, uu);
+            break;
+          case 5: // 商人: 背中の荷
+            ctx.fillStyle = "#7a5a32";
+            ctx.fillRect(fd > 0 ? sx - 3 * uu : sx + 2 * uu, sy - 2 * uu + ob, uu, 3 * uu);
+            break;
+        }
       }
     }
   };
 
   // 天候: 雲の影を地表に落とし、雨域を青く翳らせ、落雷を白く閃かせる。
   Renderer.prototype.drawWeather = function (camera) {
+    if (Game.config.settings && Game.config.settings.weather === false) return;
     const weather = Game.state.weather;
     if (!weather || !weather.clouds || weather.clouds.length === 0) return;
     const tile = Game.config.tilePx;
@@ -502,6 +617,7 @@
   // 昼夜の環境光オーバーレイ。夜は青く暗く、朝夕は暖色。夜は都市が灯る。
   Renderer.prototype.drawDayNight = function (camera) {
     if (!Game.lighting) return;
+    if (Game.config.settings && Game.config.settings.dayNight === false) return;
     const L = Game.lighting(Game.state.clock);
     const ctx = this.ctx;
     const W = this.cssW;
@@ -553,6 +669,124 @@
     ctx.restore();
   };
 
+  // 戦略資源を地図上に小さなアイコンで描く（一定以上ズーム時）。
+  Renderer.prototype.drawResources = function (camera) {
+    if (Game.config.settings && Game.config.settings.resources === false) return;
+    const world = this.world;
+    const list = world.resourceList;
+    if (!list || !list.length) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 3) return; // 小さすぎる時は省略
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const s = Math.max(3, scale * 0.5);
+    for (let k = 0; k < list.length; k++) {
+      const r = list[k];
+      if (r.x < range.x0 || r.x > range.x1 || r.y < range.y0 || r.y > range.y1) continue;
+      const cx = camera.worldToScreenX((r.x + 0.5) * tile);
+      const cy = camera.worldToScreenY((r.y + 0.5) * tile);
+      if (r.t === 1) { // 鉱石: 岩塊＋鉱脈の粒
+        ctx.fillStyle = "#574f47"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+        ctx.fillStyle = "#c9a24a"; ctx.fillRect(cx - s * 0.22, cy - s * 0.12, s * 0.26, s * 0.26);
+        ctx.fillStyle = "#e7decb"; ctx.fillRect(cx + s * 0.05, cy + s * 0.04, s * 0.2, s * 0.2);
+      } else if (r.t === 2) { // 漁場: 波と魚影
+        ctx.fillStyle = "rgba(190,230,248,0.85)"; ctx.fillRect(cx - s * 0.5, cy + s * 0.15, s, s * 0.18);
+        ctx.fillStyle = "#34637e"; ctx.fillRect(cx - s * 0.28, cy - s * 0.22, s * 0.5, s * 0.22);
+        ctx.fillStyle = "#34637e"; ctx.fillRect(cx + s * 0.22, cy - s * 0.16, s * 0.14, s * 0.1);
+      } else if (r.t === 4) { // 金鉱石: 岩塊に輝く金塊
+        ctx.fillStyle = "#5a4a36"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+        ctx.fillStyle = "#f3c433"; ctx.fillRect(cx - s * 0.2, cy - s * 0.16, s * 0.32, s * 0.3);
+        ctx.fillStyle = "#ffe98a"; ctx.fillRect(cx - s * 0.1, cy - s * 0.08, s * 0.14, s * 0.14);
+        ctx.fillStyle = "#fff6cf"; ctx.fillRect(cx + s * 0.12, cy + s * 0.06, s * 0.12, s * 0.12);
+      } else if (r.t === 5) { // 馬: 草地の駿馬（胴＋脚＋首）
+        ctx.fillStyle = "#7a4a28"; ctx.fillRect(cx - s * 0.34, cy - s * 0.16, s * 0.62, s * 0.3); // 胴
+        ctx.fillRect(cx + s * 0.18, cy - s * 0.42, s * 0.16, s * 0.3); // 首
+        ctx.fillStyle = "#5e3a20"; ctx.fillRect(cx - s * 0.28, cy + s * 0.12, s * 0.1, s * 0.26); ctx.fillRect(cx + s * 0.1, cy + s * 0.12, s * 0.1, s * 0.26); // 脚
+      } else if (r.t === 6) { // 香辛料: 色鮮やかな実・葉
+        ctx.fillStyle = "#3f8f3a"; ctx.fillRect(cx - s * 0.4, cy + s * 0.1, s * 0.8, s * 0.16); // 葉床
+        ctx.fillStyle = "#d8542a"; ctx.fillRect(cx - s * 0.28, cy - s * 0.2, s * 0.22, s * 0.22);
+        ctx.fillStyle = "#e8a23a"; ctx.fillRect(cx + s * 0.02, cy - s * 0.26, s * 0.2, s * 0.2);
+        ctx.fillStyle = "#c23030"; ctx.fillRect(cx + s * 0.16, cy + s * 0.0, s * 0.16, s * 0.16);
+      } else if (r.t === 7) { // 塩: 白い結晶の山
+        ctx.fillStyle = "#eef2f6";
+        ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.42); ctx.lineTo(cx + s * 0.42, cy + s * 0.34); ctx.lineTo(cx - s * 0.42, cy + s * 0.34); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(cx - s * 0.08, cy - s * 0.1, s * 0.16, s * 0.16);
+        ctx.fillStyle = "#c7d2dc"; ctx.fillRect(cx - s * 0.3, cy + s * 0.22, s * 0.6, s * 0.1);
+      } else if (r.t === 8) { // 良材: 積まれた丸太
+        ctx.fillStyle = "#6b4a2a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.84, s * 0.22);
+        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.2);
+        ctx.fillStyle = "#caa06a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.14, s * 0.22); ctx.fillRect(cx + s * 0.28, cy - s * 0.06, s * 0.14, s * 0.22); // 木口
+        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.12, s * 0.2);
+      } else { // 宝石: きらめく結晶
+        ctx.fillStyle = "#46d6c8";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - s * 0.5); ctx.lineTo(cx + s * 0.4, cy);
+        ctx.lineTo(cx, cy + s * 0.5); ctx.lineTo(cx - s * 0.4, cy); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fillRect(cx - s * 0.08, cy - s * 0.25, s * 0.16, s * 0.22);
+      }
+    }
+  };
+
+  // 街道・交易路を行き交う荷馬車。経済の流れを可視化する（一定以上ズーム時）。
+  Renderer.prototype.drawCaravans = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 2.5) return;
+    const ctx = this.ctx;
+    const ks = civ.kingdoms;
+    const t = this._t;
+    const range = camera.visibleTileRange();
+    const size = Math.max(3, scale * 0.5);
+    const self = this;
+    function wagon(ax, ay, bx, by, frac, col) {
+      const x = ax + (bx - ax) * frac, y = ay + (by - ay) * frac;
+      if (x < range.x0 - 1 || x > range.x1 + 1 || y < range.y0 - 1 || y > range.y1 + 1) return;
+      const sx = camera.worldToScreenX((x + 0.5) * tile);
+      const sy = camera.worldToScreenY((y + 0.5) * tile);
+      ctx.fillStyle = "rgba(0,0,0,0.3)";
+      ctx.fillRect(sx - size * 0.5, sy + size * 0.32, size, size * 0.18); // 影
+      ctx.fillStyle = col || "#7a5230";
+      ctx.fillRect(sx - size * 0.5, sy - size * 0.3, size, size * 0.6);   // 荷台
+      ctx.fillStyle = "#d8c49a";
+      ctx.fillRect(sx - size * 0.42, sy - size * 0.5, size * 0.84, size * 0.28); // 幌
+      ctx.fillStyle = "#15100a"; // 車輪
+      ctx.fillRect(sx - size * 0.4, sy + size * 0.28, size * 0.2, size * 0.2);
+      ctx.fillRect(sx + size * 0.2, sy + size * 0.28, size * 0.2, size * 0.2);
+    }
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      const cap = k.cities[0];
+      // 街道: 首都⇄各都市をゆっくり往復。
+      for (let c = 1; c < k.cities.length; c++) {
+        const city = k.cities[c];
+        const frac = Math.sin(t * 0.35 + id * 1.3 + c * 2.1) * 0.5 + 0.5;
+        wagon(cap.x, cap.y, city.x, city.y, frac);
+      }
+      // 交易路: 実際に交易のある首都間を金色寄りの荷馬車が往来（活発な路ほど多くの隊商）。
+      if (k.partners) {
+        for (const bStr in k.partners) {
+          const b = +bStr;
+          if (b <= id) continue;
+          const kb = ks[b];
+          if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+          const vol = k.partners[b] || 0;
+          if (vol < 0.5) continue;
+          const cap2 = kb.cities[0];
+          // 交易量に応じて1〜3台の隊商を時間差で走らせる。
+          const wagons = vol > 8 ? 3 : vol > 3 ? 2 : 1;
+          for (let wagi = 0; wagi < wagons; wagi++) {
+            const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
+            wagon(cap.x, cap.y, cap2.x, cap2.y, frac, "#9a7a3a");
+          }
+        }
+      }
+    }
+  };
+
   // 街道: 各国の首都と都市を結ぶ線。
   Renderer.prototype.drawRoads = function (camera) {
     const civ = Game.state.civ;
@@ -587,7 +821,7 @@
     ctx.restore();
   };
 
-  // 交易路: 同盟国どうしの首都を金色の点線で結ぶ。
+  // 交易路: 実際に交易のある国どうしの首都を金色の点線で結ぶ（太さは交易量に比例）。
   Renderer.prototype.drawTradeRoutes = function (camera) {
     const civ = Game.state.civ;
     if (!civ || !civ.kingdoms) return;
@@ -597,19 +831,23 @@
     const ctx = this.ctx;
     const ks = civ.kingdoms;
     ctx.save();
-    ctx.strokeStyle = "rgba(240,200,90,0.55)";
-    ctx.lineWidth = Math.max(1, scale * 0.14);
     ctx.setLineDash([Math.max(3, scale), Math.max(2, scale * 0.7)]);
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
-      if (!k || !k.alive || !k.allies) continue;
+      if (!k || !k.alive || !k.partners || !k.cities || !k.cities.length) continue;
       const c0 = k.cities[0];
-      for (const bStr in k.allies) {
+      for (const bStr in k.partners) {
         const b = +bStr;
         if (b <= id) continue;
         const kb = ks[b];
-        if (!kb || !kb.alive) continue;
+        if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+        const vol = k.partners[b] || 0;
+        if (vol < 0.5) continue;
         const c1 = kb.cities[0];
+        // 交易量で線の濃さ・太さを変える（活発な通商路ほど太く明るい）。
+        const a = Math.min(0.7, 0.2 + vol * 0.04);
+        ctx.strokeStyle = "rgba(240,200,90," + a.toFixed(2) + ")";
+        ctx.lineWidth = Math.max(1, scale * (0.08 + Math.min(0.16, vol * 0.012)));
         ctx.beginPath();
         ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
         ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));
@@ -622,6 +860,7 @@
 
   // 国名ラベルを首都の上に描画。
   Renderer.prototype.drawLabels = function (camera) {
+    if (Game.config.settings && Game.config.settings.labels === false) return;
     const civ = Game.state.civ;
     if (!civ || !civ.kingdoms) return;
     const tile = Game.config.tilePx;
@@ -691,16 +930,21 @@
         // 近景: 人間が建てた実際の建物を描く。
         const bs = city.buildings;
         if (bs && bs.length) {
-          // 建物は人物より明確に大きく（世界が小さく見えないように）。
-          const size = Math.max(10, scale * 1.95);
+          // 建物は人物より明確に大きく（家で約2タイル幅を基準に、種別で増減）。
+          const size = Math.max(10, scale * 1.6);
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
             const img = sprites.building(bd.t);
-            // 砦・神殿・兵舎は街のランドマークとして大きめに描く。
-            const bw = bd.t === 3 ? size * 1.4 : (bd.t === 4 || bd.t === 8) ? size * 1.2 : size;
+            // 種別ごとの相対サイズ: 小屋は小さく、邸宅・砦・神殿・記念碑は大きく。
+            const bw = size * (BUILD_SIZE[bd.t] || 1);
             const bh = bw * (img.height / img.width);
             const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
             const by = camera.worldToScreenY((bd.y + 0.5) * tile);
+            // 接地影（建物の足元に落として街に立体感を出す）。
+            ctx.fillStyle = "rgba(0,0,0,0.26)";
+            ctx.beginPath();
+            ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
+            ctx.fill();
             ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
           }
         }
@@ -713,6 +957,59 @@
       }
     }
     ctx.restore();
+  };
+
+  // インスペクタで選択した対象に、脈打つ輪のハイライトを描く。
+  Renderer.prototype.drawSelection = function (camera) {
+    const sel = Game.state.selection;
+    if (!sel) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    const ctx = this.ctx;
+    const sx = camera.worldToScreenX(sel.x * tile);
+    const sy = camera.worldToScreenY(sel.y * tile);
+    const base = sel.kind === "nation" ? Math.max(14, scale * 1.6) : Math.max(9, scale * 0.9);
+    const pulse = 1 + 0.16 * Math.sin(this._t * 4);
+    const r = base * pulse;
+    ctx.save();
+    ctx.lineWidth = Math.max(1.5, scale * 0.08);
+    ctx.strokeStyle = sel.color || "#8fd0ff";
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    // 内側に薄い白で視認性を上げる。
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = Math.max(1, scale * 0.04);
+    ctx.beginPath();
+    ctx.arc(sx, sy, r - Math.max(2, scale * 0.08), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  // 戦場の痕跡（戦死地点）を、時間で薄れる赤黒い染みで描く。
+  Renderer.prototype.drawMarks = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.marks || !civ.marks.length) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 2) return;
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const marks = civ.marks;
+    const s = Math.max(2, scale * 0.5);
+    for (let m = 0; m < marks.length; m++) {
+      const mk = marks[m];
+      if (mk.x < range.x0 || mk.x > range.x1 || mk.y < range.y0 || mk.y > range.y1) continue;
+      const a = (mk.ttl / mk.life) * 0.6; // 時間で薄れる
+      const cx = camera.worldToScreenX((mk.x + 0.5) * tile);
+      const cy = camera.worldToScreenY((mk.y + 0.5) * tile);
+      ctx.fillStyle = "rgba(110,18,16," + a.toFixed(3) + ")";
+      ctx.fillRect(cx - s * 0.5, cy - s * 0.35, s, s * 0.7);
+      ctx.fillStyle = "rgba(60,10,10," + a.toFixed(3) + ")";
+      ctx.fillRect(cx - s * 0.2, cy - s * 0.12, s * 0.4, s * 0.28);
+    }
   };
 
   // 燃焼中タイルを可視範囲だけ揺らぐグローで描画。
@@ -751,6 +1048,7 @@
   Renderer.prototype.drawBrushPreview = function (camera) {
     const mt = Game.state.mouseTile;
     if (!Game.state.brush || mt.x < 0) return;
+    if (Game.state.activeToolId === "inspect") return; // 調べるツールはブラシ円を出さない
     const cfg = Game.config;
     const tile = cfg.tilePx;
     const r = Game.state.brush.size;

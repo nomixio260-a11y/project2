@@ -47,7 +47,7 @@
   // 歩行アニメ用に脚の2フレーム（脚を立てる/踏み出す）を用意する。
   // フレーム0＝直立、フレーム1＝脚を斜めに踏み出した姿勢。
   const HERB0 = [
-    "..........",
+    "......O.O.",
     "......OOO.",
     ".OOOOOOBBO",
     "OBLLLBBBEO",
@@ -57,7 +57,7 @@
     ".D.D.D.D..",
   ];
   const HERB1 = [
-    "..........",
+    "......O.O.",
     "......OOO.",
     ".OOOOOOBBO",
     "OBLLLBBBEO",
@@ -76,7 +76,7 @@
 
   // ===== 肉食動物（狼/狐風・右向き）=====
   const PRED0 = [
-    "..........",
+    ".......O.O",
     ".......OOO",
     "O.OOOOOBBO",
     "OBBBBBBBEO",
@@ -86,7 +86,7 @@
     ".D.D.D.D..",
   ];
   const PRED1 = [
-    "..........",
+    ".......O.O",
     ".......OOO",
     "O.OOOOOBBO",
     "OBBBBBBBEO",
@@ -279,6 +279,81 @@
     O: [60, 44, 28], Y: [180, 150, 90], W: [200, 180, 140], G: [230, 200, 110],
   };
 
+  // 鉱山（岩肌の坑口＋支柱＋トロッコ）。
+  const MINE = [
+    "OOOOOOOO",
+    "OKKKKKKO",
+    "OKWTTWKO",
+    "OKTBBTKO",
+    "OKTBBTKO",
+    "OKTBBTKO",
+    "O.RCCR.O",
+    "OOOOOOOO",
+  ];
+  const MINE_PAL = {
+    O: [44, 40, 36], K: [104, 98, 90], W: [78, 64, 44], T: [92, 74, 50], B: [26, 22, 20], R: [60, 50, 40], C: [150, 120, 70],
+  };
+
+  // 大記念碑（金色の大尖塔。国の誇りのランドマーク）。
+  const WONDER = [
+    "...OO...",
+    "...GG...",
+    "...GG...",
+    "...GG...",
+    "..GGGG..",
+    "..GWWG..",
+    ".GGGGGG.",
+    ".GWGGWG.",
+    "GGGGGGGG",
+    "OOOOOOOO",
+  ];
+  const WONDER_PAL = {
+    G: [228, 202, 110], W: [122, 92, 40], O: [86, 72, 44],
+  };
+
+  // 学院（青い丸屋根の学び舎＋列柱）。知の府。
+  const ACADEMY = [
+    "...DD...",
+    "..DBBD..",
+    ".DBBBBD.",
+    "OWWWWWWO",
+    "OC.CC.CO",
+    "OC.CC.CO",
+    "OCCCCCCO",
+    "OOOOOOOO",
+  ];
+  const ACADEMY_PAL = {
+    O: [70, 78, 96], W: [206, 210, 224], C: [170, 184, 210], B: [86, 150, 210], D: [54, 96, 150],
+  };
+  // 港（桟橋＋停泊する帆船＋波）。沿岸の漁と海上交易。
+  const HARBOR = [
+    "....M...",
+    "....M...",
+    "..SSSS..",
+    ".OHHHHO.",
+    "OHHHHHHO",
+    "BBBBBBBB",
+    "wBwwBwBw",
+    "wwwwwwww",
+  ];
+  const HARBOR_PAL = {
+    O: [70, 52, 34], H: [122, 90, 56], B: [86, 64, 42], S: [236, 232, 218], M: [80, 60, 40], w: [60, 110, 150],
+  };
+  // 酒場（茶色い切妻屋根＋掛け看板＋灯のともる窓）。娯楽と憩い。
+  const TAVERN = [
+    "..OOOO..",
+    ".ORRRRO.",
+    "ORRRRRRO",
+    "OWFWWFWO",
+    "OWWWWWWS",
+    "OWFWWDWS",
+    "OWWWWDWO",
+    "OOOOOOOO",
+  ];
+  const TAVERN_PAL = {
+    O: [54, 38, 26], R: [150, 80, 46], W: [196, 168, 120], F: [240, 200, 110], D: [86, 56, 32], S: [120, 90, 50],
+  };
+
   const _b = {};
   function bget(key, grid, pal) { return _b[key] || (_b[key] = build(grid, pal)); }
   Game.sprites.house = function () { return bget("house", HOUSE, HOUSE_PAL); };
@@ -291,9 +366,15 @@
   Game.sprites.market = function () { return bget("market", MARKET, MARKET_PAL); };
   Game.sprites.barracks = function () { return bget("barracks", BARRACKS, BARRACKS_PAL); };
   Game.sprites.granary = function () { return bget("granary", GRANARY, GRANARY_PAL); };
+  Game.sprites.mine = function () { return bget("mine", MINE, MINE_PAL); };
+  Game.sprites.wonder = function () { return bget("wonder", WONDER, WONDER_PAL); };
+  Game.sprites.academy = function () { return bget("academy", ACADEMY, ACADEMY_PAL); };
+  Game.sprites.harbor = function () { return bget("harbor", HARBOR, HARBOR_PAL); };
+  Game.sprites.tavern = function () { return bget("tavern", TAVERN, TAVERN_PAL); };
 
   // 建物タイプID → スプライト（civ の Game.BUILDING と対応）。
-  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉。
+  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉,
+  // 10=鉱山,11=大記念碑,12=学院,13=港,14=酒場。
   Game.sprites.building = function (t) {
     switch (t) {
       case 0: return Game.sprites.hut();
@@ -305,6 +386,11 @@
       case 7: return Game.sprites.market();
       case 8: return Game.sprites.barracks();
       case 9: return Game.sprites.granary();
+      case 10: return Game.sprites.mine();
+      case 11: return Game.sprites.wonder();
+      case 12: return Game.sprites.academy();
+      case 13: return Game.sprites.harbor();
+      case 14: return Game.sprites.tavern();
       default: return Game.sprites.house(); // 1
     }
   };

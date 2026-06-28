@@ -74,6 +74,8 @@
       const sw = document.createElement("span");
       sw.className = "nation-swatch";
       sw.style.background = "rgb(" + n.color[0] + "," + n.color[1] + "," + n.color[2] + ")";
+      // 色覚補助: 色だけに頼らず、国名の頭文字を見分けの手がかりとして重ねる。
+      sw.textContent = n.name ? n.name.charAt(0) : "?";
 
       const info = document.createElement("div");
       info.className = "nation-info";
@@ -103,12 +105,13 @@
         "\n富: " + n.wealth + " / 不満: " + n.unrest +
         (n.wars.length ? "\n交戦: " + n.wars.join(", ") : "") +
         (n.allies.length ? "\n同盟: " + n.allies.join(", ") : "");
-      (function (cap) {
+      (function (cap, id) {
         row.addEventListener("click", function () {
           const cam = Game.state.camera;
-          if (cam && cap) cam.centerOnTile(cap.x, cap.y);
+          if (cam && cap) (cam.glideToTile ? cam.glideToTile(cap.x, cap.y) : cam.centerOnTile(cap.x, cap.y)); // 滑らかに移動
+          if (Game.inspector) Game.inspector.selectNation(id); // 詳細を開く
         });
-      })(n.capital);
+      })(n.capital, n.id);
 
       body.appendChild(row);
     }

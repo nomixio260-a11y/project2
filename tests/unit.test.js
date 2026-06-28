@@ -197,6 +197,36 @@ test("CreatureSystem: 採食でエネルギーが増え、餓死で死ぬ", () =
   assert.equal(ent.alive[starving], 0, "餓死で kill");
 });
 
+test("CreatureSystem: 飽食した捕食者は狩らない（捕食の安定化）", () => {
+  const Game = loadCore({ mapWidth: 16, mapHeight: 16 });
+  const w = new Game.World(16, 16);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.elevation.fill(0.5);
+  const ent = new Game.Entities(50);
+  const sys = new Game.CreatureSystem(ent, w, { markDirty: function () {} });
+  const P = Game.CreatureSystem.P;
+
+  // 満腹（satiation 超）の捕食者は隣の獲物に手を出さない。
+  const prey = ent.spawn(Game.SPECIES.HERBIVORE, 8, 8, 0.6);
+  const fullPred = ent.spawn(Game.SPECIES.PREDATOR, 8.2, 8, 1.0);
+  ent.energy[fullPred] = 1.0; // > P.satiation
+  for (let t = 0; t < 5; t++) sys.tick(w);
+  assert.equal(ent.alive[prey], 1, "飽食した捕食者は獲物を狩らない");
+
+  // 空腹の捕食者は、いずれ獲物を仕留める（狩り成功は確率的なので多ティック観測）。
+  const preys = [];
+  for (let i = 0; i < 8; i++) preys.push(ent.spawn(Game.SPECIES.HERBIVORE, 4 + (i % 3) * 0.3, 4, 0.6));
+  const hungry = ent.spawn(Game.SPECIES.PREDATOR, 4.1, 4, 0.5);
+  ent.energy[hungry] = 0.5; // < P.satiation → 狩る
+  let killed = false;
+  for (let t = 0; t < 400 && !killed; t++) {
+    ent.energy[hungry] = 0.5; // 飢餓死を防ぎ「狩れるか」のみを検証（狩り成功は確率的）
+    sys.tick(w);
+    for (const pi of preys) if (!ent.alive[pi]) killed = true;
+  }
+  assert.ok(killed, "空腹の捕食者は獲物を狩れる");
+});
+
 test("CreatureSystem: 上限を超えて繁殖しない", () => {
   const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
   Game.config.sim.maxEntities = 6;
@@ -290,6 +320,81 @@ test("CivSystem: 建国で入植者が生まれ、歩いた陸地が領土にな
   }
 });
 
+test("CivSystem: 言語が創発し、国ごとに分かれ通じ合いが変わる", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 20, seed: 4242 });
+  const w = new Game.World(60, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(5, 10);
+  const B = civ.foundAt(50, 10);
+  assert.ok(A > 0 && B > 0, "建国できていない");
+
+  // 建国者は言葉(lx,ly)を持つ。
+  const pa = civ.people.find((p) => p.kid === A);
+  assert.ok(pa && pa.lx != null && pa.ly != null, "人が言語を持たない");
+  // 建国者の言葉は自国の言語の近傍にある（個体差 langJitter の範囲内）。
+  const ka = civ.kingdoms[A];
+  assert.ok(Math.abs(pa.lx - ka.langX) <= 0.1 && Math.abs(pa.ly - ka.langY) <= 0.1, "建国者の言葉が国の言語から離れすぎ");
+
+  for (let t = 0; t < 200; t++) civ.tick(w);
+
+  // 別々に興った国は異なる言語を持つ（langName が文字列で返る）。
+  const nameA = civ.langNameOf(civ.kingdoms[A]);
+  const nameB = civ.langNameOf(civ.kingdoms[B]);
+  assert.equal(typeof nameA, "string");
+  assert.ok(nameA.length > 0 && nameB.length > 0, "言語名が空");
+  // 相互理解度は 0..1 に収まり、同一国内(自分自身)は最大1。
+  const mi = civ.langMI(civ.kingdoms[A], civ.kingdoms[B]);
+  assert.ok(mi >= 0 && mi <= 1, "相互理解度が範囲外");
+  assert.equal(civ.langMI(civ.kingdoms[A], civ.kingdoms[A]), 1, "自国とは完全に通じるはず");
+  // 人の言葉の名も得られる。
+  const someone = civ.people.find((p) => p.lx != null);
+  assert.equal(typeof civ.personLangName(someone), "string");
+
+  // 言語ビューの色と凡例が得られる（描画・UI 用）。
+  Game.state = Game.state || {};
+  Game.state.mapView = "language";
+  const col = civ.viewColorOf(A);
+  assert.ok(Array.isArray(col) && col.length === 3, "言語ビュー色が不正");
+  assert.ok(civ.viewLegend("language").length > 0, "言語凡例が空");
+});
+
+test("CivSystem: 金鉱石を集計し、鋳貨を得た国が貨幣を鋳造する", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(5, 5);
+  assert.ok(A > 0);
+  const k = civ.kingdoms[A];
+
+  // 領内に金鉱石タイルを置く（worldgen を介さず直接）。
+  w.resource[5 * 30 + 5] = Game.RESOURCE.GOLD;
+  w.resourceList = [{ x: 5, y: 5, t: Game.RESOURCE.GOLD }];
+
+  // 集計で金が国に計上される。
+  civ._tallyResources();
+  assert.ok(k.res.gold >= 1, "金鉱石が集計されていない");
+
+  // 鋳貨技術が無いうちは物々交換（coin は増えない）。
+  k.tech = 0; k.techBits = {};
+  const coin0 = k.coin || 0;
+  for (let t = 0; t < 50; t++) civ.tick(w);
+  assert.ok((k.coin || 0) <= coin0 + 0.01, "鋳貨が無いのに貨幣が増えた");
+
+  // 鋳貨技術を与えると、金鉱石から貨幣を鋳造し始める。
+  k.techBits.coin = true;
+  for (let t = 0; t < 300; t++) civ.tick(w);
+  assert.ok(k.coin > 0, "鋳貨を得ても貨幣が鋳造されない");
+
+  // 文明・時代が合わなくても貨幣は使える: 金鉱石が無くても、交易が盛んなら外国の
+  // 貨幣が流通して貨幣を使える（商業を通じた貨幣の流入）。
+  k.res.gold = 0; w.resource[5 * 30 + 5] = 0; w.resourceList = [];
+  k.coin = 0; k.tradeVol = 50; // 活発な交易（外国貨幣の流入源）
+  for (let t = 0; t < 200; t++) { k.tradeVol = 50; civ.tick(w); }
+  assert.ok(k.coin > 0, "金鉱が無くても交易で貨幣が流通するはず");
+});
+
 test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   Game.config.sim.maxKingdoms = 5;
@@ -302,6 +407,41 @@ test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   }
   assert.ok(founded <= 5, "maxKingdoms超過: " + founded);
   assert.equal(civ.kingdoms.length - 1, founded);
+});
+
+test("CivSystem: 交易で双方が富み、余剰国から飢饉国へ食料が流れる", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const a = civ.foundAt(5, 5);
+  const b = civ.foundAt(20, 5);
+  const ka = civ.kingdoms[a], kb = civ.kingdoms[b];
+  // 隣国として接触させる（平和・交易路あり）。
+  ka.borders[b] = 0; kb.borders[a] = 0;
+  // 比較優位: 産物を相補的に（a は鉱石、b は漁場）。
+  ka.res = { ore: 10, fish: 0, gems: 0 };
+  kb.res = { ore: 0, fish: 10, gems: 0 };
+  ka.humanCount = 20; kb.humanCount = 20;
+
+  const wa0 = ka.wealth, wb0 = kb.wealth;
+  const traded = civ._trade(a, b, ka, kb);
+  assert.ok(traded, "交易が成立しない");
+  assert.ok(ka.wealth > wa0 && kb.wealth > wb0, "交易で双方が富まない（比較優位の利益）");
+  assert.ok(ka.partners && ka.partners[b] > 0, "交易相手が記録されない");
+
+  // 交易路の無い遠国（隣接せず・非同盟・航海術なし）とは交易できない。
+  const c = civ.foundAt(28, 28);
+  const kc = civ.kingdoms[c];
+  assert.equal(civ._tradeRoute(a, c, ka, kc), null, "交易路が無いのに通商してしまう");
+
+  // 食料: a に余剰・b は飢饉。交易で食料が b へ流れ、対価の富が a へ向かう。
+  ka.food = 40; kb.food = 0; kb.famine = true; kb.wealth = 100;
+  const fa0 = ka.food, fb0 = kb.food, wkb0 = kb.wealth, wka0 = ka.wealth;
+  civ._trade(a, b, ka, kb);
+  assert.ok(kb.food > fb0, "飢饉国へ食料が流れない");
+  assert.ok(ka.food < fa0, "余剰国の食料が減らない");
+  assert.ok(kb.wealth < wkb0 && ka.wealth > wka0, "食料の対価（富）が動かない");
 });
 
 test("CivSystem: 放浪者(人間)が集まって自ら国を興す", () => {
@@ -706,4 +846,182 @@ test("Hud.sample: 個体数・王国・延焼を集計する", () => {
   assert.equal(s.pop, 3, "総個体数");
   assert.equal(s.kingdoms, 1, "生存王国数");
   assert.equal(s.fires, 2, "延焼数");
+});
+
+test("DisasterSystem: 干ばつ・地震・洪水が被害を与える", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 13 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 4; x++) w.setTerrain(x, y, Game.TERRAIN.MOUNTAIN);
+  for (let y = 0; y < 40; y++) w.setTerrain(15, y, Game.TERRAIN.SHALLOW_WATER); // 陸に挟まれた浅瀬列
+  if (w.fertility) w.fertility.fill(1);
+  if (w.moisture) w.moisture.fill(0.1);
+
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {};
+  Game.state.civ = civ;
+  Game.state.clock = { warmth: 0, wetness: 0, season: { name: "夏" } };
+
+  const A = civ.foundAt(25, 20);
+  const k = civ.kingdoms[A];
+  k.cities[0].buildings = [
+    { x: 25, y: 20, t: 3 }, // KEEP（砦）
+    { x: 26, y: 20, t: 5 }, { x: 27, y: 20, t: 6 }, { x: 25, y: 21, t: 7 },
+  ];
+  for (let t = 0; t < 60; t++) civ.tick(w);
+
+  const ds = new Game.DisasterSystem(w);
+
+  // 干ばつ: 肥沃度の帯が半減する。
+  let before = 0; for (let i = 0; i < w.fertility.length; i++) before += w.fertility[i];
+  ds._drought(w);
+  let after = 0; for (let i = 0; i < w.fertility.length; i++) after += w.fertility[i];
+  assert.ok(after < before, "干ばつで肥沃度が減るはず");
+
+  // 地震: 砦以外の建物が倒壊し、不満が上がる。
+  const bCount = k.cities[0].buildings.length;
+  const u0 = k.unrest || 0;
+  ds._earthquake(w);
+  assert.ok(k.cities[0].buildings.length < bCount, "地震で建物が倒壊するはず");
+  assert.ok((k.unrest || 0) > u0, "地震で不満が上がるはず");
+  assert.ok(k.cities[0].buildings.some((b) => b.t === 3), "砦(KEEP)は倒壊しないはず");
+
+  // 洪水: 浅瀬付近の陸地の湿度が上がる。
+  ds._flood(w);
+  let wet = 0;
+  for (let i = 0; i < w.moisture.length; i++) if (w.moisture[i] > 0.1 && Game.tile.isLand(w.terrain[i])) wet++;
+  assert.ok(wet > 0, "洪水で湿った陸地が生じるはず");
+});
+
+test("CivSystem: 信仰が育ち結束を生む / 宗派も地図色を持つ", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(15, 15);
+  const k = civ.kingdoms[A];
+  const f0 = k.faith;
+  // 神殿(TEMPLE=4)を備える → 信仰が育つはず。
+  k.cities[0].buildings.push({ x: 15, y: 15, t: 4 }, { x: 16, y: 15, t: 4 }, { x: 14, y: 15, t: 4 }, { x: 15, y: 16, t: 4 });
+  for (let t = 0; t < 600; t++) civ.tick(w);
+  assert.ok(k.faith >= 0 && k.faith <= 1, "信仰は0..1の範囲");
+  assert.ok(k.faith > f0, "神殿で信仰が育つはず: " + k.faith);
+  // 宗派(派生宗教)も宗教ビューで色を持つ（クラッシュしない）。
+  Game.state.mapView = "religion";
+  k.religion = "太陽信仰・異端";
+  const col = civ.viewColorOf(A);
+  assert.ok(Array.isArray(col) && col.length === 3, "宗派の地図色が得られる");
+});
+
+test("CivSystem: クラフトは金属の有無で質が変わる（工芸システム）", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 20 });
+  const w = new Game.World(40, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.elevation.fill(0.5);
+  if (w.fertility) w.fertility.fill(0.7);
+  // 左側に鉱石（金属あり）、右側は草原のみ（金属なし）。
+  for (let y = 4; y < 16; y++) for (let x = 2; x < 8; x++) w.setTerrain(x, y, Game.TERRAIN.HILL);
+  w.resource = new Uint8Array(40 * 20);
+  const rl = [];
+  for (let y = 5; y < 15; y += 2) for (let x = 3; x < 7; x += 2) { w.resource[y * 40 + x] = Game.RESOURCE.ORE; rl.push({ x: x, y: y, t: Game.RESOURCE.ORE }); }
+  w.resourceList = rl;
+
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(5, 10);   // 鉱石地帯
+  const B = civ.foundAt(34, 10);  // 草原のみ
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+  // 両国とも鉄器時代相当へ（材料が許せば高い段階を作れる状況）。
+  ka.tech = kb.tech = 200; ka.techBits.iron = kb.techBits.iron = true;
+
+  for (let t = 0; t < 500; t++) civ.tick(w);
+
+  // 鉱石地帯は金属を扱え、craftTier が高い。草原のみは石器どまり。
+  const ciA = civ.craftInfo(ka), ciB = civ.craftInfo(kb);
+  assert.ok(ka.res.ore > 0, "鉱石地帯に鉱石があるはず");
+  assert.equal(kb.res.ore, 0, "草原国に鉱石は無いはず");
+  assert.ok(ciA.tier >= 2, "金属のある国は金属装備を作れるはず: " + ciA.tier);
+  assert.equal(ciB.tier, 1, "金属の無い国は石器どまりのはず: " + ciB.tier);
+  // 工芸力は金属＋鍛冶のある国の方が高い。
+  assert.ok((ka.craft || 0) > (kb.craft || 0), "鉱石地帯の方が工芸力が高いはず");
+  // craftInfo は名前と段階を返す。
+  assert.equal(typeof ciA.name, "string");
+  assert.ok(civ.gearName(6).length > 0, "装備名が得られる");
+});
+
+test("CivSystem: 鉄の製錬には燃料(森)が要る（冶金の連鎖）", () => {
+  const Game = loadCore({ mapWidth: 50, mapHeight: 20 });
+  const w = new Game.World(50, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS); w.elevation.fill(0.5);
+  if (w.fertility) w.fertility.fill(0.7);
+  if (w.moisture) w.moisture.fill(0.7);
+  w.resource = new Uint8Array(50 * 20);
+  const rl = [];
+  // A 地域: 鉱石＋森（鉄・鋼が作れる）。
+  for (let y = 4; y < 16; y++) for (let x = 2; x < 10; x++) w.setTerrain(x, y, x < 5 ? Game.TERRAIN.HILL : Game.TERRAIN.FOREST);
+  for (let y = 5; y < 15; y += 2) for (let x = 2; x < 5; x++) { w.resource[y * 50 + x] = Game.RESOURCE.ORE; rl.push({ x: x, y: y, t: Game.RESOURCE.ORE }); }
+  // B 地域: 鉱石のみ（森が無い → 青銅どまり）。
+  for (let y = 4; y < 16; y++) for (let x = 40; x < 48; x++) w.setTerrain(x, y, Game.TERRAIN.HILL);
+  for (let y = 5; y < 15; y += 2) for (let x = 40; x < 43; x++) { w.resource[y * 50 + x] = Game.RESOURCE.ORE; rl.push({ x: x, y: y, t: Game.RESOURCE.ORE }); }
+  w.resourceList = rl;
+
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(4, 10), B = civ.foundAt(44, 10);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+  ka.tech = kb.tech = 260; // 鉄器時代相当（青銅・鉄は評価で自動獲得）
+
+  for (let t = 0; t < 400; t++) civ.tick(w);
+
+  assert.ok(ka.fuel > 0, "森のある国は燃料(森)を持つはず");
+  assert.equal(kb.fuel, 0, "森の無い国は燃料ゼロのはず");
+  const ciA = civ.craftInfo(ka), ciB = civ.craftInfo(kb);
+  assert.ok(ciA.tier >= 3, "鉱石＋燃料＋鉄器技術 → 鉄器以上のはず: " + ciA.tier);
+  assert.equal(ciB.tier, 2, "鉱石はあるが燃料が無い → 青銅どまりのはず: " + ciB.tier);
+});
+
+test("CivSystem: 生物群系の資源が集計され軍事に効く（馬＝騎兵ほか）", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 20 });
+  const w = new Game.World(30, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS); w.elevation.fill(0.5);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(15, 10);
+  const k = civ.kingdoms[A];
+
+  // 首都タイル（建国時に領有）に複数の新資源を置く。
+  w.resource = new Uint8Array(30 * 20);
+  const rl = [];
+  function put(x, y, t) { w.resource[y * 30 + x] = t; rl.push({ x: x, y: y, t: t }); }
+  put(15, 10, Game.RESOURCE.HORSES);
+  put(15, 10, Game.RESOURCE.HORSES); // 同タイルは1つだが、別タイルも owned 化のため首都中心のみで検証
+  w.resourceList = [{ x: 15, y: 10, t: Game.RESOURCE.HORSES }];
+  civ._tallyResources();
+  assert.ok(k.res.horses >= 1, "馬が集計されるはず");
+
+  // 馬（騎兵）があると軍事力が上がる。
+  k.res.horses = 8;
+  const milWith = civ._military(k);
+  k.res.horses = 0;
+  const milNo = civ._military(k);
+  assert.ok(milWith > milNo, "馬(騎兵)で軍事力が増すはず");
+
+  // 資源名テーブルが揃っている。
+  assert.equal(Game.RESOURCE_NAMES[Game.RESOURCE.SPICE], "香辛料");
+  assert.equal(Game.RESOURCE_NAMES[Game.RESOURCE.SALT], "塩");
+  assert.equal(Game.RESOURCE_NAMES[Game.RESOURCE.TIMBER], "良材");
+});
+
+test("worldgen: 生物群系ごとの資源（馬・良材など）が配置される", () => {
+  const Game = loadCore({ mapWidth: 200, mapHeight: 150 });
+  const w = new Game.World(200, 150);
+  Game.worldgen.generate(w, 4242);
+  const kinds = new Set();
+  for (const r of w.resourceList) kinds.add(r.t);
+  // 鉱石/漁場に加え、草原・森由来の資源（馬・良材）も現れる。
+  assert.ok(kinds.has(Game.RESOURCE.HORSES) || kinds.has(Game.RESOURCE.TIMBER), "生物群系資源が配置されていない");
+  // 同一シードで再現的。
+  const w2 = new Game.World(200, 150);
+  Game.worldgen.generate(w2, 4242);
+  assert.equal(w.resourceList.length, w2.resourceList.length, "資源配置がシードで再現的でない");
 });
