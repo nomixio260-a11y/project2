@@ -892,3 +892,23 @@ test("DisasterSystem: 干ばつ・地震・洪水が被害を与える", () => {
   for (let i = 0; i < w.moisture.length; i++) if (w.moisture[i] > 0.1 && Game.tile.isLand(w.terrain[i])) wet++;
   assert.ok(wet > 0, "洪水で湿った陸地が生じるはず");
 });
+
+test("CivSystem: 信仰が育ち結束を生む / 宗派も地図色を持つ", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(15, 15);
+  const k = civ.kingdoms[A];
+  const f0 = k.faith;
+  // 神殿(TEMPLE=4)を備える → 信仰が育つはず。
+  k.cities[0].buildings.push({ x: 15, y: 15, t: 4 }, { x: 16, y: 15, t: 4 }, { x: 14, y: 15, t: 4 }, { x: 15, y: 16, t: 4 });
+  for (let t = 0; t < 600; t++) civ.tick(w);
+  assert.ok(k.faith >= 0 && k.faith <= 1, "信仰は0..1の範囲");
+  assert.ok(k.faith > f0, "神殿で信仰が育つはず: " + k.faith);
+  // 宗派(派生宗教)も宗教ビューで色を持つ（クラッシュしない）。
+  Game.state.mapView = "religion";
+  k.religion = "太陽信仰・異端";
+  const col = civ.viewColorOf(A);
+  assert.ok(Array.isArray(col) && col.length === 3, "宗派の地図色が得られる");
+});

@@ -125,6 +125,13 @@
     harborTrade: 0.5,     // 港1棟の交易力寄与（海上交易）
     diversityTech: 0.18,  // 民族の多様性による技術加速（多文化の交流＝開明）
     diversityFric: 0.02,  // 民族の多様性による軋轢（治安への小さな摩擦）
+    // 宗教（信仰）: 神殿・記念碑・神官・政体(神権制)・敬虔な君主が信仰を篤くする。
+    //   篤い信仰は民を結束させ（不満減）、布教力を高め、異教との戦に熱を加える。
+    faithCalm: 6,         // 信仰1.0あたりの不満低減（社会の結束）
+    faithDiploPull: 0.5,  // 同じ信仰の国は親しみ合う（外交関係の漸進）
+    faithDiploFric: 0.35, // 異なる信仰の国とは隔たる（外交関係の摩擦）
+    faithWarFervor: 0.6,  // 異教との開戦を後押しする信仰の熱（聖戦）
+    schismChance: 0.5,    // 反乱・独立の際に宗派が分裂して異端が生まれる確率
     // 外交
     diploInterval: 90,  // 外交を評価する間隔(ティック)
     warThreshold: -50,   // 関係がこれ以下で開戦しうる
@@ -228,6 +235,13 @@
     { war: 1.15, ally: 1.4, trade: 1.0, tech: 0.9, unrest: 1.0, faith: 1.0, expand: 1.05 }, // 氏族制: 血縁同盟
   ];
   const RELIGIONS = ["太陽信仰", "月の教団", "大地母神", "風の精霊", "祖霊崇拝", "星辰教"];
+  const SECT_SUFFIX = ["改革派", "正統派", "異端", "刷新派", "原理派", "神秘派"];
+  // 宗派分裂: 既存の信仰から派生した宗派の名を作る（基幹の信仰名＋派の名）。
+  //   既に宗派なら基幹名（「・」より前）を取り、際限ない接尾辞の連結を防ぐ。
+  function schismName(base, rand) {
+    const root = base.indexOf("・") >= 0 ? base.slice(0, base.indexOf("・")) : base;
+    return root + "・" + SECT_SUFFIX[(rand() * SECT_SUFFIX.length) | 0];
+  }
   const ERAS = ["石器時代", "青銅器時代", "鉄器時代", "古典時代", "中世", "啓蒙時代"];
   const TECH_PER_ERA = 60;
 
@@ -528,7 +542,7 @@
     if (!k) return null;
     const mode = (Game.state && Game.state.mapView) || "nation";
     if (mode === "gov") return GOV_COLORS[GOV_TYPES.indexOf(k.gov)] || k.color;
-    if (mode === "religion") return REL_COLORS[RELIGIONS.indexOf(k.religion)] || k.color;
+    if (mode === "religion") { const ri = RELIGIONS.indexOf(k.religion); return ri >= 0 ? REL_COLORS[ri] : hashColor(k.religion || ""); }
     if (mode === "era") { let i = (k.tech / TECH_PER_ERA) | 0; if (i >= ERA_COLORS.length) i = ERA_COLORS.length - 1; if (i < 0) i = 0; return ERA_COLORS[i]; }
     if (mode === "dynasty") return k.dynasty ? hashColor(k.dynasty) : k.color;
     if (mode === "culture") return cultureColor(k.cultureAvg == null ? 0.5 : k.cultureAvg);
@@ -640,6 +654,7 @@
       techBits: {},  // 獲得済みの個別技術（id→true）
       discovered: [], // 発見順の技術名（表示用）
       religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
+      faith: 0.3,    // 信仰の篤さ(0..1)。神殿・神官・政体・敬虔さで高まり、結束/布教/聖戦に効く
       trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
       wealth: 0,     // 富（交易・領土から蓄積）
       food: 30,      // 食料備蓄（生産-消費。0で飢饉）
@@ -1485,10 +1500,10 @@
 
     // 宗教の迎合・伝播: 権威ある／栄える相手の信仰へ、合わなくても改宗しうる。
     if (ka.religion !== kb.religion) {
-      if (this.rand() < 0.035 * oab * this._eff(kb, "faith")) {
+      if (this.rand() < 0.035 * oab * this._eff(kb, "faith") * (0.4 + (kb.faith||0))) {
         ka.religion = kb.religion;
         this._logEvent("☽ " + ka.name + " が " + kb.name + " に倣い " + kb.religion + " に改宗した");
-      } else if (this.rand() < 0.035 * oba * this._eff(ka, "faith")) {
+      } else if (this.rand() < 0.035 * oba * this._eff(ka, "faith") * (0.4 + (ka.faith||0))) {
         kb.religion = ka.religion;
         this._logEvent("☽ " + kb.name + " が " + ka.name + " に倣い " + ka.religion + " に改宗した");
       }
@@ -1840,14 +1855,19 @@
       if (ka._eraIdx === undefined) ka._eraIdx = eidx;
       else if (eidx > ka._eraIdx) { ka._eraIdx = eidx; this._logEvent("✦ " + ka.name + " が" + ERAS[eidx] + "を迎えた"); }
 
-      // 不満: 戦争・過密・貧困で上昇、平和・繁栄・神殿・穀倉で低下（性格・政体で変調）。
+      // 信仰の篤さ: 神殿・記念碑・神官が育み、政体(神権制)・敬虔な君主が増幅する。
+      const devote = (fac.temple * 0.4 + fac.wonder * 0.6 + (ka.roleCount[ROLE.PRIEST] || 0) * 0.2) / Math.max(1, ka.cities.length);
+      let faithTgt = clamp01(0.12 + devote * 0.28) * this._eff(ka, "faith");
+      if (faithTgt > 1) faithTgt = 1;
+      ka.faith = (ka.faith || 0) + (faithTgt - (ka.faith || 0)) * 0.1; // ゆっくり推移
+      // 不満: 戦争・過密・貧困で上昇、平和・繁栄・神殿・穀倉・信仰で低下（性格・政体で変調）。
       const cap = this._capacity(ka);
       let dU = -1.5;
       const warCount = this._count(ka.wars);
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
-      dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0); // 信仰・食料・酒場・漁場・記念碑・法典で安定
+      dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0) + ka.faith * CP.faithCalm; // 信仰・食料・酒場・漁場・記念碑・法典で安定
 
       // 食料経済: 農民・農場・漁場・採集で生産し、人口が消費する。穀倉が備蓄上限を上げる。
       // 因果の要: 生産は「土地の肥沃度（=植生。干ばつ・火災・噴火で低下）」と「季節
@@ -1956,8 +1976,8 @@
         // 文化交流・同化: 接触する文明どうしが技術・宗教・政体を伝え合い、合わなくても
         // 何らかの理由で一部を取り込む（迎合・融合）。国力で勝る国の宗教も依然広まる。
         if (ka.religion !== kb.religion) {
-          if (ka.humanCount > kb.humanCount * 1.6 && this.rand() < 0.1 * this._eff(ka, "faith")) kb.religion = ka.religion;
-          else if (kb.humanCount > ka.humanCount * 1.6 && this.rand() < 0.1 * this._eff(kb, "faith")) ka.religion = kb.religion;
+          if (ka.humanCount > kb.humanCount * 1.6 && this.rand() < 0.1 * this._eff(ka, "faith") * (0.4 + (ka.faith||0))) kb.religion = ka.religion;
+          else if (kb.humanCount > ka.humanCount * 1.6 && this.rand() < 0.1 * this._eff(kb, "faith") * (0.4 + (kb.faith||0))) ka.religion = kb.religion;
         }
         this._culturalExchange(a, b, ka, kb);
 
@@ -1967,6 +1987,11 @@
             (this._isNeighbor(ka, b) || ka.allies[b] || (ka.partners && ka.partners[b]))) {
           const lmi = mutualIntel(ka.langX, ka.langY, kb.langX, kb.langY);
           this._setRel(a, b, ka.relations[b] + (lmi - 0.7) * CP.langDiploPull);
+        }
+
+        // 信仰と外交: 同じ信仰の国は親しみ合い、異教の国とは隔たる（接触下でのみ働く）。
+        if (this._isNeighbor(ka, b) || ka.allies[b] || (ka.partners && ka.partners[b])) {
+          this._setRel(a, b, ka.relations[b] + (ka.religion === kb.religion ? CP.faithDiploPull : -CP.faithDiploFric));
         }
 
         // 疫病の伝播: 流行国に国境を接する隣国へ広がる。
@@ -2010,7 +2035,9 @@
           // 同盟は遠国とも結べる（婚姻・通商同盟）。
           const neighbor = this._isNeighbor(ka, b);
           const sameFaith = ka.religion === kb.religion;
-          const warF = (this._eff(ka, "war") + this._eff(kb, "war")) * 0.5 * (sameFaith ? 0.6 : 1.4);
+          // 聖戦: 異教の相手とは、双方の信仰が篤いほど開戦への熱が高まる。
+          const fervor = sameFaith ? 1 : (1 + ((ka.faith || 0) + (kb.faith || 0)) * 0.5 * CP.faithWarFervor);
+          const warF = (this._eff(ka, "war") + this._eff(kb, "war")) * 0.5 * (sameFaith ? 0.6 : 1.4) * fervor;
           const allyF = (this._eff(ka, "ally") + this._eff(kb, "ally")) * 0.5 * (sameFaith ? 1.4 : 0.6);
           // 土地不足の隣国どうしは領土紛争で開戦しやすい（信仰に左右されない casus belli）。
           let territorial = 0;
@@ -2084,6 +2111,12 @@
       wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
+    // 宗派分裂（独立に伴う異端の発生）: 独立国はしばしば母国の信仰から分かれ、
+    //   独自の宗派を立てる。これが宗教戦争や更なる対立の火種になる（信仰の多様化）。
+    if (parent.religion && this.rand() < CP.schismChance) {
+      nk.religion = schismName(parent.religion, this.rand);
+      this._logEvent("☩ " + nk.name + " が " + nk.religion + " を奉じて宗派を分かった");
+    }
     parent.cities.splice(idx, 1);
 
     // 周辺領土を割譲（独立都市の周囲 R タイル）。
