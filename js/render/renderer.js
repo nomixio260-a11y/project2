@@ -324,6 +324,9 @@
     // 市民（人間）エージェント。
     this.drawPeople(camera);
 
+    // 戦闘演出（白刃の火花・矢・銃弾・流血）。人の上に重ねる。
+    this.drawBattleFx(camera);
+
     // 選択ハイライト（インスペクタで選んだ対象）。
     this.drawSelection(camera);
 
@@ -498,8 +501,15 @@
       //   者(_sheltered=false)は外で休む姿が見える（＝住宅不足が分かる）。
       if (townNight && !moving && person.kid && !person.sailing && person._sheltered) continue;
       const k = person.kid ? civ.kingdoms[person.kid] : null;
-      const sx = Math.round(camera.worldToScreenX((person.x + 0.5) * tile));
-      const sy = Math.round(camera.worldToScreenY((person.y + 0.5) * tile));
+      let sx = Math.round(camera.worldToScreenX((person.x + 0.5) * tile));
+      let sy = Math.round(camera.worldToScreenY((person.y + 0.5) * tile));
+      // 兵士の突撃: 交戦中の敵がいれば、その方向へ踏み込む（打ち込みの瞬間に前へ出る）。
+      if (person.role === 3 && person._enemy && person._enemy.alive) {
+        const lunge = (Math.sin(t * 7 + p * 1.3) * 0.5 + 0.5) * scale * 0.4;
+        const ldx = person._enemy.x - person.x, ldy = person._enemy.y - person.y;
+        const ll = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+        sx += Math.round(ldx / ll * lunge); sy += Math.round(ldy / ll * lunge);
+      }
       const col = k ? k.color : [150, 140, 122];
       const body = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
 
@@ -590,6 +600,14 @@
           ctx.fillStyle = hat;
           ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, uu);
         }
+      }
+      // 将（その国で最も武名ある兵）には軍旗を掲げる（軍を率いる者が一目で分かる）。
+      if (k && k._genRef === person) {
+        const fx0 = sx + 3 * uu, fy0 = sy - 7 * uu + ob;
+        ctx.fillStyle = "#6b4a2a"; ctx.fillRect(fx0, fy0, Math.max(1, uu * 0.6) | 0 || 1, 5 * uu); // 旗竿
+        const wave = Math.round(Math.sin(t * 4 + p) * uu * 0.4);
+        ctx.fillStyle = body; ctx.fillRect(fx0 + uu, fy0 + wave, 3 * uu, 2 * uu);                 // 軍旗（国色）
+        ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fillRect(fx0 + uu, fy0 + wave, 3 * uu, Math.max(1, uu * 0.4) | 0 || 1);
       }
       // 名のある人物（英傑・賢人）には金の輝きを頭上に灯す（社会の傑物を可視化）。
       if (person._famed) {
@@ -1039,6 +1057,46 @@
     }
   };
 
+  // 戦闘演出: 白刃の火花(clash)・矢(arrow)・銃弾(shot)・流血(blood) を短い寿命で描く。
+  //   civ が戦闘イベントで積み、ここで age を進め寿命で消す。
+  Renderer.prototype.drawBattleFx = function (camera) {
+    const fx = Game.state.battleFx;
+    if (!fx || !fx.length) return;
+    const tile = Game.config.tilePx, scale = tile * camera.zoom;
+    const ctx = this.ctx, range = camera.visibleTileRange();
+    const LIFE = { clash: 12, arrow: 12, shot: 10, blood: 30 };
+    const sc = (wx) => camera.worldToScreenX((wx + 0.5) * tile);
+    const scy = (wy) => camera.worldToScreenY((wy + 0.5) * tile);
+    for (let n = fx.length - 1; n >= 0; n--) {
+      const f = fx[n];
+      f.age++;
+      const life = LIFE[f.t] || 12;
+      if (f.age > life) { fx.splice(n, 1); continue; }
+      if (scale < 2.5) continue;
+      if (f.x < range.x0 - 2 || f.x > range.x1 + 2 || f.y < range.y0 - 2 || f.y > range.y1 + 2) continue;
+      const pr = f.age / life;
+      if (f.t === "clash") {
+        // 火花が四方へ弾ける。
+        const sx = sc(f.x), sy = scy(f.y), r = scale * (0.2 + pr * 0.5), u = Math.max(1, scale * 0.1);
+        ctx.fillStyle = "rgba(255,236,150," + (1 - pr).toFixed(2) + ")";
+        for (let a = 0; a < 6; a++) { const ang = a * 1.047 + f.age; ctx.fillRect((sx + Math.cos(ang) * r) | 0, (sy + Math.sin(ang) * r) | 0, u, u); }
+        ctx.fillStyle = "rgba(255,255,255," + (1 - pr).toFixed(2) + ")"; ctx.fillRect((sx - u * 0.5) | 0, (sy - u * 0.5) | 0, u, u);
+      } else if (f.t === "arrow" || f.t === "shot") {
+        // 飛翔体が射手から標的へ飛ぶ。銃は閃光と煙を伴う。
+        const x = f.x + (f.x2 - f.x) * pr, y = f.y + (f.y2 - f.y) * pr;
+        const sx = sc(x), sy = scy(y), u = Math.max(1, scale * (f.t === "shot" ? 0.13 : 0.1));
+        if (f.t === "shot" && pr < 0.3) { ctx.fillStyle = "rgba(255,220,120,0.9)"; ctx.fillRect((sc(f.x) - u) | 0, (scy(f.y) - u) | 0, 2 * u, 2 * u); } // 銃口炎
+        ctx.fillStyle = f.t === "shot" ? "#f4f4f4" : "#e8dcb0";
+        ctx.fillRect((sx - u * 0.5) | 0, (sy - u * 0.5) | 0, Math.max(1, u * (f.t === "shot" ? 1 : 1.6)) | 0, Math.max(1, u * 0.6) | 0);
+      } else if (f.t === "blood") {
+        const sx = sc(f.x), sy = scy(f.y), u = Math.max(1, scale * 0.12);
+        ctx.fillStyle = "rgba(150,20,20," + (0.8 * (1 - pr)).toFixed(2) + ")";
+        const hsh = ((f.x * 131 + f.y * 977) | 0) >>> 0;
+        for (let a = 0; a < 5; a++) { const ang = a * 1.257 + (hsh % 7); const rr = scale * 0.3 * (0.4 + (a / 5)); ctx.fillRect((sx + Math.cos(ang) * rr) | 0, (sy + Math.sin(ang) * rr) | 0, u, u); }
+      }
+    }
+  };
+
   // 交易路: 実際に交易のある国どうしの首都を金色の点線で結ぶ（太さは交易量に比例）。
   Renderer.prototype.drawTradeRoutes = function (camera) {
     const civ = Game.state.civ;
@@ -1134,6 +1192,21 @@
         const sx = camera.worldToScreenX((city.x + 0.5) * tile);
         const sy = camera.worldToScreenY((city.y + 0.5) * tile);
         const level = city.level || 1;
+
+        // 攻囲中の都市: 赤い包囲環と立ち上る煙で「攻められている」ことを示す。
+        if (city.siege > 0.12) {
+          const sg = Math.min(1, city.siege);
+          const rr = Math.max(4, scale * (1.4 + level * 0.25));
+          const pulse = 0.35 + 0.25 * Math.sin(this._t * 4);
+          ctx.strokeStyle = "rgba(232,70,60," + (pulse * sg).toFixed(2) + ")";
+          ctx.lineWidth = Math.max(1.5, scale * 0.18);
+          ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.stroke();
+          if (scale >= 4) { // 立ち上る煙
+            ctx.fillStyle = "rgba(60,55,52," + (0.4 * sg).toFixed(2) + ")";
+            const u = Math.max(1, scale * 0.2);
+            for (let s = 0; s < 3; s++) { const ph = this._t * 1.5 + s * 2; ctx.fillRect((sx - rr * 0.5 + s * rr * 0.5) | 0, (sy - rr * 0.7 - (this._t * 6 + s * 11) % (rr)) | 0, u, u); }
+          }
+        }
 
         if (!detailed) {
           // 遠景: 国色の点。
