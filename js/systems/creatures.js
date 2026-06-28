@@ -285,9 +285,38 @@
       // 死亡判定。
       if (energy[i] <= 0 || ageA[i] > P.maxAge[type]) e.kill(i);
     }
+    // 個体数が激減した後の無駄な空走査を抑えるため、時折ストアの末尾を切り詰める。
+    if ((tickN & 127) === 0) e.trim();
+    // 辺境からの移入で生態系を長期に保つ（負荷を避け約500ティックに1回）。
+    if (tickN % 503 === 0) this._replenish(world);
   };
 
-  // (tx,ty) が水（浅瀬/深海）に隣接していれば true（飲水判定）。
+  // 辺境からの移入・再導入: 長い時間で乱獲・過放牧により野生が絶滅しても、世界の外から
+  // 動物が移り住み生態系が保たれる。獲物が十分なら捕食者も戻り、捕食-被食の循環が続く。
+  CreatureSystem.prototype._replenish = function (world) {
+    const e = this.entities, W = world.width, H = world.height, rand = this.rand;
+    const cap = Game.config.sim.maxEntities, owner = world.owner;
+    let herb = 0, pred = 0;
+    for (let i = 0; i < e.count; i++) { if (!e.alive[i]) continue; if (e.type[i] === 0) herb++; else pred++; }
+    const self = this;
+    function wildSpot() {
+      for (let t = 0; t < 30; t++) { const x = (rand() * W) | 0, y = (rand() * H) | 0, i = y * W + x;
+        if (tile.isEdible(world.terrain[i]) && (!owner || owner[i] === 0)) return { x: x, y: y }; }
+      return null;
+    }
+    // 草食の移入（絶滅寸前のときだけ。辺境に小さな群れが現れる）。
+    if (herb < cap * 0.015) {
+      const sp = wildSpot();
+      if (sp) for (let k = 0; k < 10; k++) e.spawn(S.HERBIVORE, sp.x + 0.5 + (rand() - 0.5) * 3, sp.y + 0.5 + (rand() - 0.5) * 3, 0.6);
+    }
+    // 捕食者の再導入（獲物が十分いて捕食者が絶えているとき、稀に番が戻る）。
+    if (pred === 0 && herb > cap * 0.02 && rand() < 0.6) {
+      const sp = wildSpot();
+      if (sp) for (let k = 0; k < 3; k++) e.spawn(S.PREDATOR, sp.x + 0.5 + (rand() - 0.5) * 2, sp.y + 0.5 + (rand() - 0.5) * 2, 0.85);
+    }
+  };
+
+    // (tx,ty) が水（浅瀬/深海）に隣接していれば true（飲水判定）。
   CreatureSystem.prototype._nearWater = function (world, tx, ty) {
     const W = world.width;
     const H = world.height;

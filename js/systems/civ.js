@@ -3213,24 +3213,35 @@
     let bx = pux * 0.55 + dux * 0.45;
     let by = puy * 0.55 + duy * 0.45;
     const bl = Math.sqrt(bx * bx + by * by) || 1;
-    // 進路が塞がれていたら、向きを少しずつ振って障害物を回り込む（賢い経路選択）。
-    // 直進→±約35°→±約70°の順に通れる方向を探す。火・水・山は避ける。
-    const baseAng = Math.atan2(by, bx);
-    const OFF = [0, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9];
-    // 経路探索の内側ループで使う配列をループ外で1回だけ解決（最大7回/人/ティックの
-    // プロパティ解決と関数呼び出しを削減）。
+    const bnx = bx / bl, bny = by / bl; // 正規化した進行方向
     const terr = world.terrain;
     const fire = Game.state.fire, burn = (fire && fire.burn) ? fire.burn : null;
     let moved = false;
-    for (let di = 0; di < OFF.length; di++) {
-      const a = baseAng + OFF[di];
-      const sxv = Math.cos(a) * speed, syv = Math.sin(a) * speed;
+    // 速い経路: まず直進を試す（多くの場合これで通る）。三角関数を使わず方向ベクトルで進む。
+    {
+      const sxv = bnx * speed, syv = bny * speed;
       const nxp = h.x + sxv, nyp = h.y + syv;
       const ntx = nxp < 0 ? 0 : nxp >= W ? W - 1 : nxp | 0;
       const nty = nyp < 0 ? 0 : nyp >= H ? H - 1 : nyp | 0;
       const ni = nty * W + ntx;
       if (tile.isLand(terr[ni]) && !(burn && burn[ni] > 0)) {
-        h.hx = sxv; h.hy = syv; h.x = nxp; h.y = nyp; moved = true; break;
+        h.hx = sxv; h.hy = syv; h.x = nxp; h.y = nyp; moved = true;
+      }
+    }
+    // 直進が塞がれている時だけ、向きを振って障害物を回り込む（±約35°→±約70°）。
+    if (!moved) {
+      const baseAng = Math.atan2(by, bx);
+      const OFF = [0.6, -0.6, 1.2, -1.2, 1.9, -1.9];
+      for (let di = 0; di < OFF.length; di++) {
+        const ang = baseAng + OFF[di];
+        const sxv = Math.cos(ang) * speed, syv = Math.sin(ang) * speed;
+        const nxp = h.x + sxv, nyp = h.y + syv;
+        const ntx = nxp < 0 ? 0 : nxp >= W ? W - 1 : nxp | 0;
+        const nty = nyp < 0 ? 0 : nyp >= H ? H - 1 : nyp | 0;
+        const ni = nty * W + ntx;
+        if (tile.isLand(terr[ni]) && !(burn && burn[ni] > 0)) {
+          h.hx = sxv; h.hy = syv; h.x = nxp; h.y = nyp; moved = true; break;
+        }
       }
     }
     if (!moved) { h.hx *= -0.4; h.hy *= -0.4; } // 完全に囲まれたら減衰

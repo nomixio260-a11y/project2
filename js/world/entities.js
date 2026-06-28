@@ -73,6 +73,19 @@
     }
   };
 
+  // 末尾の死スロットを切り詰めて count（走査上限）を下げる。個体数が激減した後でも
+  // ループが高水位のまま走り続けるのを防ぐ。free-list から count 以上の index を取り除き、
+  // 再利用で count が再拡大しないようにする（生存スロットの index は不変＝参照安全）。
+  Entities.prototype.trim = function () {
+    let c = this.count;
+    while (c > 0 && !this.alive[c - 1]) c--;
+    if (c === this.count) return;
+    this.count = c;
+    const free = this._free; let w = 0;
+    for (let r = 0; r < this._freeTop; r++) { if (free[r] < c) free[w++] = free[r]; }
+    this._freeTop = w;
+  };
+
   // 全消去（再生成時）。
   Entities.prototype.clear = function () {
     this.count = 0;
