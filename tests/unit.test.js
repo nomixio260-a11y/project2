@@ -912,3 +912,39 @@ test("CivSystem: 信仰が育ち結束を生む / 宗派も地図色を持つ", 
   const col = civ.viewColorOf(A);
   assert.ok(Array.isArray(col) && col.length === 3, "宗派の地図色が得られる");
 });
+
+test("CivSystem: クラフトは金属の有無で質が変わる（工芸システム）", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 20 });
+  const w = new Game.World(40, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  w.elevation.fill(0.5);
+  if (w.fertility) w.fertility.fill(0.7);
+  // 左側に鉱石（金属あり）、右側は草原のみ（金属なし）。
+  for (let y = 4; y < 16; y++) for (let x = 2; x < 8; x++) w.setTerrain(x, y, Game.TERRAIN.HILL);
+  w.resource = new Uint8Array(40 * 20);
+  const rl = [];
+  for (let y = 5; y < 15; y += 2) for (let x = 3; x < 7; x += 2) { w.resource[y * 40 + x] = Game.RESOURCE.ORE; rl.push({ x: x, y: y, t: Game.RESOURCE.ORE }); }
+  w.resourceList = rl;
+
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(5, 10);   // 鉱石地帯
+  const B = civ.foundAt(34, 10);  // 草原のみ
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+  // 両国とも鉄器時代相当へ（材料が許せば高い段階を作れる状況）。
+  ka.tech = kb.tech = 200; ka.techBits.iron = kb.techBits.iron = true;
+
+  for (let t = 0; t < 500; t++) civ.tick(w);
+
+  // 鉱石地帯は金属を扱え、craftTier が高い。草原のみは石器どまり。
+  const ciA = civ.craftInfo(ka), ciB = civ.craftInfo(kb);
+  assert.ok(ka.res.ore > 0, "鉱石地帯に鉱石があるはず");
+  assert.equal(kb.res.ore, 0, "草原国に鉱石は無いはず");
+  assert.ok(ciA.tier >= 2, "金属のある国は金属装備を作れるはず: " + ciA.tier);
+  assert.equal(ciB.tier, 1, "金属の無い国は石器どまりのはず: " + ciB.tier);
+  // 工芸力は金属＋鍛冶のある国の方が高い。
+  assert.ok((ka.craft || 0) > (kb.craft || 0), "鉱石地帯の方が工芸力が高いはず");
+  // craftInfo は名前と段階を返す。
+  assert.equal(typeof ciA.name, "string");
+  assert.ok(civ.gearName(6).length > 0, "装備名が得られる");
+});

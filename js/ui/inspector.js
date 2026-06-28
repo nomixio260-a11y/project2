@@ -196,7 +196,7 @@
       const role = p.kid ? (ROLE_NAME[p.role] || "民") : "放浪者";
       const act = p.sailing ? "海を渡っている" : (ACT[p.state] || "活動中");
       const hp = Math.round(Math.max(0, Math.min(1, p.food)) * 100);
-      const gear = p.gear ? ("装備 Lv" + p.gear) : "素手";
+      const gear = p.gear ? ((civ.gearName ? civ.gearName(p.gear) : ("Lv" + p.gear)) + "の装備") : "素手";
       // 称号つきの姓名を見出しに（名＋家名。名のある人物は称号を冠する）。
       const fullName = (p.name ? esc(p.name) : (k ? role : "放浪者")) + (p.sur ? " " + esc(p.sur) : "");
       this.titleEl.innerHTML = (k ? "🧑 " : "🚶 ") + fullName +
@@ -247,6 +247,8 @@
     const res = k.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
     const resStr = [res.ore ? "⛏" + res.ore : "", res.fish ? "🐟" + res.fish : "", res.gems ? "💎" + res.gems : "", res.gold ? "🪙" + res.gold : ""].filter(Boolean).join(" ") || "なし";
     const hasCoin = !!(k.techBits && k.techBits.coin);
+    const ci = civ.craftInfo ? civ.craftInfo(k) : null;
+    const craftStr = ci ? (ci.name + "（工芸 " + (ci.level >= 0.6 ? "高" : ci.level >= 0.3 ? "中" : "低") + "）") : null;
     const moneyStr = hasCoin ? ("鋳貨 🪙" + Math.round(k.coin || 0)) : "物々交換";
     this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
       (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +
@@ -269,6 +271,7 @@
         (info && info.foodTrade ? (info.foodTrade > 0 ? " （輸入+" + info.foodTrade + "）" : " （輸出" + info.foodTrade + "）") : "")) +
       row("資源", resStr) +
       row("通貨", moneyStr) +
+      (craftStr ? row("工芸", esc(craftStr)) : "") +
       (info && info.market
         ? row("市場", "希少 " + esc(info.market.scarce) + " ↑　余剰 " + esc(info.market.abundant) + " ↓") : "") +
       (info && info.partners && info.partners.length
