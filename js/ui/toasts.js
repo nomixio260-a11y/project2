@@ -54,5 +54,8 @@
     }, LIFE_MS);
   };
 
+  // 外部から任意のメッセージを通知する（保存/読込など UI からの明示通知）。
+  Toasts.show = function (text) { if (this.el) this._show(text); };
+
   Game.toasts = Toasts;
 })(window.Game);

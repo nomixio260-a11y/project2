@@ -357,3 +357,41 @@ test("再生成: 新しい世界ボタンでマップが変わる", async () => 
   assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
   await page.close();
 });
+
+test("セーブ/ロード: 世界状態を保存して復元できる", async () => {
+  const { page, errors } = await openPage({ width: 1280, height: 800 });
+  const res = await page.evaluate(() => {
+    const civ = Game.state.civ, w = Game.state.world, cfg = Game.config;
+    let founded = 0;
+    for (let a = 0; a < 6000 && founded < 4; a++) {
+      const x = (Math.random() * cfg.mapWidth) | 0, y = (Math.random() * cfg.mapHeight) | 0;
+      const t = w.terrain[y * cfg.mapWidth + x];
+      if (t >= 3 && t <= 5 && civ.foundAt(x, y) > 0) founded++;
+    }
+    for (let i = 0; i < 300; i++) {
+      const x = (Math.random() * cfg.mapWidth) | 0, y = (Math.random() * cfg.mapHeight) | 0;
+      if (Game.tile.isEdible(w.terrain[y * cfg.mapWidth + x])) Game.state.entities.spawn(0, x + 0.5, y + 0.5, 0.7);
+    }
+    for (let tk = 0; tk < 200; tk++) for (const sy of Game.state.engine.systems) if (sy.tick) sy.tick(Game.state.world);
+    let osum = 0; for (let i = 0; i < w.owner.length; i++) osum += w.owner[i];
+    const before = { kingdoms: civ.kingdoms.length, pop: civ.stats().population, live: Game.state.entities.live, seed: cfg.seed, osum: osum };
+    const json = JSON.stringify(Game.persistence.serialize());
+    Game.regenerate();
+    Game.persistence.deserialize(JSON.parse(json));
+    const w2 = Game.state.world; let osum2 = 0; for (let i = 0; i < w2.owner.length; i++) osum2 += w2.owner[i];
+    let partnerOk = true;
+    for (const p of civ.people) { if (p._partnerPid !== undefined) partnerOk = false; if (p.partner && (typeof p.partner !== "object" || !p.partner.pid)) partnerOk = false; }
+    const after = { kingdoms: civ.kingdoms.length, pop: civ.stats().population, live: Game.state.entities.live, seed: cfg.seed, osum: osum2 };
+    return { before, after, jsonLen: json.length, partnerOk };
+  });
+  assert.ok(res.before.kingdoms >= 2, "建国できていない: " + res.before.kingdoms);
+  assert.equal(res.after.kingdoms, res.before.kingdoms, "復元後の国数が一致");
+  assert.equal(res.after.pop, res.before.pop, "復元後の人口が一致");
+  assert.equal(res.after.live, res.before.live, "復元後の生物数が一致");
+  assert.equal(res.after.seed, res.before.seed, "seedが一致");
+  assert.equal(res.after.osum, res.before.osum, "領有が一致");
+  assert.ok(res.partnerOk, "参照(partner)が復元されていない");
+  assert.ok(res.jsonLen > 100, "スナップショットが空");
+  assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
+  await page.close();
+});

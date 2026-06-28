@@ -35,7 +35,26 @@
         '<input type="checkbox" class="set-toggle" data-key="' + key + '"' + (s[key] !== false ? " checked" : "") + ">" +
         '<span class="set-switch"></span></label>';
     }
+    // データ: 保存・読込・スクリーンショット。
+    html += '<div class="panel-head" style="margin-top:10px">データ</div>' +
+      '<div class="set-actions">' +
+      '<button class="set-btn" id="data-save">💾 保存</button>' +
+      '<button class="set-btn" id="data-load">📂 読込</button>' +
+      '<button class="set-btn" id="data-shot">📸 画像</button>' +
+      '<input type="file" id="data-file" accept="application/json,.json" style="display:none">' +
+      '</div>';
     panel.innerHTML = html;
+    // データ操作の配線。
+    const saveBtn = panel.querySelector("#data-save");
+    const loadBtn = panel.querySelector("#data-load");
+    const shotBtn = panel.querySelector("#data-shot");
+    const fileInp = panel.querySelector("#data-file");
+    if (saveBtn) saveBtn.addEventListener("click", function (e) { e.stopPropagation(); if (Game.persistence) Game.persistence.save(); });
+    if (shotBtn) shotBtn.addEventListener("click", function (e) { e.stopPropagation(); if (Game.persistence) Game.persistence.screenshot(); });
+    if (loadBtn && fileInp) {
+      loadBtn.addEventListener("click", function (e) { e.stopPropagation(); fileInp.click(); });
+      fileInp.addEventListener("change", function () { if (fileInp.files && fileInp.files[0] && Game.persistence) { Game.persistence.loadFile(fileInp.files[0]); fileInp.value = ""; } });
+    }
 
     const self = this;
     panel.querySelectorAll(".set-toggle").forEach(function (cb) {
