@@ -224,6 +224,16 @@
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
+    // 戦闘の深化: 遠戦（弓・銃）、攻囲、将の鼓舞
+    rangeR: 5.5,         // 遠戦の射程（タイル。隣接でなくても射かけられる）
+    bowChance: 0.16,     // 射程内で矢を放つ確率／ティック（弓）
+    bowDmg: 0.45,        // 矢の威力（白兵の attack に対する比）
+    gunChance: 0.2,      // 火薬以降の射撃確率／ティック（銃）
+    gunDmg: 0.9,         // 銃弾の威力（弓より強い）
+    rallyR: 7,           // 将の鼓舞が及ぶ半径
+    rallyBonus: 0.45,    // 将の近くで戦う兵の打撃・士気の上昇
+    siegeRise: 0.05,     // 敵兵が都市に迫ると攻囲度が上がる速さ
+    siegeDecay: 0.9,     // 攻囲が解けると下がる係数／評価
     // 戦争の重み: 維持費と厭戦（長期戦は国庫と人心を蝕む）
     warUpkeep: 0.12,     // 軍事力1あたりの戦時維持費／評価（×交戦数）
     warWearyRise: 0.05,  // 交戦中に厭戦が積もる速さ／評価（×交戦数）
@@ -634,6 +644,14 @@
     const m = this.marks;
     m.push({ x: x, y: y, ttl: 360, life: 360 });
     if (m.length > 240) m.shift();
+  };
+
+  // 戦闘演出: 一過性の効果（白刃の火花 clash・矢 arrow・流血 blood）を描画側へ渡す。
+  //   描画側が age を進め寿命で消す。本数に上限を設けて負荷を抑える。
+  CivSystem.prototype._fx = function (type, x, y, x2, y2) {
+    const fx = Game.state.battleFx || (Game.state.battleFx = []);
+    if (fx.length > 200) return;
+    fx.push({ t: type, x: x, y: y, x2: x2, y2: y2, age: 0 });
   };
 
   // UI 用: 直近の出来事（新しい順）。
@@ -1281,6 +1299,8 @@
       if (h.race != null) (k._raceCnt || (k._raceCnt = [0, 0, 0, 0, 0]))[h.race]++;
       // 最も名高い人物を追う（国を代表する英傑・賢人）。
       if ((h.prestige || 0) > (k._topP || 0)) { k._topP = h.prestige; k._topRef = h; }
+      // 最も武名ある兵を将として追う（戦時に軍を鼓舞する。次ティックから有効）。
+      if (h.role === ROLE.SOLDIER && (h.prestige || 0) > (k._genPtmp || 0)) { k._genPtmp = h.prestige; k._genReftmp = h; }
 
       const tx = h.x | 0, ty = h.y | 0;
       const ti = ty * world.width + tx;
@@ -1382,6 +1402,9 @@
       } else if (k.figure && (!k._topRef || !k._topRef.alive)) {
         k.figure = null;
       }
+      // 将を確定（武名ある兵がいれば）。次ティックの戦闘で軍を鼓舞する（ループ中は安定）。
+      k._genRef = (k._genReftmp && k._genReftmp.alive && (k._genPtmp || 0) >= FAME_THRESHOLD * 0.4) ? k._genReftmp : null;
+      k._genPtmp = 0; k._genReftmp = null;
       k._moodS = 0; k._moodN = 0; k._cultS = 0; k._lxS = 0; k._lyS = 0; k._fireLoss = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
     }
 
@@ -2145,6 +2168,8 @@
       for (let di = 0; di < 6; di++) if (innov[di] > 0) { innov[di] *= CP.innovDecay; if (innov[di] < 0.001) innov[di] = 0; }
       // 文化的威信: 不朽の傑作が積もり、語り継がれ緩やかに薄れる（外交・結束に効く）。
       if (ka.renown > 0) { ka.renown *= CP.renownDecay; if (ka.renown < 0.05) ka.renown = 0; }
+      // 攻囲の緩み: 敵兵が去れば都市の攻囲度は下がる（包囲が解ける）。
+      for (let ci = 0; ci < ka.cities.length; ci++) { const cc = ka.cities[ci]; if (cc.siege > 0) { cc.siege *= CP.siegeDecay; if (cc.siege < 0.02) cc.siege = 0; } }
       // 工芸力: 鍛冶場・鍛冶職人・金属・進んだ冶金（青銅/鉄）と工芸革新で育つ「ものづくりの力」。
       const smiths = ka.roleCount[ROLE.SMITH] || 0;
       const metalAvail = (res.ore > 0) || (fac.mine > 0);
@@ -2317,6 +2342,10 @@
           this._logEvent("☣ " + ka.name + " で疫病が発生した");
         }
       }
+
+      // 戦の記録: この評価期間に挙げた戦果が大きければ「戦い」として年代記に刻む。
+      if ((ka._kills || 0) >= 6) this._logEvent("⚔ " + ka.name + " 軍が戦で " + ka._kills + " の敵兵を討ち取った");
+      ka._kills = 0;
 
       // 開拓: 人口と領土に余裕がある国は、辺境に新たな街や村を興して国土を広げる。
       this._expandSettlement(ka);
@@ -3863,13 +3892,14 @@
       // 思考時にキャッシュした敵が隣接していれば交戦（探索不要）。
       const e = h._enemy;
       if (e && e.alive && this._atWar(h.kid, e.kid)) {
-        const dx = e.x - h.x, dy = e.y - h.y;
-        if (dx * dx + dy * dy < 2.25) {
-          // 戦闘: 軍事力で勝る側ほど、また武装が良いほど大きな損害を与える。0 で戦死。
-          const other = this.kingdoms[e.kid];
-          const m1 = this._military(k), m2 = other ? this._military(other) : 1;
-          const edge = m1 / (m1 + m2);
-          // 地形と郷土の利: 守備兵が丘・山・森・湿地、または自国領で戦うと被害が減る（戦術）。
+        const dx = e.x - h.x, dy = e.y - h.y, d2 = dx * dx + dy * dy;
+        const other = this.kingdoms[e.kid];
+        const m1 = this._military(k), m2 = other ? this._military(other) : 1;
+        const edge = m1 / (m1 + m2);
+        // 将の鼓舞: 自軍に将がいて健在なら、その軍は士気高く痛打を与える（英傑が戦を動かす）。
+        const rally = (k._genRef && k._genRef.alive) ? (1 + CP.rallyBonus) : 1;
+        if (d2 < 2.25) {
+          // 白兵戦: 軍事力で勝る側ほど、武装・武勇・怒り・将の鼓舞で大きな損害を与える。0 で戦死。
           const eti = (e.y | 0) * world.width + (e.x | 0);
           const dt = world.terrain[eti], TT = Game.TERRAIN;
           let defF = 1;
@@ -3877,11 +3907,19 @@
           else if (dt === TT.FOREST || dt === TT.JUNGLE || dt === TT.SWAMP) defF -= 0.15;
           if (world.owner[eti] === e.kid) defF -= CP.homeDefense * 0.3; // 郷土防衛の士気
           if (defF < 0.4) defF = 0.4;
-          // 個の武勇: 勇敢で歴戦（高練度）の壮年兵ほど、また怒りに燃えるほど痛打を与える。
           e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) *
-            (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF;
+            (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF * rally;
           practice(h); // 実戦で武を磨く
-          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); h.prestige = (h.prestige || 0) + 1.2; } // 戦死させ武功を上げる
+          if (this.rand() < 0.4) this._fx("clash", (h.x + e.x) * 0.5, (h.y + e.y) * 0.5); // 白刃の火花
+          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); this._fx("blood", e.x, e.y); h.prestige = (h.prestige || 0) + 1.2; k._kills = (k._kills || 0) + 1; }
+        } else if (d2 < CP.rangeR * CP.rangeR) {
+          // 遠戦: 弓（基本）と銃（火薬以降）で射かける。命中すれば小ダメージ＋矢/銃弾の演出。
+          const gun = hasTech(k, "gunpowder");
+          if (this.rand() < (gun ? CP.gunChance : CP.bowChance)) {
+            e.food -= CP.attack * (gun ? CP.gunDmg : CP.bowDmg) * (0.6 + edge) * (0.6 + 0.4 * ability(h, "brave")) * rally;
+            this._fx(gun ? "shot" : "arrow", h.x, h.y, e.x, e.y);
+            if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); this._fx("blood", e.x, e.y); h.prestige = (h.prestige || 0) + 1; k._kills = (k._kills || 0) + 1; }
+          }
         }
       } else {
         h._enemy = null;
@@ -3898,11 +3936,19 @@
           const T = Game.TERRAIN, dter = world.terrain[ti];
           let defMul = (dter === T.HILL || dter === T.FOREST) ? 0.55
             : (dter === T.JUNGLE || dter === T.SWAMP) ? 0.7 : 1;
-          // 防備: 砦(KEEP)を備えた都市タイルは攻めにくい（城壁＝包囲戦の抵抗）。
+          // 攻囲: 敵都市の間近に兵が迫ると攻囲度が上がる。攻囲が進むほど城壁の守りが破れる。
+          let siegeCity = null, sd = 6.25;
+          for (let c = 0; c < other.cities.length; c++) {
+            const cc = other.cities[c];
+            const ddx = cc.x - tx, ddy = cc.y - ty, dd = ddx * ddx + ddy * ddy;
+            if (dd < sd) { sd = dd; siegeCity = cc; }
+          }
+          if (siegeCity) siegeCity.siege = Math.min(1, (siegeCity.siege || 0) + CP.siegeRise);
+          // 防備: 砦(KEEP)を備えた都市タイルは攻めにくいが、攻囲が進めば城壁の守りは薄れる。
           for (let c = 0; c < other.cities.length; c++) {
             const cc = other.cities[c];
             if (cc.x === tx && cc.y === ty) {
-              if (cc.buildings) { for (let bi = 0; bi < cc.buildings.length; bi++) if (cc.buildings[bi].t === BUILDING.KEEP) { defMul *= (1 - CP.fortDefense); break; } }
+              if (cc.buildings) { for (let bi = 0; bi < cc.buildings.length; bi++) if (cc.buildings[bi].t === BUILDING.KEEP) { defMul *= (1 - CP.fortDefense * (1 - (cc.siege || 0))); break; } }
               break;
             }
           }
