@@ -205,6 +205,7 @@
         row("所属", k ? swatch(k.color) + " " + esc(k.name) : "なし（放浪者）") +
         row("役割", role + "（" + stage + "）") +
         (p.race != null && civ.raceName ? row("人種", esc(civ.raceName(p.race))) : "") +
+        (p.lx != null && civ.personLangName ? row("言葉", esc(civ.personLangName(p))) : "") +
         (p.sur ? row("家系", esc(p.sur) + "家 ・ 第" + (p.gen || 1) + "世代") : "") +
         row("行動", act) +
         bar("体力", hp, false) +
@@ -253,6 +254,7 @@
       row("統治", esc(k.ruler) + "（" + esc(k.gov) + "）") +
       (k.dynasty ? row("王朝", esc(k.dynasty) + "家") : "") +
       (rmix.length ? row("民族", rmix.slice(0, 3).map(function (r) { return esc(r.name) + " " + r.pct + "%"; }).join(" ・ ") + (k.diversity > 0.15 ? " 〔多文化〕" : "")) : "") +
+      (k.langX != null && civ.langNameOf ? row("言語", esc(civ.langNameOf(k))) : "") +
       row("時代", (info ? info.era : "") + " · " + esc(k.religion)) +
       row("気質", esc(k.trait.name)) +
       row("人口", String(k.humanCount) + " 人") +

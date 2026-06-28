@@ -320,6 +320,45 @@ test("CivSystem: 建国で入植者が生まれ、歩いた陸地が領土にな
   }
 });
 
+test("CivSystem: 言語が創発し、国ごとに分かれ通じ合いが変わる", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 20, seed: 4242 });
+  const w = new Game.World(60, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(5, 10);
+  const B = civ.foundAt(50, 10);
+  assert.ok(A > 0 && B > 0, "建国できていない");
+
+  // 建国者は言葉(lx,ly)を持つ。
+  const pa = civ.people.find((p) => p.kid === A);
+  assert.ok(pa && pa.lx != null && pa.ly != null, "人が言語を持たない");
+  // 建国者の言葉は自国の言語の近傍にある（個体差 langJitter の範囲内）。
+  const ka = civ.kingdoms[A];
+  assert.ok(Math.abs(pa.lx - ka.langX) <= 0.1 && Math.abs(pa.ly - ka.langY) <= 0.1, "建国者の言葉が国の言語から離れすぎ");
+
+  for (let t = 0; t < 200; t++) civ.tick(w);
+
+  // 別々に興った国は異なる言語を持つ（langName が文字列で返る）。
+  const nameA = civ.langNameOf(civ.kingdoms[A]);
+  const nameB = civ.langNameOf(civ.kingdoms[B]);
+  assert.equal(typeof nameA, "string");
+  assert.ok(nameA.length > 0 && nameB.length > 0, "言語名が空");
+  // 相互理解度は 0..1 に収まり、同一国内(自分自身)は最大1。
+  const mi = civ.langMI(civ.kingdoms[A], civ.kingdoms[B]);
+  assert.ok(mi >= 0 && mi <= 1, "相互理解度が範囲外");
+  assert.equal(civ.langMI(civ.kingdoms[A], civ.kingdoms[A]), 1, "自国とは完全に通じるはず");
+  // 人の言葉の名も得られる。
+  const someone = civ.people.find((p) => p.lx != null);
+  assert.equal(typeof civ.personLangName(someone), "string");
+
+  // 言語ビューの色と凡例が得られる（描画・UI 用）。
+  Game.state = Game.state || {};
+  Game.state.mapView = "language";
+  const col = civ.viewColorOf(A);
+  assert.ok(Array.isArray(col) && col.length === 3, "言語ビュー色が不正");
+  assert.ok(civ.viewLegend("language").length > 0, "言語凡例が空");
+});
+
 test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   Game.config.sim.maxKingdoms = 5;
