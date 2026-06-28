@@ -289,6 +289,17 @@
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +
       (k.inventions && k.inventions.length ? row("発明", "💡 " + esc(k.inventions.slice(-3).join("・"))) : "") +
       (k.artworks && k.artworks.length ? row("作品", "🎨 " + esc(k.artworks.slice(-3).join("・"))) : "") +
+      (function () {
+        if (!k.innov) return "";
+        const LABELS = ["技術", "工芸", "商業", "農業", "軍事", "文化"];
+        const parts = [];
+        for (let d = 0; d < 6; d++) {
+          const v = k.innov[d] || 0;
+          if (v >= 0.08) parts.push(LABELS[d] + (v >= 0.5 ? "◎" : v >= 0.25 ? "○" : "・"));
+        }
+        return parts.length ? row("革新", esc(parts.join(" "))) : "";
+      })() +
+      ((k.renown || 0) >= 0.5 ? row("威信", "🏛 文化的威信 " + Math.round(k.renown)) : "") +
       (info && (info.wars.length || info.allies.length)
         ? row("外交", (info.wars.length ? "⚔" + info.wars.length + " " : "") + (info.allies.length ? "🤝" + info.allies.length : "")) : "") +
       (function () {

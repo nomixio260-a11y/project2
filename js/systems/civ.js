@@ -136,6 +136,27 @@
     artChance: 0.02,      // 閃きのうち不朽の傑作（作品）となる確率
     artFame: 2.4,         // 傑作で創造者が得る名声
     artCalm: 1.1,         // 傑作が国の不満を和らげる量（文化の結束）
+    // 革新(innovation): 創造が分野ごとの永続的な「強み」として国に根づく。6分野
+    //   (技術/工芸/商/農/軍/文化)それぞれに 0..1 の水準があり、平凡な閃きで僅かに、
+    //   画期的発明で大きく高まる。各分野は具体的な恩恵（研究・生産・交易・食料・軍・
+    //   結束）を国にもたらし、創造が文明を広く形づくる。維持されねば緩やかに薄れる。
+    innovGain: 0.006,     // 平凡な閃きが分野水準を高める量（×創造力）
+    innovBreak: 0.07,     // 画期的発明が分野水準を高める量
+    innovDecay: 0.997,    // 維持されぬ革新が1評価ごとに薄れる係数
+    innovTechW: 0.45,     // 技術革新→研究速度
+    innovCraftW: 0.30,    // 工芸革新→工芸力
+    innovTradeW: 0.28,    // 商業革新→富
+    innovFoodW: 0.24,     // 農業革新→食料
+    innovWarW: 0.22,      // 軍事革新→軍事力
+    innovArtW: 2.6,       // 文化革新→不満の緩和
+    innovArtFaithW: 0.12, // 文化革新→信仰
+    innovSpread: 0.05,    // 接触する文明へ革新が伝播する速さ（知は世界へ広がる）
+    // 名声(renown): 不朽の傑作が国にもたらす文化的威信。世界に知られ、諸国の敬意を
+    //   集め（外交が和らぐ）、国民の誇りとなって結束を生む。語り継がれ緩やかに薄れる。
+    renownGain: 1.0,      // 傑作1つが国の文化的威信へ与える量
+    renownDecay: 0.992,   // 文化的威信が1評価ごとに薄れる係数
+    renownCalm: 0.04,     // 文化的威信が国の不満を和らげる係数
+    renownDiplo: 0.018,   // 文化的威信が外交の友好へ寄与する係数
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
     cellSize: 6,
@@ -1488,7 +1509,9 @@
     const techMul = 1 + (hasTech(k, "bronze") ? 0.15 : 0) + (hasTech(k, "iron") ? 0.2 : 0) + (hasTech(k, "gunpowder") ? 0.5 : 0);
     // 騎兵: 馬を持つ国は機動力で軍事力が増す（上限つき）。
     const cav = 1 + Math.min(0.5, (k.res ? (k.res.horses || 0) : 0) * CP.horseMil);
-    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav;
+    // 軍事革新（兵器・戦術の工夫）で戦力が増す。
+    const innovMil = 1 + ((k.innov && k.innov[4]) || 0) * CP.innovWarW;
+    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -1677,6 +1700,19 @@
       const oBwd = bwd === ka ? oab : oba;
       bwd.tech += (adv.tech - bwd.tech) * 0.03 * Math.min(2, oBwd); // 模倣による追い上げ
       this._adoptTech(bwd, adv, oBwd);
+    }
+
+    // 革新の伝播: 創造の成果（分野ごとの強み）は、接触する文明へ広まっていく。各分野で
+    //   水準の低い側が高い側へ歩み寄る――知は国境を越えて世界へ広がり、創造が一国に
+    //   留まらず文明圏全体を押し上げる（交易・同盟ほど速く伝わる）。
+    if (ka.innov || kb.innov) {
+      const ia = ka.innov || (ka.innov = [0, 0, 0, 0, 0, 0]);
+      const ib = kb.innov || (kb.innov = [0, 0, 0, 0, 0, 0]);
+      const sp = CP.innovSpread;
+      for (let d = 0; d < 6; d++) {
+        if (ia[d] > ib[d]) ib[d] += (ia[d] - ib[d]) * sp * Math.min(2, oba);
+        else if (ib[d] > ia[d]) ia[d] += (ib[d] - ia[d]) * sp * Math.min(2, oab);
+      }
     }
 
     // 宗教の迎合・伝播: 権威ある／栄える相手の信仰へ、合わなくても改宗しうる。
@@ -2062,18 +2098,23 @@
       else if (ka.fortune < 0.6 && ka.goldenAge) { ka.goldenAge = 0; this._logEvent("　" + ka.name + " の黄金時代が過ぎ去った"); }
       if (ka.fortune < 0.28) { if (!ka.darkAge) this._logEvent("🌑 " + ka.name + " が暗黒時代に陥った"); ka.darkAge = 1; ka.goldenAge = 0; }
       else if (ka.fortune > 0.4 && ka.darkAge) { ka.darkAge = 0; this._logEvent("　" + ka.name + " が暗黒時代を脱した"); }
-      // 工芸力: 鍛冶場・鍛冶職人・金属・進んだ冶金（青銅/鉄）で育つ「ものづくりの力」。
+      // 革新(創造の分野別の強み): 維持されねば緩やかに薄れる。各分野が以下の産出に効く。
+      const innov = ka.innov || (ka.innov = [0, 0, 0, 0, 0, 0]);
+      for (let di = 0; di < 6; di++) if (innov[di] > 0) { innov[di] *= CP.innovDecay; if (innov[di] < 0.001) innov[di] = 0; }
+      // 文化的威信: 不朽の傑作が積もり、語り継がれ緩やかに薄れる（外交・結束に効く）。
+      if (ka.renown > 0) { ka.renown *= CP.renownDecay; if (ka.renown < 0.05) ka.renown = 0; }
+      // 工芸力: 鍛冶場・鍛冶職人・金属・進んだ冶金（青銅/鉄）と工芸革新で育つ「ものづくりの力」。
       const smiths = ka.roleCount[ROLE.SMITH] || 0;
       const metalAvail = (res.ore > 0) || (fac.mine > 0);
       const metalF = metalAvail ? 1 : 0.35;
       let craftTgt = clamp01((fac.smithy * 0.22 + smiths * 0.025) / Math.max(1, ka.cities.length) +
         (hasTech(ka, "bronze") ? 0.1 : 0) + (hasTech(ka, "iron") ? 0.12 : 0) +
-        Math.min(CP.insightCraftCap, ka.craftLore || 0)) * metalF; // 工人の閃きが工芸を高める
+        Math.min(CP.insightCraftCap, ka.craftLore || 0) + innov[1] * CP.innovCraftW) * metalF; // 工人の閃き・工芸革新
       ka.craftLore = (ka.craftLore || 0) * 0.6; // 蓄えた工夫は緩やかに常態化していく
       ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW);
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -2090,7 +2131,7 @@
         ka.coin *= 0.98; if (ka.coin < 0.01) ka.coin = 0; // 貨幣を未だ持たぬ国（鋳造手段の喪失）
       }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
-      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
+      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech + innov[0] * CP.innovTechW;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
       // 人々の閃きの蓄積（創造システム）を技術へ転化する。文明は建物だけでなく「人」が進める。
       //   一評価あたりの転化は上限を設け、人口増による暴走を防ぐ（残りは次評価へ持ち越し）。
@@ -2128,7 +2169,7 @@
 
       // 信仰の篤さ: 神殿・記念碑・神官が育み、政体(神権制)・敬虔な君主が増幅する。
       const devote = (fac.temple * 0.4 + fac.wonder * 0.6 + (ka.roleCount[ROLE.PRIEST] || 0) * 0.2) / Math.max(1, ka.cities.length);
-      let faithTgt = clamp01(0.12 + devote * 0.28) * this._eff(ka, "faith");
+      let faithTgt = clamp01(0.12 + devote * 0.28 + innov[5] * CP.innovArtFaithW) * this._eff(ka, "faith");
       if (faithTgt > 1) faithTgt = 1;
       ka.faith = (ka.faith || 0) + (faithTgt - (ka.faith || 0)) * 0.1; // ゆっくり推移
       // 不満: 戦争・過密・貧困で上昇、平和・繁栄・神殿・穀倉・信仰で低下（性格・政体で変調）。
@@ -2138,6 +2179,7 @@
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
       dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0) + ka.faith * CP.faithCalm; // 信仰・食料・酒場・漁場・記念碑・法典で安定
+      dU -= innov[5] * CP.innovArtW + (ka.renown || 0) * CP.renownCalm; // 文化革新・文化的威信が国民の誇りと結束を生む
 
       // 食料経済: 農民・農場・漁場・採集で生産し、人口が消費する。穀倉が備蓄上限を上げる。
       // 因果の要: 生産は「土地の肥沃度（=植生。干ばつ・火災・噴火で低下）」と「季節
@@ -2154,7 +2196,7 @@
       const clk = Game.state.clock;
       const climF = Game.state.vegetation && clk ? (1 + 0.3 * (clk.wetness || 0) + 0.1 * (clk.warmth || 0)) : 1;
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
-        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order;
+        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order * (1 + innov[3] * CP.innovFoodW); // 農業革新で増産
       const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary + (res.salt || 0) * CP.saltStore; // 塩で保存（備蓄増）
@@ -2265,6 +2307,9 @@
         // 信仰と外交: 同じ信仰の国は親しみ合い、異教の国とは隔たる（接触下でのみ働く）。
         if (this._isNeighbor(ka, b) || ka.allies[b] || (ka.partners && ka.partners[b])) {
           this._setRel(a, b, ka.relations[b] + (ka.religion === kb.religion ? CP.faithDiploPull : -CP.faithDiploFric));
+          // 文化的威信と外交: 不朽の傑作で世界に名を馳せた国は諸国の敬意を集め、関係が和らぐ。
+          const adm = ((kb.renown || 0) + (ka.renown || 0)) * CP.renownDiplo;
+          if (adm > 0) this._setRel(a, b, ka.relations[b] + adm);
         }
 
         // 疫病の伝播: 流行国に国境を接する隣国へ広がる。
@@ -2870,13 +2915,16 @@
     h.joy = clamp01((h.joy || 0) + 0.18);
     h.prestige = (h.prestige || 0) + CP.insightFame * power;
     const dom = inventDomain(h);
-    // 生まれた知は国の蓄積へ。工人の閃きは工芸へも効く。
+    const innov = k.innov || (k.innov = [0, 0, 0, 0, 0, 0]);
+    // 生まれた知は国の蓄積（技術）へ。さらに分野ごとの永続的な「強み」(革新)として根づく。
     k.insight = (k.insight || 0) + CP.insightTech * power;
     if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.02 * power;
-    // 画期的発明: 高い創造力ほど起きやすい。国の知を跳ね上げ、創造者は歴史に名を刻む。
+    innov[dom] = Math.min(1, innov[dom] + CP.innovGain * power);
+    // 画期的発明: 高い創造力ほど起きやすい。国の知と分野の強みを跳ね上げ、創造者は名を刻む。
     if (this.rand() < CP.breakthroughChance * Math.min(2.5, power)) {
       k.insight += CP.breakthroughTech * (0.6 + 0.4 * power);
       if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.06 * power;
+      innov[dom] = Math.min(1, innov[dom] + CP.innovBreak * (0.6 + 0.4 * power));
       h.prestige += CP.breakthroughFame;
       const pool = INVENT_NAMES[dom];
       const name = pool[(this.rand() * pool.length) | 0];
@@ -2885,9 +2933,11 @@
       if (k.inventions.length > 12) k.inventions.shift();
       this._logEvent("💡 " + h.name + "（" + k.name + "）が「" + name + "」を生み出した");
     } else if (h.aspire === 5 && this.rand() < CP.artChance * Math.min(2.5, power)) {
-      // 不朽の傑作: 文化の結束を生み、不満を和らげ、創造者の名を遺す。
+      // 不朽の傑作: 文化の強みと国の文化的威信(renown)を高め、不満を和らげ、名を遺す。
       h.prestige += CP.artFame;
       if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.artCalm);
+      innov[5] = Math.min(1, innov[5] + CP.innovBreak * (0.5 + 0.4 * power));
+      k.renown = (k.renown || 0) + CP.renownGain;
       const pool = INVENT_NAMES[5];
       const name = pool[(this.rand() * pool.length) | 0];
       h.masterwork = name;
