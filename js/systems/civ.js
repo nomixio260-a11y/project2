@@ -28,6 +28,12 @@
     BARRACKS: 8, GRANARY: 9, MINE: 10, WONDER: 11, ACADEMY: 12, HARBOR: 13, TAVERN: 14,
   };
   const MAX_BUILDINGS = 26; // 1都市の建物上限
+  // 建物の占有半径（タイル）。描画の見かけの大きさ(BUILD_SIZE)に対応し、当たり判定（重なり
+  //   防止）と現実的な敷地間隔に使う。大建造物（記念碑・砦・神殿・学院）ほど広い敷地が要る。
+  //   index は BUILDING enum と一致: HUT,HOUSE,MANOR,KEEP,TEMPLE,FARM,SMITHY,MARKET,
+  //   BARRACKS,GRANARY,MINE,WONDER,ACADEMY,HARBOR,TAVERN。
+  const BUILD_FOOT = [0.62, 0.72, 0.9, 1.05, 0.95, 0.7, 0.74, 0.66, 0.86, 0.74, 0.66, 1.4, 1.0, 0.82, 0.72];
+  function footR(t) { return BUILD_FOOT[t] || 0.75; }
   // 生産施設（住居・砦以外の機能建築）。役割の職場・国の機能になる。
   const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary", "mine", "academy", "harbor", "tavern", "wonder"];
   // 機能建築の既定カウント（全 0）。
@@ -1157,13 +1163,16 @@
   };
 
   // 半径内で predicate(other) を満たす同胞/敵を数える / 最寄りを返す。
-  CivSystem.prototype._scan = function (px, py, radius, want) {
+  // maxVisit を渡すと、その数の候補を調べた時点で打ち切る（過密で集まった時の O(n²) 的な
+  //   コスト爆発を防ぐ。社交など「近くに仲間がいるか・最寄りは誰か」が分かれば十分な用途向け）。
+  CivSystem.prototype._scan = function (px, py, radius, want, maxVisit) {
     const cs = CP.cellSize, gw = this._gw, gh = this._gh;
     const r = Math.ceil(radius / cs);
     const cx = (px / cs) | 0, cy = (py / cs) | 0;
     const r2 = radius * radius;
     const people = this.people, next = this._next, head = this._head;
-    let count = 0, count2 = 0, best = null, bestD = r2;
+    const cap = maxVisit || 0;
+    let count = 0, count2 = 0, best = null, bestD = r2, visited = 0;
     for (let gy = cy - r; gy <= cy + r; gy++) {
       if (gy < 0 || gy >= gh) continue;
       for (let gx = cx - r; gx <= cx + r; gx++) {
@@ -1178,6 +1187,7 @@
               const m = want(o, d);
               if (m === 1) count++;
               else if (m === 2) { count2++; if (d < bestD) { bestD = d; best = o; } }
+              if (cap && ++visited >= cap) return { count: count, count2: count2, best: best };
             }
           }
           i = next[i];
@@ -2801,10 +2811,11 @@
       this._logEvent("◆ " + h.name + "（" + k.name + "）が" + titleOf(h) + "として名を馳せた");
     }
 
-    // 近傍の同胞を数え、最寄りの一人を「会話相手」とする。
+    // 近傍の同胞を数え、最寄りの一人を「会話相手」とする。過密な群衆では候補数を打ち切り、
+    //   人が一斉に集まってもコストが膨れないようにする（社交には近くの数人が分かれば十分）。
     const scan = this._scan(h.x, h.y, CP.socialRadius, function (o) {
       return (o !== h && o.kid === h.kid) ? 2 : 0;
-    });
+    }, 40);
     const company = scan.count2;
     const other = scan.best;
     if (company > 0) h.social = 0; // 語らいで孤独が癒える
@@ -3102,11 +3113,16 @@
         }
       }
     }
-    // 1.5) 夜は帰宅して休む（戦時の兵士は夜も戦う）。昼は働き夜は静まる生活リズムを作る。
+    // 1.5) 夜は自分の家へ帰って休む（戦時の兵士は夜も戦う）。国の中心に皆で集まるのではなく、
+    //   各自が自分の住居（pid で安定して選ぶ建物）へ散り、着いたら屋内で静まる（描画されない）。
     if (this._night && !(h.role === ROLE.SOLDIER && this._count(k.wars) > 0)) {
-      if (hd2 > 9) { h.gx = hcx; h.gy = hcy; }            // 町へ帰る
-      else { this._ringGoal(h, world, hcx, hcy, 0, 2); }  // 家の周りで休む
-      h.state = 13; return;
+      const city = h.home || (k.cities && k.cities[0]);
+      if (city) {
+        let hx = city.x, hy = city.y;
+        const bs = city.buildings;
+        if (bs && bs.length) { const b = bs[(h.pid || 0) % bs.length]; hx = b.x; hy = b.y; } // 自分の家
+        h.gx = hx; h.gy = hy; h.state = 13; return;
+      }
     }
     // 2) 孤独 → 同胞のもとへ集まる。
     if (h.social > 1) {
@@ -3320,7 +3336,7 @@
       let hasWonder = false;
       for (let i = 0; i < bs.length; i++) if (bs[i].t === BUILDING.WONDER) { hasWonder = true; break; }
       if (!hasWonder) {
-        const spot = this._buildSpot(world, k, city);
+        const spot = this._buildSpot(world, k, city, BUILDING.WONDER);
         if (spot) {
           bs.push({ x: spot.x, y: spot.y, t: BUILDING.WONDER });
           this._logEvent("🏛 " + k.name + " が大記念碑を建立した");
@@ -3373,7 +3389,7 @@
     else if ((has[BUILDING.MARKET] || 0) < 2 && n >= 14) want = BUILDING.MARKET;
     else want = tier;                                                      // さらに住居を増やす
 
-    const spot = this._buildSpot(world, k, city);
+    const spot = this._buildSpot(world, k, city, want);
     if (spot) {
       bs.push({ x: spot.x, y: spot.y, t: want });
       city.level = 1 + ((bs.length / 3) | 0);
@@ -3416,24 +3432,52 @@
   };
 
   // 都市の近くで建設可能な空きタイル（自国の陸地・建物が未設置）を探す。
-  CivSystem.prototype._buildSpot = function (world, k, city) {
-    const W = world.width, H = world.height, owner = world.owner;
-    for (let r = 1; r <= 4; r++) {
-      for (let tries = 0; tries < 6; tries++) {
-        const ang = this.rand() * Math.PI * 2;
-        const x = (city.x + Math.cos(ang) * r) | 0;
-        const y = (city.y + Math.sin(ang) * r) | 0;
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
-        const i = y * W + x;
-        if (owner[i] !== k.id || !tile.isLand(world.terrain[i])) continue;
-        let occupied = false;
-        for (let bi = 0; bi < city.buildings.length; bi++) {
-          if (city.buildings[bi].x === x && city.buildings[bi].y === y) { occupied = true; break; }
-        }
-        if (!occupied) return { x: x, y: y };
+  CivSystem.prototype._buildSpot = function (world, k, city, want) {
+    const W = world.width, H = world.height, owner = world.owner, terr = world.terrain, fert = world.fertility;
+    const T = Game.TERRAIN;
+    const bs = city.buildings;
+    const wt = want === undefined ? BUILDING.HUT : want;
+    const wr = footR(wt);
+    const isFarm = (wt === BUILDING.FARM || wt === BUILDING.GRANARY);
+    const isHarbor = (wt === BUILDING.HARBOR);
+    const isCivic = !isFarm && !isHarbor; // 住居・市・工房・神殿・砦など
+    // 街は戸数に応じて広がる。耕地は外周（田畑が町を囲う）、住居・公共は中心寄りに集まる。
+    const grow = 2 + Math.ceil(Math.sqrt(bs.length + 1) * 1.7);
+    const maxR = Math.min(15, isFarm ? grow + 3 : grow);
+    let best = null, bestScore = -1e9;
+    for (let tries = 0; tries < 26; tries++) {
+      const ang = this.rand() * Math.PI * 2;
+      // 用途で距離分布を変える: 耕地は外側、公共・住居は中心寄り。
+      let rr;
+      if (isFarm) rr = maxR * 0.45 + this.rand() * maxR * 0.6;
+      else if (isCivic) rr = this.rand() * maxR * (0.45 + this.rand() * 0.55);
+      else rr = 1 + this.rand() * maxR;
+      const x = (city.x + Math.cos(ang) * rr) | 0;
+      const y = (city.y + Math.sin(ang) * rr) | 0;
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      const i = y * W + x;
+      if (owner[i] !== k.id || !tile.isLand(terr[i])) continue;
+      const t = terr[i];
+      if (t === T.SWAMP) continue;                    // 湿地は地盤が悪く建てない
+      if (isHarbor && !this._coastal(world, x, y)) continue; // 港は岸辺のみ
+      if (isFarm && fert && fert[i] < 0.12) continue; // 不毛の地では耕せない
+      // 当たり判定: 既存建物の占有域と重ならない（敷地が触れ合わない最小間隔を確保）。
+      let ok = true, nearest = 1e9;
+      for (let b = 0; b < bs.length; b++) {
+        const dx = bs[b].x - x, dy = bs[b].y - y, d = Math.sqrt(dx * dx + dy * dy);
+        if (d < wr + footR(bs[b].t) + 0.2) { ok = false; break; } // 占有域が重なる→不可
+        if (d < nearest) nearest = d;
       }
+      if (!ok) continue;
+      // スコア: 適度な間隔＋用途に合う立地（肥沃な耕地・中心寄りの公共・住みよい地形）。
+      let score = Math.min(nearest, 4);
+      if (isFarm && fert) score += fert[i] * 5;                       // 肥沃な土地を耕す
+      if (isCivic) score += (maxR - Math.hypot(x - city.x, y - city.y)) * 0.5; // 中心に集う
+      if (t === T.GRASS || t === T.SAVANNA) score += 0.6;            // 住みよい平地
+      else if (t === T.SAND || t === T.HILL || t === T.TUNDRA || t === T.DESERT) score -= 0.5;
+      if (score > bestScore) { bestScore = score; best = { x: x, y: y }; }
     }
-    return null;
+    return best;
   };
 
   // (cx,cy) を中心とした [minR,maxR] のリング内のランダムな点を目標にする。
@@ -3518,6 +3562,12 @@
 
   CivSystem.prototype._move = function (h, k, world) {
     const W = world.width, H = world.height;
+    // 夜の就寝(state 13): 自分の家に着いた人は徘徊せず静止する（屋内で休む＝描画で消える）。
+    //   家へ向かう途中はそのまま歩く。火災等で state が変われば再び動く。
+    if (h.state === 13) {
+      const dgx = h.gx + 0.5 - h.x, dgy = h.gy + 0.5 - h.y;
+      if (dgx * dgx + dgy * dgy < 1.0) { h.hx = 0; h.hy = 0; return; }
+    }
     // 操舵の間引き: 多くのティックは前回の速度(hx,hy)でそのまま前進し（移動は毎ティック
     //   滑らか）、経路・慣性・障害回避の再計算は steerEvery ティックに1回だけ行う。
     //   進路が水/外なら位相に関わらず即座に再操舵する（水侵入を防ぐ）。

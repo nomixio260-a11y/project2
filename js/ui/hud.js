@@ -14,6 +14,8 @@
     spark: null,
     sctx: null,
     clockEl: null,
+    summaryEl: null,
+    collapsed: false,
     history: [],
     _acc: 0,
     _fps: 0,
@@ -40,12 +42,30 @@
     ];
     el.innerHTML = "";
 
+    // 折りたたみ用ヘッダ（クリックで開閉。畳んでも要約を表示）。諸国パネルと同じ見た目。
+    const header = document.createElement("div");
+    header.className = "nations-header";
+    const title = document.createElement("span");
+    title.textContent = "情報";
+    const summary = document.createElement("span");
+    summary.className = "nations-count hud-summary";
+    summary.textContent = "—";
+    header.appendChild(title);
+    header.appendChild(summary);
+    el.appendChild(header);
+    this.summaryEl = summary;
+
+    // 本体（スパークライン＋チップ）。畳むと隠れる。
+    const body = document.createElement("div");
+    body.className = "hud-body";
+    el.appendChild(body);
+
     // スパークライン。
     const spark = document.createElement("canvas");
     spark.className = "hud-spark";
     spark.width = 150;
     spark.height = 34;
-    el.appendChild(spark);
+    body.appendChild(spark);
     this.spark = spark;
     this.sctx = spark.getContext("2d");
 
@@ -68,7 +88,18 @@
       chips.appendChild(chip);
       this.rows[key] = v;
     }
-    el.appendChild(chips);
+    body.appendChild(chips);
+
+    const self = this;
+    header.addEventListener("click", function () {
+      self.collapsed = !self.collapsed;
+      el.classList.toggle("collapsed", self.collapsed);
+    });
+    // 既定: 携帯では畳んでおく（邪魔にならないように）。
+    if (Game.device && Game.device.isPhone) {
+      this.collapsed = true;
+      el.classList.add("collapsed");
+    }
 
     this.clockEl = document.getElementById("clock");
   };
@@ -129,6 +160,12 @@
 
   Hud._render = function () {
     const s = this.sample();
+    // 畳んでいてもヘッダに要約（人口・総個体数）を出す。本体の更新と描画は省く。
+    if (this.summaryEl) {
+      const cp = s.civpop >= 1000 ? (s.civpop / 1000).toFixed(1) + "k" : String(s.civpop);
+      this.summaryEl.textContent = "👥" + cp + " 🐾" + s.pop;
+    }
+    if (this.collapsed) return;
     this.rows.pop.textContent = String(s.pop);
     this.rows.herb.textContent = String(s.herb);
     this.rows.pred.textContent = String(s.pred);

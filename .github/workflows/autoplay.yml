@@ -1,0 +1,64 @@
+name: Autoplay
+
+# 実ゲームをヘッドレスで「遊ばせる」ワークフロー。世界に文明と野生を芽吹かせ、数千ティック
+# 進めて、その移り変わりをタイムラプス画像・年代記・統計として残す。
+#   - 成果物(artifact): タイムラプスのコマ・index.html（スライドショー）・年代記・統計
+#   - ジョブ要約: 推移の表と年代記を Actions の実行ページで直接読める
+# 手動実行（Actions タブ → Run workflow）で、ティック数・コマ数・地図サイズを指定できる。
+
+# 手動実行(workflow_dispatch)はデフォルトブランチに本ファイルが載って初めて使えるため、
+# 開発ブランチでは「コミットメッセージに [autoplay] を含む push」でも起動できるようにする。
+on:
+  workflow_dispatch:
+    inputs:
+      ticks:
+        description: "進めるティック数（世界の経過時間）"
+        required: false
+        default: "12000"
+      frames:
+        description: "タイムラプスのコマ数"
+        required: false
+        default: "20"
+      size:
+        description: "地図サイズ（1辺のタイル数）"
+        required: false
+        default: "384"
+      kingdoms:
+        description: "初期建国数"
+        required: false
+        default: "16"
+  push:
+    branches:
+      - claude/fantasy-map-simulator-game-m6ve46
+
+concurrency:
+  group: autoplay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  play:
+    name: Play the world
+    runs-on: ubuntu-latest
+    # push では [autoplay] を含むコミットのときだけ走らせる（毎 push では起動しない）。
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[autoplay]')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install
+      - name: Run autoplay
+        env:
+          AUTOPLAY_TICKS: ${{ github.event.inputs.ticks }}
+          AUTOPLAY_FRAMES: ${{ github.event.inputs.frames }}
+          AUTOPLAY_SIZE: ${{ github.event.inputs.size }}
+          AUTOPLAY_KINGDOMS: ${{ github.event.inputs.kingdoms }}
+        run: node tools/autoplay.js
+      - name: Upload timelapse artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: autoplay-timelapse
+          path: playthrough/
+          if-no-files-found: error
+          retention-days: 30

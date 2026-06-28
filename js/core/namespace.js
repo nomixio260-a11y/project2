@@ -14,6 +14,7 @@ window.Game = window.Game || {};
       labels: true,    // 国名ラベル
       resources: true, // 資源アイコン
       weather: true,   // 天候（雲・雨・雷）
+      autoSeed: true,  // 新しい世界に最初から文明・野生を芽吹かせる（選択制）
     },
 
     // マップサイズ（タイル数）
@@ -44,8 +45,8 @@ window.Game = window.Game || {};
       conflictChance: 0.05, // 国境での領土反転の基本確率
 
       // 気候・季節
-      ticksPerDay: 72, // 何ティックで1日進むか（昼夜がゆっくり巡り、生活リズムが見える）
-      daysPerSeason: 14, // 1季節の日数（4季=1年）
+      ticksPerDay: 216, // 何ティックで1日進むか（昼夜をゆったり巡らせ生活リズムを見せる）
+      daysPerSeason: 5, // 1季節の日数（4季=1年。1日を長くした分、日数は抑え季節の長さは従来並み）
 
       // 植生（vegetation）
       vegBandRows: 96, // 1ティックで再成長処理する行数（ローリング走査）
