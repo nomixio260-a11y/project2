@@ -47,6 +47,17 @@
   function gearTier(tech) {
     return Math.min(5, 1 + ((tech / TECH_PER_ERA) | 0));
   }
+  // 装備の段階の名前（インスペクタ・年代記用）。5=名匠の業物, 6=伝説級。
+  const GEAR_NAMES = ["素手", "石器", "青銅", "鉄器", "鋼", "名匠", "伝説"];
+  function gearName(t) { return GEAR_NAMES[t] || GEAR_NAMES[GEAR_NAMES.length - 1]; }
+  // 国が実際に作れる装備の段階。時代を上限とするが、金属（鉱石・鉱山・輸入した武具）が
+  //   無ければ石器・木器どまり。これにより資源・交易・採掘が「ものづくり」の前提になる。
+  function craftTier(k) {
+    const era = gearTier(k.tech);
+    const res = k.res, fac = k.facilities;
+    const hasMetal = (res && res.ore > 0) || (fac && fac.mine > 0);
+    return hasMetal ? era : Math.min(era, 1);
+  }
 
   const CP = {
     popStart: 5,
@@ -175,6 +186,9 @@
     // 生産・装備（専門職が施設で働いて生み出す）
     workRadius: 3,       // 施設からこの距離以内なら「就労中」
     toolRate: 0.02,      // 鍛冶が1ティックに作る道具・武具
+    masterwork: 0.3,     // 工芸力1.0あたりの業物（一段上の傑作）を打つ確率
+    craftToolW: 0.4,     // 鍛冶場1棟あたりの道具産出（工芸力で増減）
+    craftLuxW: 0.6,      // 工芸力による奢侈品（金・宝石）の付加価値
     marketRate: 0.06,    // 商人が1ティックに生む富
     templeCalm: 0.02,    // 神官が1ティックに鎮める不満
     equipChance: 0.08,   // 就労時に在庫から装備を受け取る確率
@@ -655,6 +669,7 @@
       discovered: [], // 発見順の技術名（表示用）
       religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
       faith: 0.3,    // 信仰の篤さ(0..1)。神殿・神官・政体・敬虔さで高まり、結束/布教/聖戦に効く
+      craft: 0.2,    // 工芸力(0..1)。鍛冶場・職人・金属・技術で育ち、装備の質と道具の産出に効く
       trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
       wealth: 0,     // 富（交易・領土から蓄積）
       food: 30,      // 食料備蓄（生産-消費。0で飢饉）
@@ -1817,9 +1832,16 @@
       const king = ka.rulerRef;
       const kingDili = king && king.alive ? (0.7 + 0.3 * (king.dili || 1)) : 1;
       const kingWit = king && king.alive ? (0.7 + 0.3 * (king.wit || 1)) : 1;
+      // 工芸力: 鍛冶場・鍛冶職人・金属・進んだ冶金（青銅/鉄）で育つ「ものづくりの力」。
+      const smiths = ka.roleCount[ROLE.SMITH] || 0;
+      const metalAvail = (res.ore > 0) || (fac.mine > 0);
+      const metalF = metalAvail ? 1 : 0.35;
+      let craftTgt = clamp01((fac.smithy * 0.22 + smiths * 0.025) / Math.max(1, ka.cities.length) +
+        (hasTech(ka, "bronze") ? 0.1 : 0) + (hasTech(ka, "iron") ? 0.12 : 0)) * metalF;
+      ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + res.gold * CP.goldWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -1838,8 +1860,9 @@
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
-      // 武具の備蓄: 鉱石＋富で武装する（富裕国は兵を装備できる＝経済→軍事）。治安で増減。
-      ka.tools += (res.ore * 0.3 + Math.min(2.5, ka.wealth * 0.0025)) * order;
+      // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。金属が無い国は石器どまりで蓄えも乏しい
+      //   （工芸＝鍛冶場×職人×金属の産物）。富からの調達も金属がある国ほど効く。治安で増減。
+      ka.tools += (metalAvail ? (res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
       // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
       for (let ti = 0; ti < TECHS.length; ti++) {
@@ -3210,6 +3233,21 @@
     return dx * dx + dy * dy < CP.workRadius * CP.workRadius;
   };
 
+  // 支給する装備の段階。国が作れる段階(craftTier)を基準に、工芸力が高いほど稀に
+  //   業物（一段上の傑作）を打つ（名工の業）。金属が無い国は石器どまり。
+  CivSystem.prototype._equipTier = function (k) {
+    let t = craftTier(k);
+    // 業物は金属を扱える国でのみ（石器のままでは傑作にならない）。
+    if (t >= 2 && this.rand() < (k.craft || 0) * CP.masterwork) t = Math.min(6, t + 1);
+    return t;
+  };
+  // 工芸の概況（UI 用）: 工芸力・標準の装備段階とその名。
+  CivSystem.prototype.gearName = function (t) { return gearName(t); };
+  CivSystem.prototype.craftInfo = function (k) {
+    const t = craftTier(k);
+    return { level: k.craft || 0, tier: t, name: gearName(t) };
+  };
+
   // 役割の局所効果（毎ティックだが探索なし＝低負荷）。ti は足下のタイル index。
   CivSystem.prototype._roleTick = function (h, k, world, ti) {
     if (h.role === ROLE.FARMER) {
@@ -3220,14 +3258,14 @@
         practice(h); // 耕すたびに腕が上がる
       }
       // 道具の支給（在庫があれば）。
-      if (!h.gear && k.tools > 0 && this.rand() < CP.equipChance) h.gear = gearTier(k.tech);
+      if (!h.gear && this.rand() < CP.equipChance) h.gear = this._equipTier(k);
       return;
     }
     // 鍛冶: 鍛冶場で道具・武具を生産する（人口を上限に飽和）。熟練の職人ほど多く打つ。
     if (h.role === ROLE.SMITH) {
       if (this._atWork(h)) {
         if (k.tools < k.humanCount) k.tools += CP.toolRate * (1 + k.tech * 0.002) * ability(h);
-        if (!h.gear) h.gear = gearTier(k.tech);
+        if (!h.gear) h.gear = this._equipTier(k);
         practice(h);
       }
       return;
@@ -3236,7 +3274,7 @@
     if (h.role === ROLE.MERCHANT) {
       if (this._atWork(h)) {
         k.wealth += CP.marketRate * this._eff(k, "trade") * ability(h);
-        if (!h.gear) h.gear = gearTier(k.tech);
+        if (!h.gear) h.gear = this._equipTier(k);
         practice(h);
       }
       return;
@@ -3245,14 +3283,14 @@
     if (h.role === ROLE.PRIEST) {
       if (this._atWork(h)) {
         if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.templeCalm * this._eff(k, "faith") * ability(h));
-        if (!h.gear) h.gear = gearTier(k.tech);
+        if (!h.gear) h.gear = this._equipTier(k);
         practice(h);
       }
       return;
     }
     if (h.role === ROLE.SOLDIER) {
       // 武具の支給（在庫があれば）。
-      if (!h.gear && k.tools > 0 && this.rand() < CP.equipChance) h.gear = gearTier(k.tech);
+      if (!h.gear && this.rand() < CP.equipChance) h.gear = this._equipTier(k);
       // 思考時にキャッシュした敵が隣接していれば交戦（探索不要）。
       const e = h._enemy;
       if (e && e.alive && this._atWar(h.kid, e.kid)) {
