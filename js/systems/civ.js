@@ -114,6 +114,11 @@
     foodStoreBase: 36,    // 基本の備蓄上限（小さめ＝戦争・凶作が早く響く）
     foodStoreGranary: 48, // 穀倉1棟あたりの備蓄上限増
     famineDeathFood: 3,   // 食料不足この量ごとに1人が餓死
+    // 火災の被害（延焼が集落に達したとき。建物・農地・住民へ波及する）
+    fireHarm: 0.5,        // 燃えるタイルにいる人が1ティックに失う体力(食料)
+    fireDeath: 0.06,      // 燃えるタイルにいる人が焼死する確率／ティック
+    fireUnrest: 0.25,     // 焼かれた住民1人あたりの不満上昇（都市の動揺）
+    fireBuildBurn: 0.5,   // 焼け跡・延焼中の建物が1評価で失われる確率
     foodHarbor: 4,        // 港1棟の漁獲（沿岸都市の食料）
     academyTech: 1.8,     // 学院1棟の技術寄与
     tavernCalm: 0.9,      // 酒場1棟の不満低減（娯楽・憩い）
@@ -1065,6 +1070,13 @@
         h.food += gain;
         if (h.food > 1) h.food = 1;
       }
+      // 火災に巻かれる: 燃えるタイルにいる者は焼かれ、体力(食料)を失い恐慌する。
+      const onFire = this._fireNear && this._onFire(world, ti);
+      if (onFire) {
+        h.food -= CP.fireHarm;
+        h.fear = h.fear != null ? Math.min(1, h.fear + 0.5) : 0.5;
+        k._fireLoss = (k._fireLoss || 0) + 1;
+      }
       // 足下タイルを確保（自国領に地続きの未開地のみ＝領土を連続させる）。
       const o0 = world.owner[ti];
       if (o0 === 0) {
@@ -1089,6 +1101,8 @@
       const vg = h.vigor || 1;
       if (h.food <= 0 || h.age > CP.maxAge * vg) {
         h.alive = false;
+      } else if (onFire && this.rand() < CP.fireDeath) {
+        h.alive = false; // 焼死
       } else if (k.plague > 0 && this.rand() < CP.plagueMortality / vg) {
         h.alive = false; // 疫病で病没（生命力で抵抗）
       }
@@ -1121,6 +1135,8 @@
         k.unrest = (k.unrest || 0) + (0.55 - avg) * 0.05;
         if (k.unrest < 0) k.unrest = 0; else if (k.unrest > 100) k.unrest = 100;
       }
+      // 火災の被害は都市を動揺させる（焼かれた住民に応じて不満が上がる）。
+      if (k._fireLoss) k.unrest = Math.min(100, (k.unrest || 0) + k._fireLoss * CP.fireUnrest);
       // 民族構成: 最多の人種を国の代表民族とし、構成比を記録（人種ビュー・UI用）。
       //   多様性 diversity = 1 - 最多民族の比率（単一民族0 〜 多民族~0.8）。
       //   多文化国家は技術が加速する一方、わずかな軋轢（治安への摩擦）も生む。
@@ -1140,7 +1156,7 @@
       } else if (k.figure && (!k._topRef || !k._topRef.alive)) {
         k.figure = null;
       }
-      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._lxS = 0; k._lyS = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
+      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._lxS = 0; k._lyS = 0; k._fireLoss = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
     }
 
     // 出生を追加。
@@ -1769,6 +1785,9 @@
       }
       // 機能建築の数を集計（市場・鍛冶場・神殿などの効果に使う）。
       this._recountFacilities(ka);
+      // 火災が領内に及んでいれば建物が焼失する（被害→施設減→不満）。集計の前後で
+      //   整合するよう、被害適用後に施設数を取り直す。
+      if (this._fireNear) { this._fireDamageBuildings(ka, this.world); this._recountFacilities(ka); }
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
@@ -3126,6 +3145,29 @@
       }
     }
     return bx < 0 ? null : { x: bx, y: by };
+  };
+
+  // 火災が集落に達したときの建物被害: 延焼中・焼け跡(SCORCHED)のタイルに建つ建物が失われる。
+  // 都市ごとに評価時のみ走査する（建物数は都市あたり最大26で軽い）。砦(KEEP)は残す。
+  CivSystem.prototype._fireDamageBuildings = function (k, world) {
+    const burn = (Game.state.fire && Game.state.fire.burn) ? Game.state.fire.burn : null;
+    const W = world.width, SC = Game.TERRAIN.SCORCHED;
+    let lost = 0;
+    for (let c = 0; c < k.cities.length; c++) {
+      const bs = k.cities[c].buildings;
+      if (!bs) continue;
+      for (let b = bs.length - 1; b >= 0; b--) {
+        const bd = bs[b];
+        if (bd.t === BUILDING.KEEP) continue; // 砦は焼け残る（都市の核）
+        const ti = bd.y * W + bd.x;
+        const ablaze = (burn && burn[ti] > 0) || world.terrain[ti] === SC;
+        if (ablaze && this.rand() < CP.fireBuildBurn) { bs.splice(b, 1); lost++; }
+      }
+    }
+    if (lost > 0) {
+      k.unrest = Math.min(100, (k.unrest || 0) + lost * 1.5);
+      this._logEvent("🔥 " + k.name + " で火災により建物 " + lost + " 棟が焼失した");
+    }
   };
 
   // 施設で就労中（職場座標に十分近い）か。

@@ -152,6 +152,10 @@
     // 植生システムの参照をループ外で1回だけ解決（毎個体の lookup を避ける）。
     const veg = Game.state.vegetation;
     const vegOK = !!(veg && veg.world === world);
+    // 炎システムの参照（延焼中のみ生物が火を恐れて逃げる。平時は走査しない）。
+    const fireSys = Game.state.fire;
+    const fireActive = !!(fireSys && fireSys.world === world && fireSys.active.length > 0);
+    const burnArr = fireActive ? fireSys.burn : null;
 
     const n = e.count; // 今ティックの個体のみ処理（新生は次ティック）
     for (let i = 0; i < n; i++) {
@@ -173,6 +177,8 @@
       if (here === Game.TERRAIN.DEEP_WATER) {
         e.energy[i] -= 0.08;
       }
+      // 炎に巻かれると消耗する（火災は生物に致命的＝逃げる動機）。
+      if (burnArr && burnArr[idx] > 0) e.energy[i] -= 0.06;
 
       // 渇き: 進行し、岸（浅瀬隣接）で飲んでリセット。限界で消耗。
       // 渇きの進行は緩やかなので、岸の確認（3x3走査）は4ティックに1回に間引く。
@@ -188,9 +194,16 @@
       let dirY = 0;
       let fleeing = false;
       let chasing = false;
+      let firePanic = false;
 
-      // 渇きが強ければ水を最優先で探す。
-      if (e.thirst[i] > P.thirstSeek) {
+      // 炎から逃げる（あらゆる本能に優先する生存反応。延焼中のみ近傍を走査する）。
+      if (fireActive) {
+        const ff = this._fleeFire(world, tx, ty, burnArr);
+        if (ff) { dirX = ff.x; dirY = ff.y; fleeing = true; firePanic = true; }
+      }
+
+      // 渇きが強ければ水を最優先で探す（火から逃げている間は除く）。
+      if (!firePanic && e.thirst[i] > P.thirstSeek) {
         const wseek = this._seekWater(world, tx, ty);
         dirX = wseek.x;
         dirY = wseek.y;
@@ -198,7 +211,7 @@
 
       if (type === S.HERBIVORE) {
         // 捕食者から逃げる（採食・渇きより最優先＝生存本能）。感覚が鋭いほど早く気づく。
-        const pred = this._nearest(e.x[i], e.y[i], S.PREDATOR, P.fleeRadius * (0.6 + 0.4 * gSense), -1);
+        const pred = firePanic ? -1 : this._nearest(e.x[i], e.y[i], S.PREDATOR, P.fleeRadius * (0.6 + 0.4 * gSense), -1);
         if (pred !== -1) {
           const dx = e.x[i] - e.x[pred];
           const dy = e.y[i] - e.y[pred];
@@ -350,6 +363,29 @@
       }
     }
     return { x: bx, y: by };
+  };
+
+  // (tx,ty) の周囲±4タイルで最も近い燃焼タイルを探し、そこから「離れる」方向を返す。
+  // 近くに火が無ければ null（呼び出し側は延焼中のみ呼ぶ）。
+  CreatureSystem.prototype._fleeFire = function (world, tx, ty, burn) {
+    const W = world.width, H = world.height, R = 4;
+    let bx = 0, by = 0, bestD = 1e9;
+    for (let dy = -R; dy <= R; dy++) {
+      const ny = ty + dy;
+      if (ny < 0 || ny >= H) continue;
+      const row = ny * W;
+      for (let dx = -R; dx <= R; dx++) {
+        const nx = tx + dx;
+        if (nx < 0 || nx >= W) continue;
+        if (burn[row + nx] > 0) {
+          const d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; bx = dx; by = dy; }
+        }
+      }
+    }
+    if (bestD === 1e9) return null; // 近くに火は無い
+    const dl = Math.sqrt(bestD) || 1;
+    return { x: -bx / dl, y: -by / dl }; // 火から離れる向き
   };
 
   // (tx,ty) の周囲±2タイルで最も近い食べられるタイル方向を返す。
