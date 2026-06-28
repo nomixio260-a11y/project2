@@ -145,6 +145,12 @@
     artChance: 0.02,      // 閃きのうち不朽の傑作（作品）となる確率
     artFame: 2.4,         // 傑作で創造者が得る名声
     artCalm: 1.1,         // 傑作が国の不満を和らげる量（文化の結束）
+    // 産業(industry): 工房・市・港・鉱山・学院・商人・職人・技術が織りなす「ものを作り
+    //   売る力」。0..1 で緩やかに育ち、富・武具・技術・交易を底上げする（経済の厚み）。
+    industryWealthW: 0.6,  // 産業→富（最大 +60%）
+    industryToolW: 0.5,    // 産業→武具生産
+    industryTechW: 0.25,   // 産業→技術速度
+    industryTradeW: 0.5,   // 産業→交易力
     // 革新(innovation): 創造が分野ごとの永続的な「強み」として国に根づく。6分野
     //   (技術/工芸/商/農/軍/文化)それぞれに 0..1 の水準があり、平凡な閃きで僅かに、
     //   画期的発明で大きく高まる。各分野は具体的な恩恵（研究・生産・交易・食料・軍・
@@ -216,6 +222,11 @@
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
+    // 戦争の重み: 維持費と厭戦（長期戦は国庫と人心を蝕む）
+    warUpkeep: 0.12,     // 軍事力1あたりの戦時維持費／評価（×交戦数）
+    warWearyRise: 0.05,  // 交戦中に厭戦が積もる速さ／評価（×交戦数）
+    warWearyDecay: 0.94, // 平時に厭戦が薄れる係数／評価
+    warWearyUnrest: 6,   // 厭戦が不満へ与える最大寄与
     // 講和・従属・休戦（戦争の結末を多様に）
     vassalChance: 0.55,  // 決定的勝利で、都市を奪う代わりに相手を属国(朝貢国)にする確率
     vassalTribute: 0.06, // 属国が毎評価で宗主へ納める富の割合（朝貢）
@@ -1113,6 +1124,21 @@
   };
 
   // (x,y) に最も近い k の都市座標 {x,y} を返す。
+  // h の交戦国のうち、最も近い敵都市を返す（無ければ null）。軍がそこへ集結し攻囲・征服する。
+  CivSystem.prototype._nearestEnemyCity = function (h) {
+    const ks = this.kingdoms; let bx = -1, by = -1, bd = 1e9;
+    for (let id = 1; id < ks.length; id++) {
+      const e = ks[id];
+      if (!e || !e.alive || !e.cities || !this._atWar(h.kid, id)) continue;
+      const cs = e.cities;
+      for (let c = 0; c < cs.length; c++) {
+        const dx = cs[c].x - h.x, dy = cs[c].y - h.y, d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; bx = cs[c].x; by = cs[c].y; }
+      }
+    }
+    return bx < 0 ? null : { x: bx, y: by };
+  };
+
   CivSystem.prototype._nearestCity = function (k, x, y) {
     let bx = k.cities[0].x, by = k.cities[0].y, bd = 1e9;
     for (let c = 0; c < k.cities.length; c++) {
@@ -1857,7 +1883,7 @@
     const fac = k.facilities || {};
     const order = 1 - (k.unrest || 0) / 200;
     let cap = (1 + (fac.market || 0) * CP.tradeMarketW + (fac.harbor || 0) * CP.harborTrade + (k.roleCount[ROLE.MERCHANT] || 0) * CP.tradeMerchantW) *
-      this._eff(k, "trade") * order;
+      this._eff(k, "trade") * order * (1 + (k.industry || 0) * CP.industryTradeW); // 産業が交易を厚くする
     if (hasTech(k, "wheel")) cap *= CP.tradeWheelBonus;
     return cap;
   };
@@ -2125,9 +2151,18 @@
         Math.min(CP.insightCraftCap, ka.craftLore || 0) + innov[1] * CP.innovCraftW) * metalF; // 工人の閃き・工芸革新
       ka.craftLore = (ka.craftLore || 0) * 0.6; // 蓄えた工夫は緩やかに常態化していく
       ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
+      // 産業力: 工房・市・港・鉱山・学院と職人・商人、交通・貨幣の技術が織りなす「生産と
+      //   商いの厚み」。都市あたりの集積で測り、ゆっくり育つ。富・武具・技術・交易を底上げ。
+      const merchants = ka.roleCount[ROLE.MERCHANT] || 0;
+      let indTgt = clamp01(
+        (fac.smithy * 0.16 + fac.market * 0.16 + fac.harbor * 0.12 + fac.mine * 0.14 + fac.academy * 0.1 +
+          smiths * 0.02 + merchants * 0.02) / Math.max(1, ka.cities.length) +
+        (hasTech(ka, "wheel") ? 0.1 : 0) + (hasTech(ka, "coin") ? 0.08 : 0) + ka.tech * 0.0006);
+      ka.industry = (ka.industry || 0) + (indTgt - (ka.industry || 0)) * 0.08; // ゆっくり推移
+      const indF = 1 + ka.industry * CP.industryWealthW;
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
-      //   （商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW);
+      //   （商才・政体・治安・名君・産業で増減）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW) * indF;
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -2144,7 +2179,7 @@
         ka.coin *= 0.98; if (ka.coin < 0.01) ka.coin = 0; // 貨幣を未だ持たぬ国（鋳造手段の喪失）
       }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
-      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech + innov[0] * CP.innovTechW;
+      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech + innov[0] * CP.innovTechW + ka.industry * CP.industryTechW;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
       // 人々の閃きの蓄積（創造システム）を技術へ転化する。文明は建物だけでなく「人」が進める。
       //   一評価あたりの転化は上限を設け、人口増による暴走を防ぐ（残りは次評価へ持ち越し）。
@@ -2156,7 +2191,7 @@
       // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。鍛造の量は燃料(炭=森林)が支える――
       //   炉に火を入れられねば多くは打てない。富からの調達(輸入)は燃料に依らない。治安で増減。
       const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
-      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order;
+      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order * (1 + ka.industry * CP.industryToolW);
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
       // 製鉄の炭焼き: 鉄・鋼を盛んに鍛える国は、森を炭に費やして後退させる（史実の森林伐採）。
       //   植生システムが時とともに森を再生し、過伐採と再生の均衡が生まれる。
@@ -2189,6 +2224,16 @@
       let dU = -1.5;
       const warCount = this._count(ka.wars);
       dU += warCount * 2.6;
+      // 戦争疲弊: 戦が続くほど厭戦感が積もり（平時に薄れる）、長期戦は内政を蝕む。さらに
+      //   軍の維持には費用がかかり、戦時は国庫を削る（戦争に経済的・社会的な重みを与える）。
+      if (warCount > 0) {
+        ka.warWeary = Math.min(1, (ka.warWeary || 0) + CP.warWearyRise * warCount);
+        const upkeep = Math.min(ka.wealth * 0.5, this._military(ka) * CP.warUpkeep * warCount);
+        ka.wealth -= upkeep;
+      } else {
+        ka.warWeary = (ka.warWeary || 0) * CP.warWearyDecay;
+      }
+      dU += (ka.warWeary || 0) * CP.warWearyUnrest;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
       dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0) + ka.faith * CP.faithCalm; // 信仰・食料・酒場・漁場・記念碑・法典で安定
@@ -3155,11 +3200,14 @@
       }
       // 敵が見えれば交戦。
       if (e) { h.gx = e.x | 0; h.gy = e.y | 0; h.state = 5; return; }
-      // 敵影が無ければ前線（交戦国の領土）へ前進する。
-      const t = this._nearestTile(h, world, 7, function (terr, ow) {
+      // 防衛優先: 自国領に侵入した敵領タイルが近くにあれば、そこへ向かい撃退する（前線防衛）。
+      const t = this._nearestTile(h, world, 12, function (terr, ow) {
         return ow !== 0 && ow !== h.kid && self._atWar(h.kid, ow);
       });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 5; return; }
+      // 近くに前線が無ければ、交戦国の最寄りの都市へ進軍する（攻囲・征服を目指す＝軍が集結）。
+      const ec = this._nearestEnemyCity(h);
+      if (ec) { h.gx = ec.x; h.gy = ec.y; h.state = 5; return; }
       // 平時は領内を広く警邏（外周寄りを巡回）。
       this._ringGoal(h, world, hcx, hcy, CP.tether * 0.4, CP.tether);
       h.state = 5; return;
@@ -3496,7 +3544,13 @@
       const t = terr[i];
       if (t === T.SWAMP) continue;                    // 湿地は地盤が悪く建てない
       if (isHarbor && !this._coastal(world, x, y)) continue; // 港は岸辺のみ
-      if (isFarm && fert && fert[i] < 0.12) continue; // 不毛の地では耕せない
+      // 耕地は現実的に: 肥沃な草原・サバンナ、または水辺（灌漑）の平地のみ。砂地・乾地・丘は不可。
+      const nearWater = isFarm ? this._coastal(world, x, y) : false;
+      if (isFarm) {
+        const farmable = (t === T.GRASS || t === T.SAVANNA);
+        if (!farmable && !nearWater) continue;        // 草原/サバンナか、水辺の灌漑地のみ
+        if (fert && fert[i] < 0.2 && !nearWater) continue; // 痩せ地は不可（灌漑地は許容）
+      }
       // 当たり判定: 既存建物の占有域と重ならない（敷地が触れ合わない最小間隔を確保）。
       let ok = true, nearest = 1e9;
       for (let b = 0; b < bs.length; b++) {
@@ -3505,9 +3559,10 @@
         if (d < nearest) nearest = d;
       }
       if (!ok) continue;
-      // スコア: 適度な間隔＋用途に合う立地（肥沃な耕地・中心寄りの公共・住みよい地形）。
+      // スコア: 適度な間隔＋用途に合う立地（肥沃な耕地・水辺の灌漑・中心寄りの公共・住みよい地形）。
       let score = Math.min(nearest, 4);
-      if (isFarm && fert) score += fert[i] * 5;                       // 肥沃な土地を耕す
+      if (isFarm && fert) score += fert[i] * 6;                       // 肥沃な土地を厚く優先
+      if (isFarm && nearWater) score += 2.5;                          // 水辺は灌漑できて好適
       if (isCivic) score += (maxR - Math.hypot(x - city.x, y - city.y)) * 0.5; // 中心に集う
       if (t === T.GRASS || t === T.SAVANNA) score += 0.6;            // 住みよい平地
       else if (t === T.SAND || t === T.HILL || t === T.TUNDRA || t === T.DESERT) score -= 0.5;
