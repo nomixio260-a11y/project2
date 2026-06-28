@@ -37,11 +37,11 @@ window.Game = window.Game || {};
       running: true, // 一時停止/再生
       speed: 1, // 速度倍率（0.5/1/2/4）
       tickMs: 100, // 1ティック=シム内100ms（速度1で10tick/秒）
-      maxSteps: 5, // 1フレームあたりの最大catch-upティック
+      maxSteps: 12, // 1フレームあたりの最大catch-upティック（高速(20倍)でも進むよう拡大）
       maxEntities: 18000, // 生物の上限
       maxFires: 16000, // 同時延焼タイルの上限
       maxKingdoms: 180, // 王国数の上限
-      maxPeople: 2400, // 人間エージェント（文明の主体）の総数上限
+      maxPeople: 5000, // 人間エージェント（文明の主体）の総数上限
       claimsPerTick: 40, // 1王国が1ティックに拡張するタイル数の上限（人口で変調）
       conflictChance: 0.05, // 国境での領土反転の基本確率
 
@@ -145,9 +145,9 @@ window.Game = window.Game || {};
   // 端末プロファイル: 地図サイズ・エージェント上限・初期ズーム(表示タイル数)。
   // 生物処理の最適化(時分割＋軽量化)で得た余力を、より大規模な世界に振り向けている。
   Game.deviceProfiles = {
-    phone: { mapW: 512, mapH: 512, maxEntities: 7000, maxFires: 5000, maxPeople: 800, maxKingdoms: 80, fitTiles: 100 },
-    tablet: { mapW: 768, mapH: 768, maxEntities: 12000, maxFires: 9000, maxPeople: 1500, maxKingdoms: 120, fitTiles: 150 },
-    desktop: { mapW: 1024, mapH: 1024, maxEntities: 18000, maxFires: 16000, maxPeople: 2400, maxKingdoms: 180, fitTiles: 175 },
+    phone: { mapW: 512, mapH: 512, maxEntities: 7000, maxFires: 5000, maxPeople: 1600, maxKingdoms: 80, fitTiles: 100 },
+    tablet: { mapW: 768, mapH: 768, maxEntities: 12000, maxFires: 9000, maxPeople: 3000, maxKingdoms: 120, fitTiles: 150 },
+    desktop: { mapW: 1024, mapH: 1024, maxEntities: 18000, maxFires: 16000, maxPeople: 5000, maxKingdoms: 180, fitTiles: 175 },
   };
 
   // 端末プロファイルを config に反映する（main の boot 冒頭で呼ぶ）。
