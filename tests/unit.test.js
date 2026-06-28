@@ -979,3 +979,49 @@ test("CivSystem: 鉄の製錬には燃料(森)が要る（冶金の連鎖）", (
   assert.ok(ciA.tier >= 3, "鉱石＋燃料＋鉄器技術 → 鉄器以上のはず: " + ciA.tier);
   assert.equal(ciB.tier, 2, "鉱石はあるが燃料が無い → 青銅どまりのはず: " + ciB.tier);
 });
+
+test("CivSystem: 生物群系の資源が集計され軍事に効く（馬＝騎兵ほか）", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 20 });
+  const w = new Game.World(30, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS); w.elevation.fill(0.5);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(15, 10);
+  const k = civ.kingdoms[A];
+
+  // 首都タイル（建国時に領有）に複数の新資源を置く。
+  w.resource = new Uint8Array(30 * 20);
+  const rl = [];
+  function put(x, y, t) { w.resource[y * 30 + x] = t; rl.push({ x: x, y: y, t: t }); }
+  put(15, 10, Game.RESOURCE.HORSES);
+  put(15, 10, Game.RESOURCE.HORSES); // 同タイルは1つだが、別タイルも owned 化のため首都中心のみで検証
+  w.resourceList = [{ x: 15, y: 10, t: Game.RESOURCE.HORSES }];
+  civ._tallyResources();
+  assert.ok(k.res.horses >= 1, "馬が集計されるはず");
+
+  // 馬（騎兵）があると軍事力が上がる。
+  k.res.horses = 8;
+  const milWith = civ._military(k);
+  k.res.horses = 0;
+  const milNo = civ._military(k);
+  assert.ok(milWith > milNo, "馬(騎兵)で軍事力が増すはず");
+
+  // 資源名テーブルが揃っている。
+  assert.equal(Game.RESOURCE_NAMES[Game.RESOURCE.SPICE], "香辛料");
+  assert.equal(Game.RESOURCE_NAMES[Game.RESOURCE.SALT], "塩");
+  assert.equal(Game.RESOURCE_NAMES[Game.RESOURCE.TIMBER], "良材");
+});
+
+test("worldgen: 生物群系ごとの資源（馬・良材など）が配置される", () => {
+  const Game = loadCore({ mapWidth: 200, mapHeight: 150 });
+  const w = new Game.World(200, 150);
+  Game.worldgen.generate(w, 4242);
+  const kinds = new Set();
+  for (const r of w.resourceList) kinds.add(r.t);
+  // 鉱石/漁場に加え、草原・森由来の資源（馬・良材）も現れる。
+  assert.ok(kinds.has(Game.RESOURCE.HORSES) || kinds.has(Game.RESOURCE.TIMBER), "生物群系資源が配置されていない");
+  // 同一シードで再現的。
+  const w2 = new Game.World(200, 150);
+  Game.worldgen.generate(w2, 4242);
+  assert.equal(w.resourceList.length, w2.resourceList.length, "資源配置がシードで再現的でない");
+});

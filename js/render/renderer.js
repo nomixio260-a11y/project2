@@ -699,6 +699,25 @@
         ctx.fillStyle = "#f3c433"; ctx.fillRect(cx - s * 0.2, cy - s * 0.16, s * 0.32, s * 0.3);
         ctx.fillStyle = "#ffe98a"; ctx.fillRect(cx - s * 0.1, cy - s * 0.08, s * 0.14, s * 0.14);
         ctx.fillStyle = "#fff6cf"; ctx.fillRect(cx + s * 0.12, cy + s * 0.06, s * 0.12, s * 0.12);
+      } else if (r.t === 5) { // 馬: 草地の駿馬（胴＋脚＋首）
+        ctx.fillStyle = "#7a4a28"; ctx.fillRect(cx - s * 0.34, cy - s * 0.16, s * 0.62, s * 0.3); // 胴
+        ctx.fillRect(cx + s * 0.18, cy - s * 0.42, s * 0.16, s * 0.3); // 首
+        ctx.fillStyle = "#5e3a20"; ctx.fillRect(cx - s * 0.28, cy + s * 0.12, s * 0.1, s * 0.26); ctx.fillRect(cx + s * 0.1, cy + s * 0.12, s * 0.1, s * 0.26); // 脚
+      } else if (r.t === 6) { // 香辛料: 色鮮やかな実・葉
+        ctx.fillStyle = "#3f8f3a"; ctx.fillRect(cx - s * 0.4, cy + s * 0.1, s * 0.8, s * 0.16); // 葉床
+        ctx.fillStyle = "#d8542a"; ctx.fillRect(cx - s * 0.28, cy - s * 0.2, s * 0.22, s * 0.22);
+        ctx.fillStyle = "#e8a23a"; ctx.fillRect(cx + s * 0.02, cy - s * 0.26, s * 0.2, s * 0.2);
+        ctx.fillStyle = "#c23030"; ctx.fillRect(cx + s * 0.16, cy + s * 0.0, s * 0.16, s * 0.16);
+      } else if (r.t === 7) { // 塩: 白い結晶の山
+        ctx.fillStyle = "#eef2f6";
+        ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.42); ctx.lineTo(cx + s * 0.42, cy + s * 0.34); ctx.lineTo(cx - s * 0.42, cy + s * 0.34); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(cx - s * 0.08, cy - s * 0.1, s * 0.16, s * 0.16);
+        ctx.fillStyle = "#c7d2dc"; ctx.fillRect(cx - s * 0.3, cy + s * 0.22, s * 0.6, s * 0.1);
+      } else if (r.t === 8) { // 良材: 積まれた丸太
+        ctx.fillStyle = "#6b4a2a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.84, s * 0.22);
+        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.2);
+        ctx.fillStyle = "#caa06a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.14, s * 0.22); ctx.fillRect(cx + s * 0.28, cy - s * 0.06, s * 0.14, s * 0.22); // 木口
+        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.12, s * 0.2);
       } else { // 宝石: きらめく結晶
         ctx.fillStyle = "#46d6c8";
         ctx.beginPath();
