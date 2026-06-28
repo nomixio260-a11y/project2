@@ -97,7 +97,8 @@
           if (ter === T.HILL || ter === T.MOUNTAIN) {
             const v = rand();
             if (v < 0.012) r = R.GEMS;        // 宝石（稀）
-            else if (v < 0.10) r = R.ORE;     // 鉱石
+            else if (v < 0.026) r = R.GOLD;   // 金鉱石（稀。貨幣の素材）
+            else if (v < 0.11) r = R.ORE;     // 鉱石
           } else if (ter === T.SHALLOW_WATER) {
             // 陸に隣接する浅瀬＝沿岸の漁場。
             let coast = false;

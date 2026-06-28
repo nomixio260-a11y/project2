@@ -694,6 +694,11 @@
         ctx.fillStyle = "rgba(190,230,248,0.85)"; ctx.fillRect(cx - s * 0.5, cy + s * 0.15, s, s * 0.18);
         ctx.fillStyle = "#34637e"; ctx.fillRect(cx - s * 0.28, cy - s * 0.22, s * 0.5, s * 0.22);
         ctx.fillStyle = "#34637e"; ctx.fillRect(cx + s * 0.22, cy - s * 0.16, s * 0.14, s * 0.1);
+      } else if (r.t === 4) { // 金鉱石: 岩塊に輝く金塊
+        ctx.fillStyle = "#5a4a36"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+        ctx.fillStyle = "#f3c433"; ctx.fillRect(cx - s * 0.2, cy - s * 0.16, s * 0.32, s * 0.3);
+        ctx.fillStyle = "#ffe98a"; ctx.fillRect(cx - s * 0.1, cy - s * 0.08, s * 0.14, s * 0.14);
+        ctx.fillStyle = "#fff6cf"; ctx.fillRect(cx + s * 0.12, cy + s * 0.06, s * 0.12, s * 0.12);
       } else { // 宝石: きらめく結晶
         ctx.fillStyle = "#46d6c8";
         ctx.beginPath();

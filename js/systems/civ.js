@@ -79,6 +79,24 @@
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
+    // 言語（個人の「言葉」は2次元の言語空間 lx,ly 上の位置。近いほど通じ合う）。
+    langScale: 0.42,     // 相互理解度が0になる言語距離（これ以上で意思疎通が困難）
+    langFloor: 0.4,      // 相互理解度の下限（身振り等で完全には途絶えない）
+    langAccom: 0.02,     // 会話による言葉の歩み寄り（収束＝同化・方言形成）
+    langMut: 0.012,      // 世代継承時の言語変異（方言の分岐を生む）
+    langJitter: 0.03,    // 建国者の言語の個体差
+    langDiploPull: 0.6,  // 言葉が通じる国どうしは親しみ、通じぬ国とは隔たる（外交）
+    // 分岐・独自進化: 諸要素は収束(同化)するだけでなく、絶えず揺らぎ、時に大きく
+    //   変異して独自の系統へ枝分かれする（孤立・革新が方言・新文化・民族を生む）。
+    langDrift: 0.002,    // 言葉の絶え間ない微小な揺らぎ（収束と釣り合い方言の幅を生む）
+    langInnov: 0.004,    // 言葉の革新（独自進化）が起きる確率／think
+    langInnovAmt: 0.12,  // 革新が起きたときの言葉の跳び幅
+    langSplit: 0.5,      // 独立・植民の際に言葉が大きく分岐する確率
+    langSplitAmt: 0.18,  // 分岐したときの言葉の隔たり
+    cultDrift: 0.004,    // 文化の微小な揺らぎ
+    cultInnov: 0.003,    // 文化の革新が起きる確率／think
+    cultInnovAmt: 0.18,  // 文化の革新の跳び幅
+    raceGenesis: 0.015,  // 出生時に土地の気候に適応した民族へ変わる確率（民族の独自進化）
     sightBase: 5.2,      // 視野の基準半径（知性・年齢・昼夜で変化する）
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
@@ -130,6 +148,14 @@
     tradeToolPrice: 1.1,  // 武具1単位の取引価格（富）。軍需品の交易
     tradeToolMax: 6,      // 1回の評価で動かせる武具の上限
     tradeArbScale: 0.18,  // 価格差（裁定）から生まれる交易利益の係数
+    // 貨幣（鋳貨）: ある程度の文明（鋳貨技術＋金鉱石）になると物々交換から貨幣経済へ。
+    //   貨幣は交易を潤滑にし（gains from trade を増やす）、富の蓄積を助ける。
+    goldWealth: 1.6,      // 金鉱石1つあたりの富の産出（宝石より高い）
+    mintRate: 0.5,        // 鋳貨技術を持つ国が金鉱石1つから1評価で鋳造する貨幣
+    coinCap: 40,          // 貨幣の保有上限（金鉱石数に比例。死蔵を防ぐ）
+    coinTradeBonus: 1.5,  // 双方が貨幣を使うと交易利益が増す（取引費用の低下）
+    coinTradeHalf: 1.2,   // 片方のみ貨幣の場合の交易ボーナス
+    coinWealth: 0.004,    // 貨幣保有が富の蓄積を後押しする係数
     // 生産・装備（専門職が施設で働いて生み出す）
     workRadius: 3,       // 施設からこの距離以内なら「就労中」
     toolRate: 0.02,      // 鍛冶が1ティックに作る道具・武具
@@ -210,6 +236,7 @@
     { id: "agri", name: "農耕", at: 20 },     // 食料・人口扶養力
     { id: "writing", name: "文字", at: 48 },  // 技術の進歩を加速
     { id: "wheel", name: "車輪", at: 80 },    // 交易・富
+    { id: "coin", name: "鋳貨", at: 100 },    // 貨幣経済（金鉱石を鋳造し交易を潤す）
     { id: "bronze", name: "青銅器", at: 120 }, // 軍事
     { id: "sail", name: "航海術", at: 150 },  // 海を越える植民
     { id: "iron", name: "鉄器", at: 185 },    // 軍事
@@ -322,6 +349,39 @@
     const R = RACES[rid];
     if (!R || !R.sur) return surname(rand);
     return R.sur[(rand() * R.sur.length) | 0] + SUR_B[(rand() * SUR_B.length) | 0];
+  }
+
+  // ===== 言語（言葉の通じ合い・方言の分岐・同化）=====
+  // 各人は2次元の「言語空間」(lx,ly)上の一点として言葉を持つ。建国時に国の言語が定まり、
+  // 子は親の言葉を受け継ぎつつ僅かに変異し（世代を経て方言が分岐）、会話相手へ歩み寄る
+  // （収束＝同化・共通語の形成）。征服・交易で国家間の言葉も借用し合い近づく。
+  // 相互理解度(mutual intelligibility)が会話の濃さ（学習・気分/文化の伝播・友誼）を左右する。
+  function mutualIntel(ax, ay, bx, by) {
+    const dx = ax - bx, dy = ay - by;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    let mi = 1 - d / CP.langScale;
+    if (mi < CP.langFloor) mi = CP.langFloor; else if (mi > 1) mi = 1;
+    return mi;
+  }
+  // 言語空間の位置を色に（言語ビュー: 近い言葉＝近い色）。2軸を色相・明度に対応。
+  function langColor(lx, ly) {
+    lx = clamp01(lx); ly = clamp01(ly);
+    const hue = lx * 360, l = 90 + ly * 60, c = 120;
+    const kk = hue / 60, x = c * (1 - Math.abs((kk % 2) - 1));
+    let r = 0, g = 0, b = 0;
+    if (kk < 1) { r = c; g = x; } else if (kk < 2) { r = x; g = c; } else if (kk < 3) { g = c; b = x; }
+    else if (kk < 4) { g = x; b = c; } else if (kk < 5) { r = x; b = c; } else { r = c; b = x; }
+    return [(r + l) | 0, (g + l) | 0, (b + l) | 0];
+  }
+  // 言語の名前（語族）: 言語空間の位置から決定的に音節を組み、言葉に名を与える（UI用）。
+  const LANG_ON = ["Va", "Th", "Ka", "Sho", "Mi", "Lu", "Ne", "Or", "Ya", "Zi", "Be", "Ga", "Ru", "Fae", "Hol", "Ty"];
+  const LANG_NU = ["la", "rin", "sk", "do", "vi", "ka", "ven", "th", "no", "ria", "mar", "lo", "sha", "gan", "wyn", "ul"];
+  const LANG_SU = ["ish", "an", "ic", "ese", "ari", "en", "oth", "ic", "ai", "or"];
+  function langName(lx, ly) {
+    const a = Math.min(LANG_ON.length - 1, (clamp01(lx) * LANG_ON.length) | 0);
+    const b = Math.min(LANG_NU.length - 1, (clamp01(ly) * LANG_NU.length) | 0);
+    const c = Math.min(LANG_SU.length - 1, (((clamp01(lx) + clamp01(ly)) * 0.5) * LANG_SU.length) | 0);
+    return LANG_ON[a] + LANG_NU[b] + LANG_SU[c] + "語";
   }
   // 近親か（親子・兄弟姉妹）。近親婚を避け、外婚（exogamy）を促すために用いる。
   function closeKin(a, b) {
@@ -464,6 +524,7 @@
     if (mode === "dynasty") return k.dynasty ? hashColor(k.dynasty) : k.color;
     if (mode === "culture") return cultureColor(k.cultureAvg == null ? 0.5 : k.cultureAvg);
     if (mode === "race") { const R = RACES[k.race == null ? 1 : k.race]; return R ? R.col : k.color; }
+    if (mode === "language") return langColor(k.langX == null ? 0.5 : k.langX, k.langY == null ? 0.5 : k.langY);
     return k.color; // nation（既定）
   };
 
@@ -476,11 +537,25 @@
     else if (mode === "era") for (let i = 0; i < ERAS.length; i++) out.push({ label: ERAS[i], color: ERA_COLORS[i] });
     else if (mode === "culture") { out.push({ label: "文化 A", color: cultureColor(0.1) }); out.push({ label: "中間", color: cultureColor(0.5) }); out.push({ label: "文化 B", color: cultureColor(0.9) }); }
     else if (mode === "race") for (let i = 0; i < RACES.length; i++) out.push({ label: RACES[i].name, color: RACES[i].col });
+    else if (mode === "language") {
+      out.push({ label: langName(0.15, 0.3), color: langColor(0.15, 0.3) });
+      out.push({ label: langName(0.5, 0.5), color: langColor(0.5, 0.5) });
+      out.push({ label: langName(0.85, 0.7), color: langColor(0.85, 0.7) });
+      out.push({ label: "近い色＝近い言葉", color: [150, 150, 150] });
+    }
     return out;
   };
 
   // 人種名（UI用）。
   CivSystem.prototype.raceName = function (id) { const R = RACES[id]; return R ? R.name : "—"; };
+  // 言語名（UI用）: 国・人それぞれの言葉に名を与える。
+  CivSystem.prototype.langNameOf = function (k) { return k ? langName(k.langX == null ? 0.5 : k.langX, k.langY == null ? 0.5 : k.langY) : "—"; };
+  CivSystem.prototype.personLangName = function (p) { return p && p.lx != null ? langName(p.lx, p.ly) : "—"; };
+  // 2国の言葉の通じ合い（0..1, UI用）。
+  CivSystem.prototype.langMI = function (ka, kb) {
+    if (!ka || !kb || ka.langX == null || kb.langX == null) return 1;
+    return mutualIntel(ka.langX, ka.langY, kb.langX, kb.langY);
+  };
   // 国の民族構成（UI用）: [{name, pct}] 降順。
   CivSystem.prototype.raceMixOf = function (k) {
     if (!k || !k.raceMix || !k.raceTot) return [];
@@ -550,6 +625,8 @@
       borders: {},   // 隣接した他国 id → 最後に接触した tick（隣国判定）
       wars: {},      // 交戦中の id → 開戦 tick
       allies: {},    // 同盟中の id → true
+      langX: this.rand(), langY: this.rand(), // 国の言語（言語空間の位置。住民の言葉の重心で更新）
+      coin: 0,       // 鋳造された貨幣の量（鋳貨技術＋金鉱石で増える。交易・富を潤す）
       tech: 0,       // 技術力（時代の指標）
       techBits: {},  // 獲得済みの個別技術（id→true）
       discovered: [], // 発見順の技術名（表示用）
@@ -560,7 +637,7 @@
       famine: false, // 飢饉中か（繁殖停止・餓死）
       unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
       plague: 0,     // 疫病の残り評価回数（>0 で流行中）
-      res: { ore: 0, fish: 0, gems: 0 }, // 領有資源（_tallyResources が更新）
+      res: { ore: 0, fish: 0, gems: 0, gold: 0 }, // 領有資源（_tallyResources が更新）
       tradeVol: 0,    // 直近の交易量（活況の指標。毎評価で減衰し交易で増える）
       tradeIncome: 0, // 直近評価での交易による富の増分（表示用）
       foodTrade: 0,   // 直近の食料の純流入（+輸入 / -輸出）。飢饉の緩和を示す
@@ -691,11 +768,13 @@
       // 人種（民族）: 親があればどちらかの人種を受け継ぐ（混血）。創始者は起源の地の
       //   気候で定まる（寒冷→北方人 等）。名前の響きにも影響するので最初に定める。
       let rid;
-      if (pa) {
+      if (pa && this.rand() >= CP.raceGenesis) {
         const ra = pa.race != null ? pa.race : 1;
         const rb = (pb && pb.race != null) ? pb.race : ra;
         rid = this.rand() < 0.5 ? ra : rb; // 混血: どちらかの親の人種
       } else {
+        // 創始者、または稀な民族の独自進化（民族発生）: 移り住んだ土地の気候に適応した
+        //   民族へと枝分かれする。世代を経て孤立した集団が新たな民族性を獲得していく。
         const w = this.world, i = (h.y | 0) * w.width + (h.x | 0);
         const t = w.temperature ? w.temperature[i] : 0.5;
         const m = w.moisture ? w.moisture[i] : 0.5;
@@ -727,6 +806,15 @@
       // 環境適応: 創始者にのみ人種の得意形質をごく僅かに付与する。子孫は遺伝で受け継ぎ、
       //   混血で薄まる（世代ごとの再加算による暴走を避ける）。
       if (!pa && R.bias && h[R.bias] != null) h[R.bias] = clampTrait(h[R.bias] + R.amt);
+      // 言語: 子は両親の言葉を受け継ぎ僅かに変異する（世代で方言が分岐）。建国者は
+      //   この後 _spawnHuman が国の言語から定める（lx===undefined を目印にする）。
+      if (pa) {
+        const ax = pa.lx == null ? 0.5 : pa.lx, ay = pa.ly == null ? 0.5 : pa.ly;
+        const bx = pb && pb.lx != null ? pb.lx : ax, by = pb && pb.ly != null ? pb.ly : ay;
+        const m = CP.langMut;
+        h.lx = clamp01((ax + bx) * 0.5 + (this.rand() - 0.5) * m);
+        h.ly = clamp01((ay + by) * 0.5 + (this.rand() - 0.5) * m);
+      }
     }
     return h;
   };
@@ -750,6 +838,12 @@
       alive: true,
     };
     this._endow(h, pa, pb); // 個性・固有名・名声・人間関係・文化（親があれば遺伝）
+    // 言語: 親が無い建国者・新住民は国の言葉を（個体差つきで）話す。
+    if (h.lx == null) {
+      const j = CP.langJitter;
+      h.lx = clamp01((k.langX == null ? 0.5 : k.langX) + (this.rand() - 0.5) * j);
+      h.ly = clamp01((k.langY == null ? 0.5 : k.langY) + (this.rand() - 0.5) * j);
+    }
     k.humanCount++;
     k.roleCount[role]++;
     return h;
@@ -789,8 +883,8 @@
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive) continue;
-      if (!k.res) k.res = { ore: 0, fish: 0, gems: 0 };
-      else { k.res.ore = 0; k.res.fish = 0; k.res.gems = 0; }
+      if (!k.res) k.res = { ore: 0, fish: 0, gems: 0, gold: 0 };
+      else { k.res.ore = 0; k.res.fish = 0; k.res.gems = 0; k.res.gold = 0; }
     }
     const list = world.resourceList;
     if (!list || !list.length) return;
@@ -811,6 +905,7 @@
       if (!k || !k.alive || !k.res) continue;
       if (r.t === 1) k.res.ore++;
       else if (r.t === 2) k.res.fish++;
+      else if (r.t === 4) k.res.gold++;
       else k.res.gems++;
     }
   };
@@ -947,6 +1042,7 @@
       // 民心・文化・民族の集計（社会→国家の因果＋地図の文化/人種ビュー用）。
       k._moodS = (k._moodS || 0) + h.mood; k._moodN = (k._moodN || 0) + 1;
       k._cultS = (k._cultS || 0) + (h.culture == null ? 0.5 : h.culture);
+      k._lxS = (k._lxS || 0) + (h.lx == null ? 0.5 : h.lx); k._lyS = (k._lyS || 0) + (h.ly == null ? 0.5 : h.ly);
       if (h.race != null) (k._raceCnt || (k._raceCnt = [0, 0, 0, 0, 0]))[h.race]++;
       // 最も名高い人物を追う（国を代表する英傑・賢人）。
       if ((h.prestige || 0) > (k._topP || 0)) { k._topP = h.prestige; k._topRef = h; }
@@ -1017,6 +1113,7 @@
         const avg = k._moodS / k._moodN;
         k.moodAvg = avg;
         k.cultureAvg = k._cultS / k._moodN; // 国の平均的な文化（地図の文化ビュー用）
+        k.langX = k._lxS / k._moodN; k.langY = k._lyS / k._moodN; // 国の言葉の重心（方言の収束を反映）
         k.unrest = (k.unrest || 0) + (0.55 - avg) * 0.05;
         if (k.unrest < 0) k.unrest = 0; else if (k.unrest > 100) k.unrest = 100;
       }
@@ -1039,7 +1136,7 @@
       } else if (k.figure && (!k._topRef || !k._topRef.alive)) {
         k.figure = null;
       }
-      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
+      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._lxS = 0; k._lyS = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
     }
 
     // 出生を追加。
@@ -1440,14 +1537,14 @@
   // 文明の市場価格を求める（財ごとの供給と需要の比＝希少度。0.1〜8 にクランプ）。
   // 供給が少なく需要が多い財ほど高価になり、交易で輸入されやすくなる。
   CivSystem.prototype._marketPrices = function (k) {
-    const res = k.res || { ore: 0, fish: 0, gems: 0 };
+    const res = k.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
     const fac = k.facilities || {};
     const pop = Math.max(1, k.humanCount);
     const supply = {
       grain: 0.2 + (k.food || 0) * 0.15 + (k.roleCount[ROLE.FARMER] || 0) * 0.5 + (fac.farm || 0) * 1.2,
       metal: 0.3 + res.ore,
       sea: 0.3 + res.fish,
-      luxury: 0.2 + res.gems,
+      luxury: 0.2 + res.gems + (res.gold || 0) * 0.7, // 宝石・金（奢侈品）
       tools: 0.3 + (k.tools || 0),
     };
     const demand = {
@@ -1513,7 +1610,10 @@
       const gap = Math.abs(pa[g] - pb[g]);
       if (gap > 0.15) gapSum += Math.min(2.2, gap) * GOODS[i].w;
     }
-    const gain = CP.tradeBase * cap * gapSum * (0.3 + mass * 0.02) * CP.tradeArbScale;
+    // 貨幣経済: 双方（または片方）が貨幣を使うと、取引費用が下がり交易の利益が増す。
+    const coinA = hasTech(ka, "coin"), coinB = hasTech(kb, "coin");
+    const coinMul = (coinA && coinB) ? CP.coinTradeBonus : (coinA || coinB) ? CP.coinTradeHalf : 1;
+    const gain = CP.tradeBase * cap * gapSum * (0.3 + mass * 0.02) * CP.tradeArbScale * coinMul;
     if (gain > 0) {
       ka.wealth += gain; kb.wealth += gain;       // 交易は双方を富ませる（gains from trade）
       ka.tradeIncome += gain; kb.tradeIncome += gain;
@@ -1649,7 +1749,7 @@
       // 機能建築の数を集計（市場・鍛冶場・神殿などの効果に使う）。
       this._recountFacilities(ka);
       const fac = ka.facilities;
-      const res = ka.res || { ore: 0, fish: 0, gems: 0 };
+      const res = ka.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
       ka.tradeVol *= 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0;
       ka.tradeIncome = 0; ka.foodTrade = 0; ka.partners = null;
@@ -1662,9 +1762,20 @@
       const king = ka.rulerRef;
       const kingDili = king && king.alive ? (0.7 + 0.3 * (king.dili || 1)) : 1;
       const kingWit = king && king.alive ? (0.7 + 0.3 * (king.wit || 1)) : 1;
-      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade") * order * kingDili;
+      // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
+      //   （商才・政体・治安・名君で増減）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + res.gold * CP.goldWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
       if (ka.wealth < 0) ka.wealth = 0;
+      // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
+      //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
+      if (hasTech(ka, "coin")) {
+        if (!ka._coined) { ka._coined = true; this._logEvent("💰 " + ka.name + " が貨幣（鋳貨）を導入した"); }
+        const cap = (res.gold || 0) * CP.coinCap;
+        ka.coin = (ka.coin || 0) + (res.gold || 0) * CP.mintRate;
+        if (ka.coin > cap) ka.coin = ka.coin * 0.9 + cap * 0.1; // 上限（金保有量）へ緩やかに収束
+      } else if (ka.coin > 0) {
+        ka.coin *= 0.98; if (ka.coin < 0.01) ka.coin = 0; // 貨幣を未だ持たぬ国（鋳造手段の喪失）
+      }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
@@ -1806,6 +1917,14 @@
         }
         this._culturalExchange(a, b, ka, kb);
 
+        // 言語と外交: 言葉が通じ合う国どうしは親しみ（共通語・同系統の言葉＝意思疎通が
+        //   容易で結びつきやすい）、言葉の隔たる国とは疎遠になりがち。接触下でのみ働く。
+        if (ka.langX != null && kb.langX != null &&
+            (this._isNeighbor(ka, b) || ka.allies[b] || (ka.partners && ka.partners[b]))) {
+          const lmi = mutualIntel(ka.langX, ka.langY, kb.langX, kb.langY);
+          this._setRel(a, b, ka.relations[b] + (lmi - 0.7) * CP.langDiploPull);
+        }
+
         // 疫病の伝播: 流行国に国境を接する隣国へ広がる。
         if (this._isNeighbor(ka, b)) {
           if (ka.plague > 0 && !(kb.plague > 0) && this.rand() < CP.plagueSpread) {
@@ -1914,8 +2033,11 @@
       tools: parent.tools * 0.3,
       relations: {}, borders: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
+      // 言語: 独立した地方は母国の言葉を受け継ぎ、以後ゆるやかに方言として分岐していく。
+      langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
+      langY: clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05),
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
-      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0 }, alive: true,
+      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
     parent.cities.splice(idx, 1);
@@ -1938,6 +2060,11 @@
     if (nk.tileCount === 0) { owner[city.y * W + city.x] = id; nk.tileCount = 1; }
 
     // 独立都市を home とする住民を新国家へ。
+    // 言語の分岐: 独立は時に言葉の決別を伴う。独立集団が一斉に言葉をずらすことで、
+    //   母国とは通じ合いにくい独自の言語系統へと枝分かれする（収束だけでない分化）。
+    const split = this.rand() < CP.langSplit;
+    const sox = (this.rand() - 0.5) * 2 * CP.langSplitAmt;
+    const soy = (this.rand() - 0.5) * 2 * CP.langSplitAmt;
     const clan = ++nk.clanSeq;
     const R2 = R * R;
     const people = this.people;
@@ -1949,6 +2076,7 @@
       if (dx * dx + dy * dy > R2) continue;
       parent.humanCount--; parent.roleCount[o.role]--;
       o.kid = id; o.clan = clan; o.home = { x: city.x, y: city.y }; o.farm = null;
+      if (split && o.lx != null) { o.lx = clamp01(o.lx + sox); o.ly = clamp01(o.ly + soy); }
       nk.humanCount++; nk.roleCount[o.role]++;
     }
 
@@ -2280,25 +2408,36 @@
 
     if (other) {
       const infl = influence(other); // 相手の社会的影響力
-      // 機嫌の伝染（名士の上機嫌・不機嫌は周囲に強く広がる）。
-      h.mood += (other.mood - h.mood) * 0.06 * infl;
+      // 言葉の通じ合い（相互理解度）: 同じ言葉ならよく伝わり、異なる言葉だと意思疎通が
+      //   滞る。会話による学び・気分や文化の伝播・友誼はこの理解度に比例して濃くなる。
+      const mi = (h.lx != null && other.lx != null)
+        ? mutualIntel(h.lx, h.ly, other.lx, other.ly) : 1;
+      // 言葉の歩み寄り（収束）: 互いに相手の言葉へ少し近づく。これが世代を超えて
+      //   少数派を多数派の言葉へ同化させ、共通語・方言地理を創発させる。若いほど速い。
+      if (h.lx != null && other.lx != null) {
+        const acc = CP.langAccom * (h.age < CP.adultAge ? 1.6 : 1);
+        h.lx += (other.lx - h.lx) * acc; h.ly += (other.ly - h.ly) * acc;
+      }
+      // 機嫌の伝染（名士の上機嫌・不機嫌は周囲に強く広がる。言葉が通じるほど強く）。
+      h.mood += (other.mood - h.mood) * 0.06 * infl * mi;
       // 感情の伝染: 恐怖は群れに燃え移りパニックに（上向きに強く伝わる）、喜びも分かち合う。
       // これにより一頭の猛獣が群衆の将棋倒し的な逃走を引き起こす等の創発が生まれる。
+      // （恐怖は言葉に依らず伝わる原初的な情動なので理解度の影響は小さめ。）
       const of = other.fear || 0;
-      if (of > (h.fear || 0)) h.fear = Math.min(1, (h.fear || 0) + (of - (h.fear || 0)) * 0.35);
-      h.joy = clamp01((h.joy || 0) + (((other.joy || 0)) - (h.joy || 0)) * 0.12);
-      // 知識の伝播: 相手の方が熟練していれば技を学ぶ（賢い者ほど速い）。
+      if (of > (h.fear || 0)) h.fear = Math.min(1, (h.fear || 0) + (of - (h.fear || 0)) * 0.35 * (0.7 + 0.3 * mi));
+      h.joy = clamp01((h.joy || 0) + (((other.joy || 0)) - (h.joy || 0)) * 0.12 * mi);
+      // 知識の伝播: 相手の方が熟練していれば技を学ぶ（賢い者ほど速い。言葉が通じるほど速い）。
       const gap = (other.skill || 0) - (h.skill || 0);
-      if (gap > 0.02) { h.skill += gap * 0.05 * (h.wit || 1) * infl; if (h.skill > 1) h.skill = 1; }
-      // 食料地の知らせを分かち合う（自分が知らず相手が知っていれば教わる）。
-      if (!h.memFood && other.memFood) h.memFood = { x: other.memFood.x, y: other.memFood.y };
-      // 文化の混交（相手の気質に少し近づく。名士の文化ほど伝播力が強い）。
-      h.culture = clamp01((h.culture == null ? 0.5 : h.culture) + (((other.culture == null ? 0.5 : other.culture)) - (h.culture == null ? 0.5 : h.culture)) * 0.04 * infl);
+      if (gap > 0.02) { h.skill += gap * 0.05 * (h.wit || 1) * infl * mi; if (h.skill > 1) h.skill = 1; }
+      // 食料地の知らせを分かち合う（自分が知らず相手が知っていれば教わる。要・意思疎通）。
+      if (!h.memFood && other.memFood && mi > 0.55) h.memFood = { x: other.memFood.x, y: other.memFood.y };
+      // 文化の混交（相手の気質に少し近づく。名士の文化ほど・言葉が通じるほど伝播力が強い）。
+      h.culture = clamp01((h.culture == null ? 0.5 : h.culture) + (((other.culture == null ? 0.5 : other.culture)) - (h.culture == null ? 0.5 : h.culture)) * 0.04 * infl * mi);
       // 友誼: 同氏族・近距離・気の合う（文化が近い）相手とは絆が深まる。
-      // 血縁(氏族)に加え、同じ人種とはやや親しみやすい（穏やかな同族意識）。
+      // 血縁(氏族)に加え、同じ人種とはやや親しみやすく、言葉が通じるほど親しみやすい。
       const akin = ((h.clan && other.clan === h.clan) ? 1.6 : 1) * (h.race === other.race ? 1.12 : 1);
       const cultSim = 1 - Math.abs((h.culture || 0.5) - (other.culture || 0.5));
-      this._befriend(h, other, 0.06 * akin * cultSim);
+      this._befriend(h, other, 0.06 * akin * cultSim * mi);
       // 血縁の扶助: 満ち足りた者は、飢えた同じ血統（家族・氏族）の者に食を分け与える
       // （血縁淘汰＝身内を助ける利他）。伴侶には特に手厚く。
       const kin = (h.partner === other) ? 1 : (h.clan && other.clan === h.clan ? 0.7 : 0);
@@ -2306,6 +2445,22 @@
         const give = Math.min(0.18 * kin, h.food - 0.5);
         if (give > 0.02) { h.food -= give; other.food = Math.min(1, other.food + give); }
       }
+    }
+
+    // 分岐・独自進化: 言葉と文化は会話で収束（同化）するだけでなく、絶えず微小に揺らぎ、
+    //   稀に大きく革新して独自の系統へ枝分かれする。会話相手のいない孤立した辺境ほど
+    //   歩み寄りが効かず分化が進み、革新は新たな方言・文化の源となる。
+    if (h.lx != null) {
+      h.lx = clamp01(h.lx + (this.rand() - 0.5) * CP.langDrift);
+      h.ly = clamp01(h.ly + (this.rand() - 0.5) * CP.langDrift);
+      if (this.rand() < CP.langInnov) {
+        h.lx = clamp01(h.lx + (this.rand() - 0.5) * CP.langInnovAmt);
+        h.ly = clamp01(h.ly + (this.rand() - 0.5) * CP.langInnovAmt);
+      }
+    }
+    if (h.culture != null) {
+      h.culture = clamp01(h.culture + (this.rand() - 0.5) * CP.cultDrift);
+      if (this.rand() < CP.cultInnov) h.culture = clamp01(h.culture + (this.rand() - 0.5) * CP.cultInnovAmt);
     }
 
     // 喜び(joy)を更新: 仲間・伴侶と過ごし、満ち足りていると湧く（社交欲は synSoc で個人差）。
@@ -2643,7 +2798,16 @@
     // 入植者を母国から外す。
     if (k0 && k0.alive) { k0.humanCount--; k0.roleCount[h.role]--; }
     if (nk) {
-      if (k0) { nk.religion = k0.religion; nk.tech = k0.tech * 0.6; }
+      if (k0) {
+        nk.religion = k0.religion; nk.tech = k0.tech * 0.6;
+        // 言語: 植民地は母国の言葉を受け継ぐ（入植者の言葉）。海を隔てた孤立で、時に
+        //   早くから独自の言語へ大きく分岐する（独自進化）。以後は子孫がこれを継ぐ。
+        if (h.lx != null && this.rand() < CP.langSplit) {
+          h.lx = clamp01(h.lx + (this.rand() - 0.5) * 2 * CP.langSplitAmt);
+          h.ly = clamp01(h.ly + (this.rand() - 0.5) * 2 * CP.langSplitAmt);
+        }
+        nk.langX = h.lx == null ? k0.langX : h.lx; nk.langY = h.ly == null ? k0.langY : h.ly;
+      }
       h.kid = nk.id; h.clan = ++nk.clanSeq; h.role = ROLE.EXPLORER;
       h.home = { x: tx, y: ty }; h.farm = null; h.work = null;
       nk.humanCount++; nk.roleCount[h.role]++;
