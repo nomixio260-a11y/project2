@@ -1057,43 +1057,28 @@
     }
   };
 
-  // 戦闘演出: 白刃の火花(clash)・矢(arrow)・銃弾(shot)・流血(blood) を短い寿命で描く。
-  //   civ が戦闘イベントで積み、ここで age を進め寿命で消す。
+  // 飛翔体: 実際の遠戦で放たれた矢(arrow)・銃弾(shot)の飛跡を、射手から標的へ短く描く
+  //   （戦闘という行為そのもの。装飾ではなく実際の射撃の弾道）。
   Renderer.prototype.drawBattleFx = function (camera) {
     const fx = Game.state.battleFx;
     if (!fx || !fx.length) return;
     const tile = Game.config.tilePx, scale = tile * camera.zoom;
     const ctx = this.ctx, range = camera.visibleTileRange();
-    const LIFE = { clash: 12, arrow: 12, shot: 10, blood: 30 };
     const sc = (wx) => camera.worldToScreenX((wx + 0.5) * tile);
     const scy = (wy) => camera.worldToScreenY((wy + 0.5) * tile);
     for (let n = fx.length - 1; n >= 0; n--) {
       const f = fx[n];
       f.age++;
-      const life = LIFE[f.t] || 12;
+      const life = f.t === "shot" ? 10 : 12;
       if (f.age > life) { fx.splice(n, 1); continue; }
       if (scale < 2.5) continue;
       if (f.x < range.x0 - 2 || f.x > range.x1 + 2 || f.y < range.y0 - 2 || f.y > range.y1 + 2) continue;
       const pr = f.age / life;
-      if (f.t === "clash") {
-        // 火花が四方へ弾ける。
-        const sx = sc(f.x), sy = scy(f.y), r = scale * (0.2 + pr * 0.5), u = Math.max(1, scale * 0.1);
-        ctx.fillStyle = "rgba(255,236,150," + (1 - pr).toFixed(2) + ")";
-        for (let a = 0; a < 6; a++) { const ang = a * 1.047 + f.age; ctx.fillRect((sx + Math.cos(ang) * r) | 0, (sy + Math.sin(ang) * r) | 0, u, u); }
-        ctx.fillStyle = "rgba(255,255,255," + (1 - pr).toFixed(2) + ")"; ctx.fillRect((sx - u * 0.5) | 0, (sy - u * 0.5) | 0, u, u);
-      } else if (f.t === "arrow" || f.t === "shot") {
-        // 飛翔体が射手から標的へ飛ぶ。銃は閃光と煙を伴う。
-        const x = f.x + (f.x2 - f.x) * pr, y = f.y + (f.y2 - f.y) * pr;
-        const sx = sc(x), sy = scy(y), u = Math.max(1, scale * (f.t === "shot" ? 0.13 : 0.1));
-        if (f.t === "shot" && pr < 0.3) { ctx.fillStyle = "rgba(255,220,120,0.9)"; ctx.fillRect((sc(f.x) - u) | 0, (scy(f.y) - u) | 0, 2 * u, 2 * u); } // 銃口炎
-        ctx.fillStyle = f.t === "shot" ? "#f4f4f4" : "#e8dcb0";
-        ctx.fillRect((sx - u * 0.5) | 0, (sy - u * 0.5) | 0, Math.max(1, u * (f.t === "shot" ? 1 : 1.6)) | 0, Math.max(1, u * 0.6) | 0);
-      } else if (f.t === "blood") {
-        const sx = sc(f.x), sy = scy(f.y), u = Math.max(1, scale * 0.12);
-        ctx.fillStyle = "rgba(150,20,20," + (0.8 * (1 - pr)).toFixed(2) + ")";
-        const hsh = ((f.x * 131 + f.y * 977) | 0) >>> 0;
-        for (let a = 0; a < 5; a++) { const ang = a * 1.257 + (hsh % 7); const rr = scale * 0.3 * (0.4 + (a / 5)); ctx.fillRect((sx + Math.cos(ang) * rr) | 0, (sy + Math.sin(ang) * rr) | 0, u, u); }
-      }
+      const x = f.x + (f.x2 - f.x) * pr, y = f.y + (f.y2 - f.y) * pr;
+      const sx = sc(x), sy = scy(y), u = Math.max(1, scale * (f.t === "shot" ? 0.13 : 0.1));
+      if (f.t === "shot" && pr < 0.3) { ctx.fillStyle = "rgba(255,220,120,0.9)"; ctx.fillRect((sc(f.x) - u) | 0, (scy(f.y) - u) | 0, 2 * u, 2 * u); } // 銃口炎
+      ctx.fillStyle = f.t === "shot" ? "#f4f4f4" : "#e8dcb0";
+      ctx.fillRect((sx - u * 0.5) | 0, (sy - u * 0.5) | 0, Math.max(1, u * (f.t === "shot" ? 1 : 1.6)) | 0, Math.max(1, u * 0.6) | 0);
     }
   };
 
@@ -1193,19 +1178,13 @@
         const sy = camera.worldToScreenY((city.y + 0.5) * tile);
         const level = city.level || 1;
 
-        // 攻囲中の都市: 赤い包囲環と立ち上る煙で「攻められている」ことを示す。
+        // 攻囲中の都市: 実際の攻囲度に応じた赤い包囲環で「攻められている」状態を示す（状態表示）。
         if (city.siege > 0.12) {
           const sg = Math.min(1, city.siege);
           const rr = Math.max(4, scale * (1.4 + level * 0.25));
-          const pulse = 0.35 + 0.25 * Math.sin(this._t * 4);
-          ctx.strokeStyle = "rgba(232,70,60," + (pulse * sg).toFixed(2) + ")";
-          ctx.lineWidth = Math.max(1.5, scale * 0.18);
+          ctx.strokeStyle = "rgba(232,70,60," + (0.3 + 0.4 * sg).toFixed(2) + ")";
+          ctx.lineWidth = Math.max(1.5, scale * 0.16);
           ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.stroke();
-          if (scale >= 4) { // 立ち上る煙
-            ctx.fillStyle = "rgba(60,55,52," + (0.4 * sg).toFixed(2) + ")";
-            const u = Math.max(1, scale * 0.2);
-            for (let s = 0; s < 3; s++) { const ph = this._t * 1.5 + s * 2; ctx.fillRect((sx - rr * 0.5 + s * rr * 0.5) | 0, (sy - rr * 0.7 - (this._t * 6 + s * 11) % (rr)) | 0, u, u); }
-          }
         }
 
         if (!detailed) {
@@ -1308,16 +1287,30 @@
     const ctx = this.ctx;
     const marks = civ.marks;
     const s = Math.max(2, scale * 0.5);
+    const u = Math.max(1, scale * 0.12);
     for (let m = 0; m < marks.length; m++) {
       const mk = marks[m];
       if (mk.x < range.x0 || mk.x > range.x1 || mk.y < range.y0 || mk.y > range.y1) continue;
-      const a = (mk.ttl / mk.life) * 0.6; // 時間で薄れる
+      const a = (mk.ttl / mk.life); // 時間で薄れる（土に還る）
       const cx = camera.worldToScreenX((mk.x + 0.5) * tile);
       const cy = camera.worldToScreenY((mk.y + 0.5) * tile);
-      ctx.fillStyle = "rgba(110,18,16," + a.toFixed(3) + ")";
-      ctx.fillRect(cx - s * 0.5, cy - s * 0.35, s, s * 0.7);
-      ctx.fillStyle = "rgba(60,10,10," + a.toFixed(3) + ")";
-      ctx.fillRect(cx - s * 0.2, cy - s * 0.12, s * 0.4, s * 0.28);
+      if (mk.type === "rubble") {
+        // 瓦礫: 戦火に崩れた建物の残骸。灰色の石材が散らばる（戦争が生んだ廃墟）。
+        ctx.fillStyle = "rgba(70,66,60," + (0.75 * a).toFixed(3) + ")";
+        ctx.fillRect((cx - s * 0.45) | 0, (cy - s * 0.1) | 0, (s * 0.9) | 0, (s * 0.5) | 0);
+        ctx.fillStyle = "rgba(120,114,104," + (0.8 * a).toFixed(3) + ")";
+        ctx.fillRect((cx - s * 0.4) | 0, (cy - s * 0.3) | 0, u, u);
+        ctx.fillRect((cx + s * 0.1) | 0, (cy - s * 0.22) | 0, u, u);
+        ctx.fillRect((cx - s * 0.05) | 0, (cy + s * 0.02) | 0, u, u);
+      } else {
+        // 亡骸: 倒れた兵が横たわる（演出でなく実際の戦死の跡。やがて土に還る）。
+        ctx.fillStyle = "rgba(70,60,46," + (0.7 * a).toFixed(3) + ")"; // 胴（横たわる）
+        ctx.fillRect((cx - s * 0.4) | 0, (cy - u * 0.5) | 0, (s * 0.7) | 0, Math.max(1, u * 1.4) | 0);
+        ctx.fillStyle = "rgba(214,180,140," + (0.7 * a).toFixed(3) + ")"; // 頭
+        ctx.fillRect((cx + s * 0.28) | 0, (cy - u * 0.5) | 0, Math.max(1, u * 1.2) | 0, Math.max(1, u * 1.2) | 0);
+        ctx.fillStyle = "rgba(120,24,20," + (0.5 * a).toFixed(3) + ")"; // 流れた血だまり
+        ctx.fillRect((cx - s * 0.5) | 0, (cy + u) | 0, (s) | 0, Math.max(1, u * 0.6) | 0);
+      }
     }
   };
 
