@@ -615,3 +615,14 @@ html, body {
 @media (max-height: 460px) and (max-width: 900px) {
   .hint, .minimap { display: none; }
 }
+
+/* 設定パネルのデータ操作（保存・読込・画像） */
+.set-actions { display: flex; gap: 6px; margin-top: 6px; }
+.set-btn {
+  flex: 1 1 auto; padding: 7px 4px; border-radius: 7px; cursor: pointer;
+  background: rgba(255,255,255,0.06); color: #eaf0fb;
+  border: 1px solid rgba(255,255,255,0.16); font-size: 12px; font-weight: 600;
+  transition: background 0.15s, border-color 0.15s;
+}
+.set-btn:hover { background: rgba(120,170,255,0.22); border-color: rgba(150,190,255,0.5); }
+.set-btn:active { transform: translateY(1px); }
