@@ -86,6 +86,17 @@
     langMut: 0.012,      // 世代継承時の言語変異（方言の分岐を生む）
     langJitter: 0.03,    // 建国者の言語の個体差
     langDiploPull: 0.6,  // 言葉が通じる国どうしは親しみ、通じぬ国とは隔たる（外交）
+    // 分岐・独自進化: 諸要素は収束(同化)するだけでなく、絶えず揺らぎ、時に大きく
+    //   変異して独自の系統へ枝分かれする（孤立・革新が方言・新文化・民族を生む）。
+    langDrift: 0.002,    // 言葉の絶え間ない微小な揺らぎ（収束と釣り合い方言の幅を生む）
+    langInnov: 0.004,    // 言葉の革新（独自進化）が起きる確率／think
+    langInnovAmt: 0.12,  // 革新が起きたときの言葉の跳び幅
+    langSplit: 0.5,      // 独立・植民の際に言葉が大きく分岐する確率
+    langSplitAmt: 0.18,  // 分岐したときの言葉の隔たり
+    cultDrift: 0.004,    // 文化の微小な揺らぎ
+    cultInnov: 0.003,    // 文化の革新が起きる確率／think
+    cultInnovAmt: 0.18,  // 文化の革新の跳び幅
+    raceGenesis: 0.015,  // 出生時に土地の気候に適応した民族へ変わる確率（民族の独自進化）
     sightBase: 5.2,      // 視野の基準半径（知性・年齢・昼夜で変化する）
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
@@ -137,6 +148,14 @@
     tradeToolPrice: 1.1,  // 武具1単位の取引価格（富）。軍需品の交易
     tradeToolMax: 6,      // 1回の評価で動かせる武具の上限
     tradeArbScale: 0.18,  // 価格差（裁定）から生まれる交易利益の係数
+    // 貨幣（鋳貨）: ある程度の文明（鋳貨技術＋金鉱石）になると物々交換から貨幣経済へ。
+    //   貨幣は交易を潤滑にし（gains from trade を増やす）、富の蓄積を助ける。
+    goldWealth: 1.6,      // 金鉱石1つあたりの富の産出（宝石より高い）
+    mintRate: 0.5,        // 鋳貨技術を持つ国が金鉱石1つから1評価で鋳造する貨幣
+    coinCap: 40,          // 貨幣の保有上限（金鉱石数に比例。死蔵を防ぐ）
+    coinTradeBonus: 1.5,  // 双方が貨幣を使うと交易利益が増す（取引費用の低下）
+    coinTradeHalf: 1.2,   // 片方のみ貨幣の場合の交易ボーナス
+    coinWealth: 0.004,    // 貨幣保有が富の蓄積を後押しする係数
     // 生産・装備（専門職が施設で働いて生み出す）
     workRadius: 3,       // 施設からこの距離以内なら「就労中」
     toolRate: 0.02,      // 鍛冶が1ティックに作る道具・武具
@@ -217,6 +236,7 @@
     { id: "agri", name: "農耕", at: 20 },     // 食料・人口扶養力
     { id: "writing", name: "文字", at: 48 },  // 技術の進歩を加速
     { id: "wheel", name: "車輪", at: 80 },    // 交易・富
+    { id: "coin", name: "鋳貨", at: 100 },    // 貨幣経済（金鉱石を鋳造し交易を潤す）
     { id: "bronze", name: "青銅器", at: 120 }, // 軍事
     { id: "sail", name: "航海術", at: 150 },  // 海を越える植民
     { id: "iron", name: "鉄器", at: 185 },    // 軍事
@@ -606,6 +626,7 @@
       wars: {},      // 交戦中の id → 開戦 tick
       allies: {},    // 同盟中の id → true
       langX: this.rand(), langY: this.rand(), // 国の言語（言語空間の位置。住民の言葉の重心で更新）
+      coin: 0,       // 鋳造された貨幣の量（鋳貨技術＋金鉱石で増える。交易・富を潤す）
       tech: 0,       // 技術力（時代の指標）
       techBits: {},  // 獲得済みの個別技術（id→true）
       discovered: [], // 発見順の技術名（表示用）
@@ -616,7 +637,7 @@
       famine: false, // 飢饉中か（繁殖停止・餓死）
       unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
       plague: 0,     // 疫病の残り評価回数（>0 で流行中）
-      res: { ore: 0, fish: 0, gems: 0 }, // 領有資源（_tallyResources が更新）
+      res: { ore: 0, fish: 0, gems: 0, gold: 0 }, // 領有資源（_tallyResources が更新）
       tradeVol: 0,    // 直近の交易量（活況の指標。毎評価で減衰し交易で増える）
       tradeIncome: 0, // 直近評価での交易による富の増分（表示用）
       foodTrade: 0,   // 直近の食料の純流入（+輸入 / -輸出）。飢饉の緩和を示す
@@ -747,11 +768,13 @@
       // 人種（民族）: 親があればどちらかの人種を受け継ぐ（混血）。創始者は起源の地の
       //   気候で定まる（寒冷→北方人 等）。名前の響きにも影響するので最初に定める。
       let rid;
-      if (pa) {
+      if (pa && this.rand() >= CP.raceGenesis) {
         const ra = pa.race != null ? pa.race : 1;
         const rb = (pb && pb.race != null) ? pb.race : ra;
         rid = this.rand() < 0.5 ? ra : rb; // 混血: どちらかの親の人種
       } else {
+        // 創始者、または稀な民族の独自進化（民族発生）: 移り住んだ土地の気候に適応した
+        //   民族へと枝分かれする。世代を経て孤立した集団が新たな民族性を獲得していく。
         const w = this.world, i = (h.y | 0) * w.width + (h.x | 0);
         const t = w.temperature ? w.temperature[i] : 0.5;
         const m = w.moisture ? w.moisture[i] : 0.5;
@@ -860,8 +883,8 @@
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive) continue;
-      if (!k.res) k.res = { ore: 0, fish: 0, gems: 0 };
-      else { k.res.ore = 0; k.res.fish = 0; k.res.gems = 0; }
+      if (!k.res) k.res = { ore: 0, fish: 0, gems: 0, gold: 0 };
+      else { k.res.ore = 0; k.res.fish = 0; k.res.gems = 0; k.res.gold = 0; }
     }
     const list = world.resourceList;
     if (!list || !list.length) return;
@@ -882,6 +905,7 @@
       if (!k || !k.alive || !k.res) continue;
       if (r.t === 1) k.res.ore++;
       else if (r.t === 2) k.res.fish++;
+      else if (r.t === 4) k.res.gold++;
       else k.res.gems++;
     }
   };
@@ -1513,14 +1537,14 @@
   // 文明の市場価格を求める（財ごとの供給と需要の比＝希少度。0.1〜8 にクランプ）。
   // 供給が少なく需要が多い財ほど高価になり、交易で輸入されやすくなる。
   CivSystem.prototype._marketPrices = function (k) {
-    const res = k.res || { ore: 0, fish: 0, gems: 0 };
+    const res = k.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
     const fac = k.facilities || {};
     const pop = Math.max(1, k.humanCount);
     const supply = {
       grain: 0.2 + (k.food || 0) * 0.15 + (k.roleCount[ROLE.FARMER] || 0) * 0.5 + (fac.farm || 0) * 1.2,
       metal: 0.3 + res.ore,
       sea: 0.3 + res.fish,
-      luxury: 0.2 + res.gems,
+      luxury: 0.2 + res.gems + (res.gold || 0) * 0.7, // 宝石・金（奢侈品）
       tools: 0.3 + (k.tools || 0),
     };
     const demand = {
@@ -1586,7 +1610,10 @@
       const gap = Math.abs(pa[g] - pb[g]);
       if (gap > 0.15) gapSum += Math.min(2.2, gap) * GOODS[i].w;
     }
-    const gain = CP.tradeBase * cap * gapSum * (0.3 + mass * 0.02) * CP.tradeArbScale;
+    // 貨幣経済: 双方（または片方）が貨幣を使うと、取引費用が下がり交易の利益が増す。
+    const coinA = hasTech(ka, "coin"), coinB = hasTech(kb, "coin");
+    const coinMul = (coinA && coinB) ? CP.coinTradeBonus : (coinA || coinB) ? CP.coinTradeHalf : 1;
+    const gain = CP.tradeBase * cap * gapSum * (0.3 + mass * 0.02) * CP.tradeArbScale * coinMul;
     if (gain > 0) {
       ka.wealth += gain; kb.wealth += gain;       // 交易は双方を富ませる（gains from trade）
       ka.tradeIncome += gain; kb.tradeIncome += gain;
@@ -1722,7 +1749,7 @@
       // 機能建築の数を集計（市場・鍛冶場・神殿などの効果に使う）。
       this._recountFacilities(ka);
       const fac = ka.facilities;
-      const res = ka.res || { ore: 0, fish: 0, gems: 0 };
+      const res = ka.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
       ka.tradeVol *= 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0;
       ka.tradeIncome = 0; ka.foodTrade = 0; ka.partners = null;
@@ -1735,9 +1762,20 @@
       const king = ka.rulerRef;
       const kingDili = king && king.alive ? (0.7 + 0.3 * (king.dili || 1)) : 1;
       const kingWit = king && king.alive ? (0.7 + 0.3 * (king.wit || 1)) : 1;
-      // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade") * order * kingDili;
+      // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
+      //   （商才・政体・治安・名君で増減）。
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + res.gold * CP.goldWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
       if (ka.wealth < 0) ka.wealth = 0;
+      // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
+      //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
+      if (hasTech(ka, "coin")) {
+        if (!ka._coined) { ka._coined = true; this._logEvent("💰 " + ka.name + " が貨幣（鋳貨）を導入した"); }
+        const cap = (res.gold || 0) * CP.coinCap;
+        ka.coin = (ka.coin || 0) + (res.gold || 0) * CP.mintRate;
+        if (ka.coin > cap) ka.coin = ka.coin * 0.9 + cap * 0.1; // 上限（金保有量）へ緩やかに収束
+      } else if (ka.coin > 0) {
+        ka.coin *= 0.98; if (ka.coin < 0.01) ka.coin = 0; // 貨幣を未だ持たぬ国（鋳造手段の喪失）
+      }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
@@ -1999,7 +2037,7 @@
       langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
       langY: clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05),
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
-      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0 }, alive: true,
+      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
     parent.cities.splice(idx, 1);
@@ -2022,6 +2060,11 @@
     if (nk.tileCount === 0) { owner[city.y * W + city.x] = id; nk.tileCount = 1; }
 
     // 独立都市を home とする住民を新国家へ。
+    // 言語の分岐: 独立は時に言葉の決別を伴う。独立集団が一斉に言葉をずらすことで、
+    //   母国とは通じ合いにくい独自の言語系統へと枝分かれする（収束だけでない分化）。
+    const split = this.rand() < CP.langSplit;
+    const sox = (this.rand() - 0.5) * 2 * CP.langSplitAmt;
+    const soy = (this.rand() - 0.5) * 2 * CP.langSplitAmt;
     const clan = ++nk.clanSeq;
     const R2 = R * R;
     const people = this.people;
@@ -2033,6 +2076,7 @@
       if (dx * dx + dy * dy > R2) continue;
       parent.humanCount--; parent.roleCount[o.role]--;
       o.kid = id; o.clan = clan; o.home = { x: city.x, y: city.y }; o.farm = null;
+      if (split && o.lx != null) { o.lx = clamp01(o.lx + sox); o.ly = clamp01(o.ly + soy); }
       nk.humanCount++; nk.roleCount[o.role]++;
     }
 
@@ -2403,6 +2447,22 @@
       }
     }
 
+    // 分岐・独自進化: 言葉と文化は会話で収束（同化）するだけでなく、絶えず微小に揺らぎ、
+    //   稀に大きく革新して独自の系統へ枝分かれする。会話相手のいない孤立した辺境ほど
+    //   歩み寄りが効かず分化が進み、革新は新たな方言・文化の源となる。
+    if (h.lx != null) {
+      h.lx = clamp01(h.lx + (this.rand() - 0.5) * CP.langDrift);
+      h.ly = clamp01(h.ly + (this.rand() - 0.5) * CP.langDrift);
+      if (this.rand() < CP.langInnov) {
+        h.lx = clamp01(h.lx + (this.rand() - 0.5) * CP.langInnovAmt);
+        h.ly = clamp01(h.ly + (this.rand() - 0.5) * CP.langInnovAmt);
+      }
+    }
+    if (h.culture != null) {
+      h.culture = clamp01(h.culture + (this.rand() - 0.5) * CP.cultDrift);
+      if (this.rand() < CP.cultInnov) h.culture = clamp01(h.culture + (this.rand() - 0.5) * CP.cultInnovAmt);
+    }
+
     // 喜び(joy)を更新: 仲間・伴侶と過ごし、満ち足りていると湧く（社交欲は synSoc で個人差）。
     const socSat = CP.socialNeed * (h.synSoc || 1);
     let dj = 0;
@@ -2740,7 +2800,12 @@
     if (nk) {
       if (k0) {
         nk.religion = k0.religion; nk.tech = k0.tech * 0.6;
-        // 言語: 植民地は母国の言葉を受け継ぐ（入植者の言葉。海を隔てやがて分岐する）。
+        // 言語: 植民地は母国の言葉を受け継ぐ（入植者の言葉）。海を隔てた孤立で、時に
+        //   早くから独自の言語へ大きく分岐する（独自進化）。以後は子孫がこれを継ぐ。
+        if (h.lx != null && this.rand() < CP.langSplit) {
+          h.lx = clamp01(h.lx + (this.rand() - 0.5) * 2 * CP.langSplitAmt);
+          h.ly = clamp01(h.ly + (this.rand() - 0.5) * 2 * CP.langSplitAmt);
+        }
         nk.langX = h.lx == null ? k0.langX : h.lx; nk.langY = h.ly == null ? k0.langY : h.ly;
       }
       h.kid = nk.id; h.clan = ++nk.clanSeq; h.role = ROLE.EXPLORER;

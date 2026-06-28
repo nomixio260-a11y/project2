@@ -359,6 +359,35 @@ test("CivSystem: 言語が創発し、国ごとに分かれ通じ合いが変わ
   assert.ok(civ.viewLegend("language").length > 0, "言語凡例が空");
 });
 
+test("CivSystem: 金鉱石を集計し、鋳貨を得た国が貨幣を鋳造する", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(5, 5);
+  assert.ok(A > 0);
+  const k = civ.kingdoms[A];
+
+  // 領内に金鉱石タイルを置く（worldgen を介さず直接）。
+  w.resource[5 * 30 + 5] = Game.RESOURCE.GOLD;
+  w.resourceList = [{ x: 5, y: 5, t: Game.RESOURCE.GOLD }];
+
+  // 集計で金が国に計上される。
+  civ._tallyResources();
+  assert.ok(k.res.gold >= 1, "金鉱石が集計されていない");
+
+  // 鋳貨技術が無いうちは物々交換（coin は増えない）。
+  k.tech = 0; k.techBits = {};
+  const coin0 = k.coin || 0;
+  for (let t = 0; t < 50; t++) civ.tick(w);
+  assert.ok((k.coin || 0) <= coin0 + 0.01, "鋳貨が無いのに貨幣が増えた");
+
+  // 鋳貨技術を与えると、金鉱石から貨幣を鋳造し始める。
+  k.techBits.coin = true;
+  for (let t = 0; t < 300; t++) civ.tick(w);
+  assert.ok(k.coin > 0, "鋳貨を得ても貨幣が鋳造されない");
+});
+
 test("CivSystem: 王国数は maxKingdoms を超えない", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   Game.config.sim.maxKingdoms = 5;

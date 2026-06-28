@@ -244,8 +244,10 @@
     }
     let info = null;
     if (civ.getNations) { const list = civ.getNations(); info = list.find(function (n) { return n.id === k.id; }); }
-    const res = k.res || { ore: 0, fish: 0, gems: 0 };
-    const resStr = [res.ore ? "⛏" + res.ore : "", res.fish ? "🐟" + res.fish : "", res.gems ? "💎" + res.gems : ""].filter(Boolean).join(" ") || "なし";
+    const res = k.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
+    const resStr = [res.ore ? "⛏" + res.ore : "", res.fish ? "🐟" + res.fish : "", res.gems ? "💎" + res.gems : "", res.gold ? "🪙" + res.gold : ""].filter(Boolean).join(" ") || "なし";
+    const hasCoin = !!(k.techBits && k.techBits.coin);
+    const moneyStr = hasCoin ? ("鋳貨 🪙" + Math.round(k.coin || 0)) : "物々交換";
     this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
       (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +
       (k.famine ? ' <span class="insp-tag bad">🌾 飢饉</span>' : "");
@@ -265,6 +267,7 @@
       row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "") +
         (info && info.foodTrade ? (info.foodTrade > 0 ? " （輸入+" + info.foodTrade + "）" : " （輸出" + info.foodTrade + "）") : "")) +
       row("資源", resStr) +
+      row("通貨", moneyStr) +
       (info && info.market
         ? row("市場", "希少 " + esc(info.market.scarce) + " ↑　余剰 " + esc(info.market.abundant) + " ↓") : "") +
       (info && info.partners && info.partners.length
