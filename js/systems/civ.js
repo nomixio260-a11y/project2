@@ -264,7 +264,7 @@
     if (temp > 0.66) return (moist > 0.5 ? 4 : 3);      // 高温 → 多湿:島嶼 / 乾燥:砂漠
     return (moist > 0.55 ? 2 : 1);                      // 温帯 → 多湿:森人 / それ以外:平原人
   }
-  const GOV_TYPES = ["君主制", "共和制", "部族連合", "神権制", "氏族制"];
+  const GOV_TYPES = ["君主制", "共和制", "部族連合", "神権制", "氏族制", "帝国", "都市国家", "封建制"];
   // 政体ごとの振る舞い補正（指導者の性格 TRAITS と乗算して用いる）。
   // war=好戦性 ally=同盟志向 trade=交易 tech=技術 unrest=不満の溜まりやすさ
   // faith=布教力 expand=入植・拡張意欲
@@ -274,6 +274,9 @@
     { war: 1.5, ally: 0.9, trade: 0.8, tech: 0.8, unrest: 1.2, faith: 1.0, expand: 1.1 },   // 部族連合: 好戦・不安定
     { war: 1.0, ally: 1.0, trade: 0.9, tech: 0.85, unrest: 0.8, faith: 1.8, expand: 1.0 },  // 神権制: 信仰・安定
     { war: 1.15, ally: 1.4, trade: 1.0, tech: 0.9, unrest: 1.0, faith: 1.0, expand: 1.05 }, // 氏族制: 血縁同盟
+    { war: 1.35, ally: 0.8, trade: 1.0, tech: 1.05, unrest: 0.8, faith: 1.0, expand: 1.4 },  // 帝国: 強権・拡張
+    { war: 0.75, ally: 1.3, trade: 1.5, tech: 1.35, unrest: 0.95, faith: 0.95, expand: 0.7 }, // 都市国家: 商業・学術
+    { war: 1.3, ally: 1.15, trade: 0.9, tech: 0.9, unrest: 1.1, faith: 1.05, expand: 1.15 },  // 封建制: 武門・諸侯
   ];
   const RELIGIONS = ["太陽信仰", "月の教団", "大地母神", "風の精霊", "祖霊崇拝", "星辰教"];
   const SECT_SUFFIX = ["改革派", "正統派", "異端", "刷新派", "原理派", "神秘派"];
@@ -293,7 +296,24 @@
     { name: "商才", war: 0.9, ally: 1.3, trade: 1.9, tech: 1.1, unrest: 0.9, faith: 1.0 },
     { name: "敬虔", war: 0.9, ally: 1.1, trade: 1.0, tech: 0.9, unrest: 0.8, faith: 2.0 },
     { name: "賢明", war: 0.8, ally: 1.2, trade: 1.1, tech: 1.6, unrest: 0.7, faith: 1.0 },
+    { name: "残虐", war: 1.6, ally: 0.6, trade: 0.9, tech: 1.0, unrest: 1.35, faith: 1.0 },
+    { name: "寛大", war: 0.7, ally: 1.5, trade: 1.2, tech: 1.0, unrest: 0.6, faith: 1.0 },
+    { name: "狡猾", war: 1.2, ally: 1.1, trade: 1.4, tech: 1.15, unrest: 0.95, faith: 1.0 },
+    { name: "開明", war: 0.85, ally: 1.2, trade: 1.2, tech: 1.4, unrest: 0.8, faith: 0.85 },
   ];
+
+  // 国是（国家の持続的な気質）: 指導者が代わっても受け継がれる国の性格。
+  // 政体・指導者と乗算して国ごとの個性を強める。値は穏やか(0.8〜1.3)に抑え均衡を保つ。
+  const NATION_ETHOS = [
+    { name: "武断国家", war: 1.25, expand: 1.15, tech: 0.95, trade: 0.95 },
+    { name: "通商国家", trade: 1.3, war: 0.85, ally: 1.15 },
+    { name: "開拓国家", expand: 1.3, war: 1.0, trade: 1.05 },
+    { name: "学究国家", tech: 1.25, war: 0.85, trade: 1.05 },
+    { name: "信仰国家", faith: 1.3, unrest: 0.85, war: 1.0 },
+    { name: "隠逸国家", expand: 0.75, war: 0.8, ally: 0.9, trade: 0.92, unrest: 0.9 },
+    { name: "自由国家", trade: 1.15, tech: 1.1, ally: 1.15, unrest: 0.85 },
+  ];
+  function ethosName(e) { return e ? e.name : "—"; }
 
   // 個別の技術発見。tech 値が閾値 at を超えると獲得し、具体的な恩恵を得る。
   const TECHS = [
@@ -550,6 +570,9 @@
     [200, 150, 60],  // 部族連合（橙）
     [150, 110, 210], // 神権制（紫）
     [90, 180, 120],  // 氏族制（緑）
+    [150, 60, 60],   // 帝国（深紅）
+    [80, 200, 200],  // 都市国家（青緑）
+    [120, 100, 70],  // 封建制（褐）
   ];
   const REL_COLORS = [
     [230, 190, 70], [150, 170, 220], [110, 180, 110],
@@ -701,6 +724,7 @@
       faith: 0.3,    // 信仰の篤さ(0..1)。神殿・神官・政体・敬虔さで高まり、結束/布教/聖戦に効く
       craft: 0.2,    // 工芸力(0..1)。鍛冶場・職人・金属・技術で育ち、装備の質と道具の産出に効く
       trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
+      ethos: NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0], // 国是（持続的な国の気質）
       wealth: 0,     // 富（交易・領土から蓄積）
       food: 30,      // 食料備蓄（生産-消費。0で飢饉）
       famine: false, // 飢饉中か（繁殖停止・餓死）
@@ -818,7 +842,8 @@
   CivSystem.prototype._eff = function (k, f) {
     const t = k.trait ? (k.trait[f] || 1) : 1;
     const g = k.govMod ? (k.govMod[f] || 1) : 1;
-    return t * g;
+    const e = k.ethos ? (k.ethos[f] || 1) : 1; // 国是（持続的な国の気質）
+    return t * g * e;
   };
 
   // ka が b を「隣国」とみなすか（直近 borderWindow tick 以内に接触）。
@@ -2274,6 +2299,7 @@
       langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
       langY: clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05),
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
+      ethos: parent.ethos || NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0], // 国是は母国から継ぐ
       wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
