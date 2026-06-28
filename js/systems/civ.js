@@ -156,6 +156,10 @@
     coinTradeBonus: 1.5,  // 双方が貨幣を使うと交易利益が増す（取引費用の低下）
     coinTradeHalf: 1.2,   // 片方のみ貨幣の場合の交易ボーナス
     coinWealth: 0.004,    // 貨幣保有が富の蓄積を後押しする係数
+    coinAdoptChance: 0.07, // 貨幣を使う相手に接した国が、時代に合わずとも貨幣を取り入れる確率
+    coinFromTrade: 0.6,   // 交易から流入する外国の貨幣・金（金鉱が無くても商業で貨幣を使える）
+    coinTradeCap: 30,     // 交易由来の貨幣保有上限（活発に交易するほど大きい）
+    coinTradeCapW: 1.2,   // 交易量から保有上限を定める係数
     // 生産・装備（専門職が施設で働いて生み出す）
     workRadius: 3,       // 施設からこの距離以内なら「就労中」
     toolRate: 0.02,      // 鍛冶が1ティックに作る道具・武具
@@ -1431,6 +1435,7 @@
     if (!donor.techBits) return;
     for (let ti = 0; ti < TECHS.length; ti++) {
       const T = TECHS[ti];
+      if (T.id === "coin") continue;                 // 貨幣は商業を通じて別途伝播する（_culturalExchange）
       if (!donor.techBits[T.id] || recv.techBits[T.id]) continue;
       const ahead = recv.tech < T.at;                // 自国の時代より早い借用か
       const chance = (ahead ? 0.05 : 0.13) * Math.min(2.5, openness);
@@ -1470,6 +1475,22 @@
       } else if (this.rand() < 0.035 * oba * this._eff(ka, "faith")) {
         kb.religion = ka.religion;
         this._logEvent("☽ " + kb.name + " が " + ka.name + " に倣い " + ka.religion + " に改宗した");
+      }
+    }
+
+    // 貨幣の伝播（迎合）: 貨幣を使う相手に接した国は、自国の文明・時代がまだ伴わなくても、
+    //   交易の便から貨幣（鋳貨）を取り入れることがある。貨幣は商業を通じて時代を超えて広まる
+    //   ――抽象的な技術より伝わりやすい。交易関係にあるほど採り入れやすい。
+    const coinKa = hasTech(ka, "coin"), coinKb = hasTech(kb, "coin");
+    if (coinKa !== coinKb) {
+      const recv = coinKa ? kb : ka;
+      const donor = coinKa ? ka : kb;
+      const o = recv === ka ? oab : oba;
+      const bond = (recv.partners && recv.partners[donor.id]) ? 1.8 : 1; // 交易相手からはより伝わる
+      if (this.rand() < CP.coinAdoptChance * Math.min(2.5, o) * bond) {
+        recv.techBits.coin = true;
+        if (recv.discovered && recv.discovered.indexOf("鋳貨") < 0) recv.discovered.push("鋳貨");
+        this._logEvent("🪙 " + recv.name + " が " + donor.name + " に倣い貨幣（鋳貨）を使い始めた");
       }
     }
 
@@ -1770,9 +1791,13 @@
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
       if (hasTech(ka, "coin")) {
         if (!ka._coined) { ka._coined = true; this._logEvent("💰 " + ka.name + " が貨幣（鋳貨）を導入した"); }
-        const cap = (res.gold || 0) * CP.coinCap;
-        ka.coin = (ka.coin || 0) + (res.gold || 0) * CP.mintRate;
-        if (ka.coin > cap) ka.coin = ka.coin * 0.9 + cap * 0.1; // 上限（金保有量）へ緩やかに収束
+        // 自国の金鉱石から鋳造する分に加え、交易を通じて外国の貨幣・金が流入する。
+        //   これにより金鉱を持たぬ国でも、商業が盛んなら貨幣を使える（文明・時代を問わず）。
+        const tradeCap = Math.min(CP.coinTradeCap, (ka.tradeVol || 0) * CP.coinTradeCapW);
+        const cap = (res.gold || 0) * CP.coinCap + tradeCap;
+        const inflow = (res.gold || 0) * CP.mintRate + Math.min(tradeCap, (ka.tradeVol || 0) * CP.coinFromTrade);
+        ka.coin = (ka.coin || 0) + inflow;
+        if (ka.coin > cap) ka.coin = ka.coin * 0.9 + cap * 0.1; // 保有上限へ緩やかに収束
       } else if (ka.coin > 0) {
         ka.coin *= 0.98; if (ka.coin < 0.01) ka.coin = 0; // 貨幣を未だ持たぬ国（鋳造手段の喪失）
       }
