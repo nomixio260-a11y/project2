@@ -253,6 +253,8 @@
       " ・ 鉱石" + (ci.ore ? "有" : "無") + " ・ 炭" + ci.fuel + "）") : null;
     const moneyStr = hasCoin ? ("鋳貨 🪙" + Math.round(k.coin || 0)) : "物々交換";
     this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
+      (k.goldenAge > 0 ? ' <span class="insp-tag good">✨ 黄金時代</span>' : "") +
+      (k.darkAge > 0 ? ' <span class="insp-tag bad">🌑 暗黒時代</span>' : "") +
       (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +
       (k.famine ? ' <span class="insp-tag bad">🌾 飢饉</span>' : "");
     const rmix = civ.raceMixOf ? civ.raceMixOf(k) : [];
