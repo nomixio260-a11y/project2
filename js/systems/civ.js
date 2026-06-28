@@ -34,6 +34,9 @@
   //   BARRACKS,GRANARY,MINE,WONDER,ACADEMY,HARBOR,TAVERN。
   const BUILD_FOOT = [0.62, 0.72, 0.9, 1.05, 0.95, 0.7, 0.74, 0.66, 0.86, 0.74, 0.66, 1.4, 1.0, 0.82, 0.72];
   function footR(t) { return BUILD_FOOT[t] || 0.75; }
+  // 住居の収容人数（現実的な「家に入れる人の上限」）。住居のみが夜の宿になる。
+  //   index は BUILDING enum: HUT=3, HOUSE=5, MANOR=9, それ以外は住居でない(0)。
+  const DWELL_CAP = [3, 5, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   // 生産施設（住居・砦以外の機能建築）。役割の職場・国の機能になる。
   const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary", "mine", "academy", "harbor", "tavern", "wonder"];
   // 機能建築の既定カウント（全 0）。
@@ -3114,15 +3117,11 @@
       }
     }
     // 1.5) 夜は自分の家へ帰って休む（戦時の兵士は夜も戦う）。国の中心に皆で集まるのではなく、
-    //   各自が自分の住居（pid で安定して選ぶ建物）へ散り、着いたら屋内で静まる（描画されない）。
+    //   各自が空きのある住居へ散って入り（収容上限あり）、着いたら屋内で静まる（描画されない）。
     if (this._night && !(h.role === ROLE.SOLDIER && this._count(k.wars) > 0)) {
-      const city = h.home || (k.cities && k.cities[0]);
-      if (city) {
-        let hx = city.x, hy = city.y;
-        const bs = city.buildings;
-        if (bs && bs.length) { const b = bs[(h.pid || 0) % bs.length]; hx = b.x; hy = b.y; } // 自分の家
-        h.gx = hx; h.gy = hy; h.state = 13; return;
-      }
+      const tpd = (Game.config.sim && Game.config.sim.ticksPerDay) || 216;
+      this._claimHome(h, k, (this._tickN / tpd) | 0);
+      h.gx = h.hbx; h.gy = h.hby; h.state = 13; return;
     }
     // 2) 孤独 → 同胞のもとへ集まる。
     if (h.social > 1) {
@@ -3429,6 +3428,43 @@
       }
     }
     return bx < 0 ? null : { x: bx, y: by };
+  };
+
+  // 夜の住まいを割り当てる。各人を「空きのある住居」へ（収容上限つき＝建物に入れる人数に限り
+  //   がある）。基準は pid で安定した黄金角配置なので、人は中心ではなく町じゅうに散らばる。
+  //   住居が足りなければ野宿（_sheltered=false：夜も外に描かれ、住宅不足が見て取れる）。
+  //   一晩につき一度だけ解決し、その夜は安定させる（負荷も抑える）。
+  CivSystem.prototype._claimHome = function (h, k, day) {
+    if (h._homeDay === day) return;     // 今夜はすでに割り当て済み（夜の間は安定）
+    h._homeDay = day;
+    // 住居を備える、最も近い自国の都市へ。無ければ首都→いずれも無ければ野宿。
+    let city = null, cd = 1e9;
+    const cs = k.cities;
+    if (cs) for (let ci = 0; ci < cs.length; ci++) {
+      const c = cs[ci], bs = c.buildings; if (!bs || !bs.length) continue;
+      let hasDwell = false;
+      for (let bi = 0; bi < bs.length; bi++) { if (DWELL_CAP[bs[bi].t]) { hasDwell = true; break; } }
+      if (!hasDwell) continue;
+      const dx = c.x - h.x, dy = c.y - h.y, d = dx * dx + dy * dy;
+      if (d < cd) { cd = d; city = c; }
+    }
+    if (!city) city = cs && cs[0];
+    if (!city) { h.hbx = h.x | 0; h.hby = h.y | 0; h._sheltered = false; return; }
+    const W = this.world.width, H = this.world.height;
+    const ang = (h.pid || 0) * 2.39996323;                 // 黄金角で均等に散布
+    const ar = 1 + ((h.pid || 0) % 5) + (city.level || 1) * 0.6;
+    let ax = (city.x + Math.cos(ang) * ar) | 0, ay = (city.y + Math.sin(ang) * ar) | 0;
+    ax = ax < 0 ? 0 : ax >= W ? W - 1 : ax; ay = ay < 0 ? 0 : ay >= H ? H - 1 : ay;
+    const bs = city.buildings; let best = null, bd = 1e9;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i], cap = DWELL_CAP[b.t]; if (!cap) continue;
+      if (b._occDay !== day) { b._occ = 0; b._occDay = day; }  // 日替わりで収容をリセット
+      if (b._occ >= cap) continue;                             // 満員の家には入れない
+      const dx = b.x - ax, dy = b.y - ay, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = b; }
+    }
+    if (best) { best._occ++; h.hbx = best.x; h.hby = best.y; h._sheltered = true; }
+    else { h.hbx = ax; h.hby = ay; h._sheltered = false; }   // 住居不足→野宿
   };
 
   // 都市の近くで建設可能な空きタイル（自国の陸地・建物が未設置）を探す。

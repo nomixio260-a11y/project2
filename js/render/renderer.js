@@ -293,8 +293,11 @@
     // 戦略資源（鉱石・漁場・宝石）。
     this.drawResources(camera);
 
-    // 街道（首都と各都市を結ぶ）。
+    // 街道（実際に敷かれた道タイル）。
     this.drawRoads(camera);
+
+    // 田畑（農場の周りに耕地を描く）。建物の下に敷く。
+    this.drawFields(camera);
 
     // 交易路（同盟国の首都を結ぶ金色の線）。
     this.drawTradeRoutes(camera);
@@ -452,8 +455,9 @@
       if (person.x < range.x0 || person.x > range.x1 || person.y < range.y0 || person.y > range.y1) continue;
       const moving = (person._mv || 0) > 0;
       if (moving) person._mv--;
-      // 夜、屋内で休む町人は描かない（建物に入っている＝灯る街で表現）。
-      if (townNight && !moving && person.kid && !person.sailing) continue;
+      // 夜、住居に入って休む町人は描かない（建物の中＝灯る街で表現）。住居に入れず野宿する
+      //   者(_sheltered=false)は外で休む姿が見える（＝住宅不足が分かる）。
+      if (townNight && !moving && person.kid && !person.sailing && person._sheltered) continue;
       const k = person.kid ? civ.kingdoms[person.kid] : null;
       const sx = Math.round(camera.worldToScreenX((person.x + 0.5) * tile));
       const sy = Math.round(camera.worldToScreenY((person.y + 0.5) * tile));
@@ -825,6 +829,77 @@
         ctx.fillRect((sx + pad) | 0, (sy + pad) | 0, sz | 0, sz | 0);
       }
     }
+    // 敷石の質感: 路面に明暗の小石をタイルごと決定的に散らす（ピクセルアートらしさ）。
+    if (scale >= 5) {
+      const px = Math.max(1, (scale * 0.16) | 0);
+      for (let n = 0; n < list.length; n++) {
+        const i = list[n];
+        const tx = i % W, ty = (i / W) | 0;
+        if (tx < x0 || tx > x1 || ty < y0 || ty > y1) continue;
+        const sx = camera.worldToScreenX(tx * tile) | 0;
+        const sy = camera.worldToScreenY(ty * tile) | 0;
+        // タイル index から擬似乱数で2つの小石位置を決める（毎フレーム同じ＝チラつかない）。
+        const h1 = (i * 2654435761) >>> 0, h2 = (i * 40503 + 12345) >>> 0;
+        const ox1 = (h1 % 1000) / 1000 * (seg - px), oy1 = ((h1 >> 10) % 1000) / 1000 * (seg - px);
+        const ox2 = (h2 % 1000) / 1000 * (seg - px), oy2 = ((h2 >> 10) % 1000) / 1000 * (seg - px);
+        ctx.fillStyle = "rgba(150,128,86,0.8)";  // 暗い石
+        ctx.fillRect(sx + ox1, sy + oy1, px, px);
+        ctx.fillStyle = "rgba(220,200,150,0.7)"; // 明るい石
+        ctx.fillRect(sx + ox2, sy + oy2, px, px);
+      }
+    }
+    ctx.restore();
+  };
+
+  // 田畑: 農場(FARM/GRANARY)のまわりの自国の平地に、畝(うね)の入った耕地を描く。
+  //   建物だけでなく「田畑が町を囲う」風景を見せる。建物の下、領土の上に敷く。
+  Renderer.prototype.drawFields = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const world = this.world;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 3.5) return; // 近景のみ（負荷と見栄えの両立）
+    const ctx = this.ctx;
+    const W = world.width, H = world.height, owner = world.owner;
+    const range = camera.visibleTileRange();
+    const px = Math.max(1, (scale * 0.16) | 0);
+    const kingdoms = civ.kingdoms;
+    const T = Game.TERRAIN;
+    ctx.save();
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive || !k.cities) continue;
+      for (let c = 0; c < k.cities.length; c++) {
+        const bs = k.cities[c].buildings;
+        if (!bs) continue;
+        for (let bi = 0; bi < bs.length; bi++) {
+          const bd = bs[bi];
+          if (bd.t !== 5 && bd.t !== 9) continue; // FARM=5 / GRANARY=9 の周りを耕地に
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const fx = bd.x + dx, fy = bd.y + dy;
+              if (fx < range.x0 || fx > range.x1 || fy < range.y0 || fy > range.y1) continue;
+              if (fx < 0 || fy < 0 || fx >= W || fy >= H) continue;
+              const fi = fy * W + fx;
+              if (owner[fi] !== k.id) continue;
+              const t = world.terrain[fi];
+              if (t !== T.GRASS && t !== T.SAVANNA && t !== T.SAND) continue; // 耕せる平地のみ
+              const sx = camera.worldToScreenX(fx * tile) | 0;
+              const sy = camera.worldToScreenY(fy * tile) | 0;
+              const sz = Math.ceil(scale);
+              // 土の下地。
+              ctx.fillStyle = "rgba(106,78,46,0.82)";
+              ctx.fillRect(sx, sy, sz, sz);
+              // 畝: 作物の緑の横縞（1本おき）。
+              ctx.fillStyle = "rgba(126,168,72,0.85)";
+              for (let r = 0; r < sz; r += px * 2) ctx.fillRect(sx, sy + r, sz, px);
+            }
+          }
+        }
+      }
+    }
     ctx.restore();
   };
 
@@ -953,6 +1028,24 @@
             ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
             ctx.fill();
             ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
+            // 鉱山(MINE=10): 採掘の現場を建物の手前に描く。わきにズリ山(残土)とトロッコ。
+            if (bd.t === 10 && scale >= 5) {
+              const u = Math.max(1, scale * 0.16);
+              // ズリ山（採掘で出た残土の山。建物の左下）。
+              ctx.fillStyle = "rgba(96,84,64,0.92)";
+              ctx.beginPath();
+              ctx.moveTo(bx - bw * 0.58, by);
+              ctx.lineTo(bx - bw * 0.28, by - bh * 0.32);
+              ctx.lineTo(bx - bw * 0.02, by);
+              ctx.closePath(); ctx.fill();
+              ctx.fillStyle = "rgba(118,104,80,0.9)"; ctx.fillRect((bx - bw * 0.4) | 0, (by - bh * 0.16) | 0, u, u);
+              // トロッコ（鉱石を積んだ手押し車。建物の右下）。
+              ctx.fillStyle = "#2b2622"; ctx.fillRect((bx + bw * 0.24) | 0, (by - 2 * u) | 0, 3 * u, 2 * u);
+              ctx.fillStyle = "#caa24a"; ctx.fillRect((bx + bw * 0.24 + u * 0.5) | 0, (by - 2.7 * u) | 0, 2 * u, u); // 鉱石
+              ctx.fillStyle = "#15110e";
+              ctx.fillRect((bx + bw * 0.26) | 0, (by - u) | 0, u, u);
+              ctx.fillRect((bx + bw * 0.24 + 2 * u) | 0, (by - u) | 0, u, u); // 車輪
+            }
           }
         }
         if (city.capital) {
