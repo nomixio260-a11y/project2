@@ -248,7 +248,8 @@
     const resStr = [res.ore ? "⛏" + res.ore : "", res.fish ? "🐟" + res.fish : "", res.gems ? "💎" + res.gems : "", res.gold ? "🪙" + res.gold : ""].filter(Boolean).join(" ") || "なし";
     const hasCoin = !!(k.techBits && k.techBits.coin);
     const ci = civ.craftInfo ? civ.craftInfo(k) : null;
-    const craftStr = ci ? (ci.name + "（工芸 " + (ci.level >= 0.6 ? "高" : ci.level >= 0.3 ? "中" : "低") + "）") : null;
+    const craftStr = ci ? (ci.name + "（工芸 " + (ci.level >= 0.6 ? "高" : ci.level >= 0.3 ? "中" : "低") +
+      " ・ 鉱石" + (ci.ore ? "有" : "無") + " ・ 炭" + ci.fuel + "）") : null;
     const moneyStr = hasCoin ? ("鋳貨 🪙" + Math.round(k.coin || 0)) : "物々交換";
     this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
       (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +

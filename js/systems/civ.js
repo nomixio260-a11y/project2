@@ -50,13 +50,20 @@
   // 装備の段階の名前（インスペクタ・年代記用）。5=名匠の業物, 6=伝説級。
   const GEAR_NAMES = ["素手", "石器", "青銅", "鉄器", "鋼", "名匠", "伝説"];
   function gearName(t) { return GEAR_NAMES[t] || GEAR_NAMES[GEAR_NAMES.length - 1]; }
-  // 国が実際に作れる装備の段階。時代を上限とするが、金属（鉱石・鉱山・輸入した武具）が
-  //   無ければ石器・木器どまり。これにより資源・交易・採掘が「ものづくり」の前提になる。
+  // 国が実際に作れる装備の段階（現実の冶金の連鎖を模す）:
+  //   石器(1)=常に / 青銅(2)=鉱石＋青銅器技術 / 鉄器(3)=鉱石＋燃料(炭=森林)＋鉄器技術 /
+  //   鋼(4)=鉄器に加え豊富な炉熱(燃料)と熟練(工芸力)。いずれも時代(era)を上限とする。
+  //   金属が無ければ石器どまり。資源・燃料・技術・熟練がそろって初めて上位の装備を打てる。
   function craftTier(k) {
     const era = gearTier(k.tech);
     const res = k.res, fac = k.facilities;
-    const hasMetal = (res && res.ore > 0) || (fac && fac.mine > 0);
-    return hasMetal ? era : Math.min(era, 1);
+    const ore = (res && res.ore > 0) || (fac && fac.mine > 0);
+    const fuel = k.fuel || 0; // 製錬の燃料（領内の森林＝炭の供給）
+    let max = 1; // 石器・木器は材料を要さず常に作れる
+    if (ore && hasTech(k, "bronze")) max = 2;                                  // 青銅: 鉱石＋青銅器
+    if (ore && fuel >= CP.fuelIron && hasTech(k, "iron")) max = 3;             // 鉄器: 鉱石＋燃料＋鉄器
+    if (max >= 3 && fuel >= CP.fuelSteel && (k.craft || 0) >= CP.steelCraft) max = 4; // 鋼: 高炉熱＋熟練
+    return Math.min(max, era);
   }
 
   const CP = {
@@ -189,6 +196,11 @@
     masterwork: 0.3,     // 工芸力1.0あたりの業物（一段上の傑作）を打つ確率
     craftToolW: 0.4,     // 鍛冶場1棟あたりの道具産出（工芸力で増減）
     craftLuxW: 0.6,      // 工芸力による奢侈品（金・宝石）の付加価値
+    // 製錬の燃料（炭）: 領内の森林タイル数で表す。鉄・鋼ほど高い炉熱＝多くの燃料を要する。
+    fuelIron: 6,         // 鉄器の製錬に要する燃料（森林）の最低量
+    fuelSteel: 18,       // 鋼の製錬に要する燃料（さらに高い炉熱）
+    steelCraft: 0.55,    // 鋼を打つのに要する工芸力（熟練の冶金）
+    charcoalChance: 0.06,// 製鉄が森林を炭に費やし、森が後退する確率（史実の森林伐採）
     marketRate: 0.06,    // 商人が1ティックに生む富
     templeCalm: 0.02,    // 神官が1ティックに鎮める不満
     equipChance: 0.08,   // 就労時に在庫から装備を受け取る確率
@@ -917,6 +929,20 @@
 
   // 領有する資源タイルを集計し各国の res（鉱石/漁場/宝石）に反映する。
   // 資源は少数なので resourceList を一巡するだけで全国まとめて数えられる。
+  // 製錬の燃料（炭）を集計する: 各国の領内の森林・密林タイル数を数える（評価ごと）。
+  // 森は炭の供給源であり、鉄・鋼の製錬を支える。製鉄が盛んだと森は炭に費やされ後退する。
+  CivSystem.prototype._tallyFuel = function () {
+    const ks = this.kingdoms, world = this.world, terr = world.terrain, owner = world.owner;
+    const T = Game.TERRAIN, n = world.width * world.height;
+    for (let id = 1; id < ks.length; id++) { const k = ks[id]; if (k && k.alive) { k._fuelN = 0; k._fuelTile = -1; } }
+    for (let i = 0; i < n; i++) {
+      const o = owner[i]; if (o === 0) continue;
+      const t = terr[i];
+      if (t === T.FOREST || t === T.JUNGLE) { const k = ks[o]; if (k && k.alive) { k._fuelN++; k._fuelTile = i; } }
+    }
+    for (let id = 1; id < ks.length; id++) { const k = ks[id]; if (k && k.alive) k.fuel = k._fuelN; }
+  };
+
   CivSystem.prototype._tallyResources = function () {
     const ks = this.kingdoms, world = this.world;
     for (let id = 1; id < ks.length; id++) {
@@ -1802,6 +1828,7 @@
 
     // 領有資源を集計（鉱石・漁場・宝石）。
     this._tallyResources();
+    this._tallyFuel(); // 製錬の燃料（森林＝炭）を集計
 
     // --- 国家ごと: 経済(富・技術) と 社会(不満) ---
     for (let a = 1; a < ks.length; a++) {
@@ -1860,10 +1887,19 @@
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
       ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
-      // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。金属が無い国は石器どまりで蓄えも乏しい
-      //   （工芸＝鍛冶場×職人×金属の産物）。富からの調達も金属がある国ほど効く。治安で増減。
-      ka.tools += (metalAvail ? (res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order;
+      // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。鍛造の量は燃料(炭=森林)が支える――
+      //   炉に火を入れられねば多くは打てない。富からの調達(輸入)は燃料に依らない。治安で増減。
+      const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
+      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
+      // 製鉄の炭焼き: 鉄・鋼を盛んに鍛える国は、森を炭に費やして後退させる（史実の森林伐採）。
+      //   植生システムが時とともに森を再生し、過伐採と再生の均衡が生まれる。
+      if (ka._fuelTile >= 0 && craftTier(ka) >= 3 && this.rand() < CP.charcoalChance * (0.5 + (ka.craft || 0))) {
+        const fi = ka._fuelTile, Wd = this.world.width;
+        this.world.terrain[fi] = Game.TERRAIN.GRASS;
+        if (this.renderer) this.renderer.markDirty(fi % Wd, (fi / Wd) | 0);
+        ka._fuelTile = -1;
+      }
       // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
       for (let ti = 0; ti < TECHS.length; ti++) {
         const T = TECHS[ti];
@@ -3245,7 +3281,8 @@
   CivSystem.prototype.gearName = function (t) { return gearName(t); };
   CivSystem.prototype.craftInfo = function (k) {
     const t = craftTier(k);
-    return { level: k.craft || 0, tier: t, name: gearName(t) };
+    const ore = !!((k.res && k.res.ore > 0) || (k.facilities && k.facilities.mine > 0));
+    return { level: k.craft || 0, tier: t, name: gearName(t), ore: ore, fuel: k.fuel || 0 };
   };
 
   // 役割の局所効果（毎ティックだが探索なし＝低負荷）。ti は足下のタイル index。

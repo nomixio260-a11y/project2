@@ -948,3 +948,34 @@ test("CivSystem: クラフトは金属の有無で質が変わる（工芸シス
   assert.equal(typeof ciA.name, "string");
   assert.ok(civ.gearName(6).length > 0, "装備名が得られる");
 });
+
+test("CivSystem: 鉄の製錬には燃料(森)が要る（冶金の連鎖）", () => {
+  const Game = loadCore({ mapWidth: 50, mapHeight: 20 });
+  const w = new Game.World(50, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS); w.elevation.fill(0.5);
+  if (w.fertility) w.fertility.fill(0.7);
+  if (w.moisture) w.moisture.fill(0.7);
+  w.resource = new Uint8Array(50 * 20);
+  const rl = [];
+  // A 地域: 鉱石＋森（鉄・鋼が作れる）。
+  for (let y = 4; y < 16; y++) for (let x = 2; x < 10; x++) w.setTerrain(x, y, x < 5 ? Game.TERRAIN.HILL : Game.TERRAIN.FOREST);
+  for (let y = 5; y < 15; y += 2) for (let x = 2; x < 5; x++) { w.resource[y * 50 + x] = Game.RESOURCE.ORE; rl.push({ x: x, y: y, t: Game.RESOURCE.ORE }); }
+  // B 地域: 鉱石のみ（森が無い → 青銅どまり）。
+  for (let y = 4; y < 16; y++) for (let x = 40; x < 48; x++) w.setTerrain(x, y, Game.TERRAIN.HILL);
+  for (let y = 5; y < 15; y += 2) for (let x = 40; x < 43; x++) { w.resource[y * 50 + x] = Game.RESOURCE.ORE; rl.push({ x: x, y: y, t: Game.RESOURCE.ORE }); }
+  w.resourceList = rl;
+
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(4, 10), B = civ.foundAt(44, 10);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+  ka.tech = kb.tech = 260; // 鉄器時代相当（青銅・鉄は評価で自動獲得）
+
+  for (let t = 0; t < 400; t++) civ.tick(w);
+
+  assert.ok(ka.fuel > 0, "森のある国は燃料(森)を持つはず");
+  assert.equal(kb.fuel, 0, "森の無い国は燃料ゼロのはず");
+  const ciA = civ.craftInfo(ka), ciB = civ.craftInfo(kb);
+  assert.ok(ciA.tier >= 3, "鉱石＋燃料＋鉄器技術 → 鉄器以上のはず: " + ciA.tier);
+  assert.equal(ciB.tier, 2, "鉱石はあるが燃料が無い → 青銅どまりのはず: " + ciB.tier);
+});
