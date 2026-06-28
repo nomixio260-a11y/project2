@@ -164,6 +164,16 @@
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
+    // 講和・従属・休戦（戦争の結末を多様に）
+    vassalChance: 0.55,  // 決定的勝利で、都市を奪う代わりに相手を属国(朝貢国)にする確率
+    vassalTribute: 0.06, // 属国が毎評価で宗主へ納める富の割合（朝貢）
+    vassalRevoltMil: 0.7,// 宗主の軍がこの倍率を下回ると属国が独立を試みる
+    truceTicks: 1200,    // 講和後の休戦期間（この間は再戦しない）
+    // 戦術（地形・防備）
+    homeDefense: 0.5,    // 自国領で戦う守備兵が受ける被害の軽減
+    fortDefense: 0.5,    // 砦(KEEP)のある都市タイルの攻略しにくさ（防備）
+    // 交易と平和（経済的相互依存は戦争を抑える）
+    tradePeace: 0.6,     // 主要交易相手とは開戦しにくい（相互依存）
     // 交易（取引）: 文明どうしが余剰と不足を交換し、双方が富む（比較優位）。
     //   文明により交易力が違う＝政体(共和制)・気質(商才)・技術(車輪/航海)・資源・市場・商人。
     tradeBase: 2.4,       // 交易量の基準係数
@@ -679,6 +689,9 @@
       borders: {},   // 隣接した他国 id → 最後に接触した tick（隣国判定）
       wars: {},      // 交戦中の id → 開戦 tick
       allies: {},    // 同盟中の id → true
+      truce: {},     // 休戦中の id → 解除 tick（この間は再戦しない）
+      vassals: {},   // 属国の id → true（朝貢を受け、戦に従える）
+      suzerain: 0,   // 宗主国の id（0=独立）
       langX: this.rand(), langY: this.rand(), // 国の言語（言語空間の位置。住民の言葉の重心で更新）
       coin: 0,       // 鋳造された貨幣の量（鋳貨技術＋金鉱石で増える。交易・富を潤す）
       tech: 0,       // 技術力（時代の指標）
@@ -1412,11 +1425,22 @@
     // 同盟への呼びかけ（ブロック戦争）: 双方の同盟国も参戦する。
     for (const c in ka.allies) { const ci = +c; if (ci !== b) this._engage(ci, b); }
     for (const c in kb.allies) { const ci = +c; if (ci !== a) this._engage(ci, a); }
+    // 従属関係も参戦: 属国は宗主の戦に従い、宗主は属国を守る（属国どうしの同士討ちは避ける）。
+    const self = this;
+    function rally(side, foe, foeKing) {
+      const sk = self.kingdoms[side]; if (!sk) return;
+      if (sk.suzerain && sk.suzerain !== foe) self._engage(sk.suzerain, foe);
+      for (const v in sk.vassals) { const vi = +v; if (vi !== foe && !(foeKing && foeKing.vassals && foeKing.vassals[vi])) self._engage(vi, foe); }
+    }
+    rally(a, b, kb); rally(b, a, ka);
   };
 
   CivSystem.prototype._makePeace = function (a, b) {
-    delete this.kingdoms[a].wars[b];
-    delete this.kingdoms[b].wars[a];
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    delete ka.wars[b]; delete kb.wars[a];
+    // 休戦: しばらくは再戦しない（戦争の頻発を防ぎ、講和に意味を持たせる）。
+    const until = (this._tickN || 0) + CP.truceTicks;
+    if (ka.truce) ka.truce[b] = until; if (kb.truce) kb.truce[a] = until;
     this._setRel(a, b, -8);
   };
 
@@ -1427,12 +1451,32 @@
     // 賠償金（敗者の富の一部を勝者へ）。
     const trib = kw.wealth * CP.tributeFrac;
     if (trib > 0) { kw.wealth -= trib; ks.wealth += trib; }
-    // 併合: 敗者が複数都市を持ち、勝者が隣国なら係争都市を奪う。
-    if (kw.cities.length >= 2 && this._isNeighbor(ks, w)) this._annexNearestCity(ks, kw);
-    this._makePeace(s, w);
-    this._setRel(s, w, -25); // 遺恨は残る
-    kw.unrest = Math.min(100, kw.unrest + 20); // 敗戦で国内動揺
+    // 結末の選択: 独立した複数都市国家は、都市を奪う代わりに「属国(朝貢国)」にされることがある
+    //   （ゆるやかな支配＝勝者は朝貢と従軍を得、敗者は存続する）。さもなくば係争都市を併合。
+    let subjugated = false;
+    if (kw.cities.length >= 2 && !kw.suzerain && this.rand() < CP.vassalChance) {
+      this._subjugate(s, w); subjugated = true;
+    } else if (kw.cities.length >= 2 && this._isNeighbor(ks, w)) {
+      this._annexNearestCity(ks, kw);
+    }
+    if (!subjugated) {
+      this._makePeace(s, w);
+      this._setRel(s, w, -25); // 遺恨は残る
+      kw.unrest = Math.min(100, kw.unrest + 20); // 敗戦で国内動揺
+    }
     ks.unrest = Math.max(0, ks.unrest - 10);   // 戦勝で求心力
+  };
+
+  // 従属（属国化）: 敗者は存続しつつ宗主に従う。朝貢を納め、宗主の戦に従軍する。
+  CivSystem.prototype._subjugate = function (sId, lId) {
+    const ks = this.kingdoms[sId], kl = this.kingdoms[lId];
+    if (!ks || !kl || !ks.alive || !kl.alive) return;
+    if (kl.suzerain && this.kingdoms[kl.suzerain]) delete this.kingdoms[kl.suzerain].vassals[lId];
+    kl.suzerain = sId; ks.vassals[lId] = true;
+    delete ks.wars[lId]; delete kl.wars[sId];
+    if (ks.truce) delete ks.truce[lId]; if (kl.truce) delete kl.truce[sId];
+    this._setRel(sId, lId, 45);
+    this._logEvent("⚑ " + kl.name + " が " + ks.name + " の属国となった");
   };
 
   // 勝者の首都に最も近い敗者都市を、その周辺領土・住民ごと併合する。
@@ -1840,6 +1884,41 @@
   };
 
   // イベント駆動の外交・経済・社会評価。
+  // 属国関係の解消（宗主滅亡・独立運動）。revolt 時は独立戦争になる。
+  CivSystem.prototype._breakVassalage = function (suzId, vasId, revolt) {
+    const su = this.kingdoms[suzId], kv = this.kingdoms[vasId];
+    if (!kv) return;
+    if (su) delete su.vassals[vasId];
+    kv.suzerain = 0;
+    if (revolt && su && su.alive && kv.alive) {
+      this._engage(suzId, vasId);
+      this._setRel(suzId, vasId, -60);
+      this._logEvent("✊ " + kv.name + " が宗主 " + su.name + " から独立を掲げて蜂起した");
+    }
+  };
+
+  // 属国の維持: 朝貢を徴収し、宗主が衰えるか不満が高じれば独立を試みる。死んだ関係を掃除。
+  CivSystem.prototype._maintainVassals = function () {
+    const ks = this.kingdoms;
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive) continue;
+      // 死んだ/離反した属国を宗主のリストから掃除。
+      if (k.vassals) for (const v in k.vassals) { const kv = ks[+v]; if (!kv || !kv.alive || kv.suzerain !== id) delete k.vassals[v]; }
+      // 属国側: 朝貢と独立判定。
+      if (k.suzerain) {
+        const su = ks[k.suzerain];
+        if (!su || !su.alive) { k.suzerain = 0; continue; } // 宗主滅亡 → 独立
+        const trib = k.wealth * CP.vassalTribute;
+        if (trib > 0) { k.wealth -= trib; su.wealth += trib; }
+        if (!k.wars[k.suzerain]) {
+          const weak = this._military(su) < this._military(k) * CP.vassalRevoltMil;
+          if ((weak || k.unrest > 80) && this.rand() < 0.08) this._breakVassalage(k.suzerain, id, true);
+        }
+      }
+    }
+  };
+
   CivSystem.prototype._diplomacy = function () {
     const ks = this.kingdoms;
 
@@ -2040,6 +2119,9 @@
       }
     }
 
+    // 従属関係の維持（朝貢・独立運動・後始末）。
+    this._maintainVassals();
+
     // --- 国家ペア: 文化伝播・交易・開戦/同盟/講和 ---
     for (let a = 1; a < ks.length; a++) {
       const ka = ks[a];
@@ -2124,12 +2206,18 @@
             const needB = kb.humanCount >= this._capacity(kb) * 0.9;
             if (needA || needB) territorial = CP.warPressure * 0.18;
           }
-          const warP = (neighbor ? (0.06 + (rel < 0 ? (-rel / 100) * 0.25 : 0)) * warF : 0) + territorial;
+          let warP = (neighbor ? (0.06 + (rel < 0 ? (-rel / 100) * 0.25 : 0)) * warF : 0) + territorial;
           const allyP = (0.05 + (rel > 0 ? (rel / 100) * 0.2 : 0)) * allyF;
+          // 経済的相互依存: 主要な交易相手とは戦になりにくい（交易が平和を育む）。
+          const bond = (ka.partners && ka.partners[b]) || 0;
+          if (bond > 0) { const dep = Math.min(1, bond / (1 + ka.tradeVol)); warP *= 1 - CP.tradePeace * dep; }
+          // 休戦中・従属関係（宗主と属国）とは開戦しない。
+          const truced = ka.truce && ka.truce[b] && ka.truce[b] > (this._tickN || 0);
+          const bound = ka.suzerain === b || kb.suzerain === a;
           // 同盟上限に達していれば新たな同盟は結べない（同盟の乱立を防ぐ）。
           const canAlly = this._count(ka.allies) < CP.maxAllies && this._count(kb.allies) < CP.maxAllies;
           const r = this.rand();
-          if (r < warP) this._declareWar(a, b);
+          if (!truced && !bound && r < warP) this._declareWar(a, b);
           else if (canAlly && r < warP + allyP) this._formAlliance(a, b);
           else {
             // 平時のゆらぎ。異教は緊張（悪化寄り）、同教は親和（改善寄り）。
@@ -2180,7 +2268,7 @@
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
       facilities: newFacilities(),
       tools: parent.tools * 0.3,
-      relations: {}, borders: {}, wars: {}, allies: {},
+      relations: {}, borders: {}, wars: {}, allies: {}, truce: {}, vassals: {}, suzerain: 0,
       tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
       // 言語: 独立した地方は母国の言葉を受け継ぎ、以後ゆるやかに方言として分岐していく。
       langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
@@ -3367,9 +3455,17 @@
           const other = this.kingdoms[e.kid];
           const m1 = this._military(k), m2 = other ? this._military(other) : 1;
           const edge = m1 / (m1 + m2);
+          // 地形と郷土の利: 守備兵が丘・山・森・湿地、または自国領で戦うと被害が減る（戦術）。
+          const eti = (e.y | 0) * world.width + (e.x | 0);
+          const dt = world.terrain[eti], TT = Game.TERRAIN;
+          let defF = 1;
+          if (dt === TT.HILL || dt === TT.MOUNTAIN) defF -= 0.25;
+          else if (dt === TT.FOREST || dt === TT.JUNGLE || dt === TT.SWAMP) defF -= 0.15;
+          if (world.owner[eti] === e.kid) defF -= CP.homeDefense * 0.3; // 郷土防衛の士気
+          if (defF < 0.4) defF = 0.4;
           // 個の武勇: 勇敢で歴戦（高練度）の壮年兵ほど、また怒りに燃えるほど痛打を与える。
           e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) *
-            (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0));
+            (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF;
           practice(h); // 実戦で武を磨く
           if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); h.prestige = (h.prestige || 0) + 1.2; } // 戦死させ武功を上げる
         }
@@ -3386,8 +3482,16 @@
           // 防御に有利な地形（丘・森・密林・湿地）は奪いにくい（地形の戦術効果）。
           const m1 = this._military(k), m2 = this._military(other);
           const T = Game.TERRAIN, dter = world.terrain[ti];
-          const defMul = (dter === T.HILL || dter === T.FOREST) ? 0.55
+          let defMul = (dter === T.HILL || dter === T.FOREST) ? 0.55
             : (dter === T.JUNGLE || dter === T.SWAMP) ? 0.7 : 1;
+          // 防備: 砦(KEEP)を備えた都市タイルは攻めにくい（城壁＝包囲戦の抵抗）。
+          for (let c = 0; c < other.cities.length; c++) {
+            const cc = other.cities[c];
+            if (cc.x === tx && cc.y === ty) {
+              if (cc.buildings) { for (let bi = 0; bi < cc.buildings.length; bi++) if (cc.buildings[bi].t === BUILDING.KEEP) { defMul *= (1 - CP.fortDefense); break; } }
+              break;
+            }
+          }
           const chance = CP.conflictChance * 2 * (m1 / (m1 + m2)) * defMul;
           if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < chance) {
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;

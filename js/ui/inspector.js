@@ -283,7 +283,13 @@
         ? row("英傑", "★ " + esc((info && info.figure ? info.figure : k.figure).name) + "（" + esc((info && info.figure ? info.figure : k.figure).title) + "）") : "") +
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +
       (info && (info.wars.length || info.allies.length)
-        ? row("外交", (info.wars.length ? "⚔" + info.wars.length + " " : "") + (info.allies.length ? "🤝" + info.allies.length : "")) : "");
+        ? row("外交", (info.wars.length ? "⚔" + info.wars.length + " " : "") + (info.allies.length ? "🤝" + info.allies.length : "")) : "") +
+      (function () {
+        const suz = k.suzerain && civ.kingdoms[k.suzerain] && civ.kingdoms[k.suzerain].alive ? civ.kingdoms[k.suzerain] : null;
+        let vn = 0; if (k.vassals) for (const v in k.vassals) { const kv = civ.kingdoms[+v]; if (kv && kv.alive) vn++; }
+        if (!suz && !vn) return "";
+        return row("従属", (suz ? "⚑ " + esc(suz.name) + "の属国" : "") + (vn ? (suz ? " ・ " : "") + "属国 " + vn + "国" : ""));
+      })();
   };
 
   Inspector._mil = function (k) {
