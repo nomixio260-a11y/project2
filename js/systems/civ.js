@@ -166,11 +166,8 @@
     warPressure: 0.55,   // 土地不足の隣国どうしは領土紛争で開戦しやすい
     maxAllies: 3,        // 1国が結べる同盟の上限（同盟の乱立を防ぐ）
     reignSpan: 1500,     // 君主の標準的な治世（これを超えると代替わりしうる）
-    // 黄金時代・暗黒時代（文明の興亡の物語。評価=diploInterval ごとに判定）
-    goldenLen: 16,       // 黄金/暗黒時代の継続（評価回数。約16×90≈1440ティック）
-    ageCooldown: 34,     // 次の時代に入るまでの間隔（評価回数）
-    goldenChance: 0.07,  // 条件を満たした繁栄国が黄金時代に入る確率／評価
-    darkChance: 0.06,    // 条件を満たした衰退国が暗黒時代に入る確率／評価
+    // 黄金時代・暗黒時代は固定の発生確率や持続期間を持たない。実測の活力(fortune)が
+    //   持続して閾値を越えたときに「認識」されるだけで、興亡は既存の因果系が生み出す。
     decisiveRatio: 2.3,  // 軍事力比がこれ以上なら決定的（賠償・併合を強いる）
     tributeFrac: 0.45,   // 敗戦国が支払う富の割合
     annexRadius: 18,     // 併合時に割譲される都市周辺の半径
@@ -2006,22 +2003,26 @@
       const king = ka.rulerRef;
       const kingDili = king && king.alive ? (0.7 + 0.3 * (king.dili || 1)) : 1;
       const kingWit = king && king.alive ? (0.7 + 0.3 * (king.wit || 1)) : 1;
-      // 黄金時代・暗黒時代: 文明の盛衰に物語のうねりを与える。繁栄・安定・名君が揃えば
-      //   黄金時代（技術・富が伸び治安も良くなる）、戦乱・不満・暗君が重なれば暗黒時代（衰退）。
-      let goldF = 1, techGoldF = 1, unrestAge = 0;
-      if ((ka.goldenAge || 0) > 0) { ka.goldenAge--; goldF = 1.25; techGoldF = 1.3; unrestAge = -2.2; }
-      else if ((ka.darkAge || 0) > 0) { ka.darkAge--; goldF = 0.7; techGoldF = 0.6; unrestAge = 2.2; }
-      else if ((ka._ageCd || 0) > 0) { ka._ageCd--; }
-      else {
-        const able = king && king.alive ? ((king.wit || 1) + (king.dili || 1)) * 0.5 : 0.9;
-        if (ka.wealth > ka.tileCount * 0.55 && ka.unrest < 32 && able > 1.07 && ka.humanCount >= 25 && this._count(ka.wars) === 0 && this.rand() < CP.goldenChance) {
-          ka.goldenAge = CP.goldenLen; ka._ageCd = CP.ageCooldown;
-          this._logEvent("✨ " + ka.name + " が黄金時代を迎えた");
-        } else if (ka.unrest > 68 && (this._count(ka.wars) > 0 || ka.famine || ka.plague > 0) && able < 0.96 && this.rand() < CP.darkChance) {
-          ka.darkAge = CP.goldenLen; ka._ageCd = CP.ageCooldown;
-          this._logEvent("🌑 " + ka.name + " が暗黒時代に陥った");
-        }
-      }
+      // 黄金時代・暗黒時代は系が強制するものではなく、いくつもの因果（富・治安・人口・平和・
+      //   統治者の資質）が重なって生じる「状態」である。ここではそれらの実測値から緩やかな
+      //   活力(fortune)を導き、持続した高揚・沈滞をヒステリシス付きで「認識」して年代記に
+      //   刻むのみ――産出には一切の人為補正をかけない。盛衰は既存の因果系がそのまま生み出す。
+      const cap = this._capacity(ka);
+      const able = king && king.alive ? ((king.wit || 1) + (king.dili || 1)) * 0.5 : 0.9;
+      const fWar = this._count(ka.wars);
+      const wealthN = clamp01(ka.wealth / Math.max(1, ka.tileCount) / 0.9);
+      const orderN = clamp01((order - 0.5) * 2);
+      const popN = clamp01(ka.humanCount / Math.max(1, cap));
+      const peaceN = fWar === 0 ? 1 : clamp01(1 - fWar * 0.4);
+      const leaderN = clamp01((able - 0.7) / 0.6);
+      const crisisN = (ka.famine ? 0.22 : 0) + (ka.plague > 0 ? 0.18 : 0);
+      const fRaw = clamp01(wealthN * 0.26 + orderN * 0.24 + popN * 0.16 + peaceN * 0.18 + leaderN * 0.16 - crisisN);
+      // 緩やかな指数平滑（瞬間値ではなく持続した状態を映す＝自然なヒステリシス）。
+      ka.fortune = ka.fortune === undefined ? fRaw : ka.fortune + (fRaw - ka.fortune) * 0.12;
+      if (ka.fortune > 0.72) { if (!ka.goldenAge) this._logEvent("✨ " + ka.name + " が黄金時代を迎えた"); ka.goldenAge = 1; ka.darkAge = 0; }
+      else if (ka.fortune < 0.6 && ka.goldenAge) { ka.goldenAge = 0; this._logEvent("　" + ka.name + " の黄金時代が過ぎ去った"); }
+      if (ka.fortune < 0.28) { if (!ka.darkAge) this._logEvent("🌑 " + ka.name + " が暗黒時代に陥った"); ka.darkAge = 1; ka.goldenAge = 0; }
+      else if (ka.fortune > 0.4 && ka.darkAge) { ka.darkAge = 0; this._logEvent("　" + ka.name + " が暗黒時代を脱した"); }
       // 工芸力: 鍛冶場・鍛冶職人・金属・進んだ冶金（青銅/鉄）で育つ「ものづくりの力」。
       const smiths = ka.roleCount[ROLE.SMITH] || 0;
       const metalAvail = (res.ore > 0) || (fac.mine > 0);
@@ -2031,7 +2032,7 @@
       ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * goldF;
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -2049,7 +2050,7 @@
       }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit * techGoldF;
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
       // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。鍛造の量は燃料(炭=森林)が支える――
       //   炉に火を入れられねば多くは打てない。富からの調達(輸入)は燃料に依らない。治安で増減。
       const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
@@ -2083,8 +2084,7 @@
       if (faithTgt > 1) faithTgt = 1;
       ka.faith = (ka.faith || 0) + (faithTgt - (ka.faith || 0)) * 0.1; // ゆっくり推移
       // 不満: 戦争・過密・貧困で上昇、平和・繁栄・神殿・穀倉・信仰で低下（性格・政体で変調）。
-      const cap = this._capacity(ka);
-      let dU = -1.5 + unrestAge; // 黄金時代は安定、暗黒時代は動揺
+      let dU = -1.5;
       const warCount = this._count(ka.wars);
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
