@@ -3113,11 +3113,16 @@
         }
       }
     }
-    // 1.5) 夜は帰宅して休む（戦時の兵士は夜も戦う）。昼は働き夜は静まる生活リズムを作る。
+    // 1.5) 夜は自分の家へ帰って休む（戦時の兵士は夜も戦う）。国の中心に皆で集まるのではなく、
+    //   各自が自分の住居（pid で安定して選ぶ建物）へ散り、着いたら屋内で静まる（描画されない）。
     if (this._night && !(h.role === ROLE.SOLDIER && this._count(k.wars) > 0)) {
-      if (hd2 > 9) { h.gx = hcx; h.gy = hcy; }            // 町へ帰る
-      else { this._ringGoal(h, world, hcx, hcy, 0, 2); }  // 家の周りで休む
-      h.state = 13; return;
+      const city = h.home || (k.cities && k.cities[0]);
+      if (city) {
+        let hx = city.x, hy = city.y;
+        const bs = city.buildings;
+        if (bs && bs.length) { const b = bs[(h.pid || 0) % bs.length]; hx = b.x; hy = b.y; } // 自分の家
+        h.gx = hx; h.gy = hy; h.state = 13; return;
+      }
     }
     // 2) 孤独 → 同胞のもとへ集まる。
     if (h.social > 1) {
@@ -3557,6 +3562,12 @@
 
   CivSystem.prototype._move = function (h, k, world) {
     const W = world.width, H = world.height;
+    // 夜の就寝(state 13): 自分の家に着いた人は徘徊せず静止する（屋内で休む＝描画で消える）。
+    //   家へ向かう途中はそのまま歩く。火災等で state が変われば再び動く。
+    if (h.state === 13) {
+      const dgx = h.gx + 0.5 - h.x, dgy = h.gy + 0.5 - h.y;
+      if (dgx * dgx + dgy * dgy < 1.0) { h.hx = 0; h.hy = 0; return; }
+    }
     // 操舵の間引き: 多くのティックは前回の速度(hx,hy)でそのまま前進し（移動は毎ティック
     //   滑らか）、経路・慣性・障害回避の再計算は steerEvery ティックに1回だけ行う。
     //   進路が水/外なら位相に関わらず即座に再操舵する（水侵入を防ぐ）。
