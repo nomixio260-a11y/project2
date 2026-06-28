@@ -6,6 +6,8 @@ name: Autoplay
 #   - ジョブ要約: 推移の表と年代記を Actions の実行ページで直接読める
 # 手動実行（Actions タブ → Run workflow）で、ティック数・コマ数・地図サイズを指定できる。
 
+# 手動実行(workflow_dispatch)はデフォルトブランチに本ファイルが載って初めて使えるため、
+# 開発ブランチでは「コミットメッセージに [autoplay] を含む push」でも起動できるようにする。
 on:
   workflow_dispatch:
     inputs:
@@ -25,6 +27,9 @@ on:
         description: "初期建国数"
         required: false
         default: "16"
+  push:
+    branches:
+      - claude/fantasy-map-simulator-game-m6ve46
 
 concurrency:
   group: autoplay-${{ github.ref }}
@@ -34,6 +39,8 @@ jobs:
   play:
     name: Play the world
     runs-on: ubuntu-latest
+    # push では [autoplay] を含むコミットのときだけ走らせる（毎 push では起動しない）。
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[autoplay]')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
