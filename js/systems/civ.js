@@ -20,12 +20,20 @@
   // 職業（役割）。0-3 は従来互換、4-6 は専門職（工房・市場・神殿で働く）。
   const ROLE = { EXPLORER: 0, FARMER: 1, BUILDER: 2, SOLDIER: 3, SMITH: 4, MERCHANT: 5, PRIEST: 6 };
   const ROLE_COUNT = 7;
-  // 建物タイプ（描画 sprites.building と対応）。
-  // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉,10=鉱山,11=大記念碑。
-  const BUILDING = { HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7, BARRACKS: 8, GRANARY: 9, MINE: 10, WONDER: 11 };
-  const MAX_BUILDINGS = 22; // 1都市の建物上限
-  // 生産施設（住居・砦以外の機能建築）。役割の職場になる。
-  const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary"];
+  // 建物タイプ（描画 sprites.building と対応）。各種別に固有の機能と見た目を持つ。
+  // 0=小屋,1=家,2=邸宅（住居） 3=砦 4=神殿 5=農場 6=鍛冶場 7=市場 8=兵舎 9=穀倉
+  // 10=鉱山 11=大記念碑 12=学院（技術） 13=港（漁・海上交易） 14=酒場（娯楽・士気）。
+  const BUILDING = {
+    HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7,
+    BARRACKS: 8, GRANARY: 9, MINE: 10, WONDER: 11, ACADEMY: 12, HARBOR: 13, TAVERN: 14,
+  };
+  const MAX_BUILDINGS = 26; // 1都市の建物上限
+  // 生産施設（住居・砦以外の機能建築）。役割の職場・国の機能になる。
+  const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary", "mine", "academy", "harbor", "tavern", "wonder"];
+  // 機能建築の既定カウント（全 0）。
+  function newFacilities() {
+    return { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, mine: 0, academy: 0, harbor: 0, tavern: 0, wonder: 0 };
+  }
 
   // 時代に応じた住居の種別（石器=小屋 / 青銅・鉄=家 / 古典以降=邸宅）。
   function dwellingTier(tech) {
@@ -88,6 +96,12 @@
     foodStoreBase: 36,    // 基本の備蓄上限（小さめ＝戦争・凶作が早く響く）
     foodStoreGranary: 48, // 穀倉1棟あたりの備蓄上限増
     famineDeathFood: 3,   // 食料不足この量ごとに1人が餓死
+    foodHarbor: 4,        // 港1棟の漁獲（沿岸都市の食料）
+    academyTech: 1.8,     // 学院1棟の技術寄与
+    tavernCalm: 0.9,      // 酒場1棟の不満低減（娯楽・憩い）
+    harborTrade: 0.5,     // 港1棟の交易力寄与（海上交易）
+    diversityTech: 0.18,  // 民族の多様性による技術加速（多文化の交流＝開明）
+    diversityFric: 0.02,  // 民族の多様性による軋轢（治安への小さな摩擦）
     // 外交
     diploInterval: 90,  // 外交を評価する間隔(ティック)
     warThreshold: -50,   // 関係がこれ以下で開戦しうる
@@ -143,12 +157,23 @@
   // 形質の偏りはごく小さく（±0.05）、能力の平均~1.0と経済バランスを崩さない。
   //   skins/hairs: 肌・髪の色（個体差つき）。bias: 環境適応の形質と量。
   //   col: 地図の人種ビューでの代表色。clime: 起源の気候 0=寒 1=温 2=熱。
+  //   build: 体格（描画の大きさ倍率）。given/sur: 民族特有の名前の語幹（音節合成に使う）。
   const RACES = [
-    { id: 0, name: "北方人", skins: ["#f3d3ad", "#efc79a", "#f7dcc0"], hairs: ["#caa84a", "#6b4f2a", "#8d6a3a"], bias: "vigor", amt: 0.05, col: [180, 200, 230], clime: 0 },
-    { id: 1, name: "平原人", skins: ["#e8b887", "#d9a066", "#e0ad77"], hairs: ["#4a3422", "#2a1c10", "#6b4f2a"], bias: "dili", amt: 0.04, col: [150, 190, 120], clime: 1 },
-    { id: 2, name: "森人", skins: ["#cda06a", "#bb9258", "#c9a878"], hairs: ["#2a1c10", "#15110b", "#3a2a18"], bias: "wit", amt: 0.05, col: [90, 160, 110], clime: 1 },
-    { id: 3, name: "砂漠人", skins: ["#c68642", "#b5763a", "#a9764b"], hairs: ["#15110b", "#2a1c10"], bias: "vigor", amt: 0.04, col: [220, 190, 110], clime: 2 },
-    { id: 4, name: "島嶼人", skins: ["#a9764b", "#8d5524", "#9a6638"], hairs: ["#15110b", "#1c140c"], bias: "brave", amt: 0.04, col: [110, 190, 200], clime: 2 },
+    { id: 0, name: "北方人", skins: ["#f3d3ad", "#efc79a", "#f7dcc0"], hairs: ["#caa84a", "#6b4f2a", "#8d6a3a"], bias: "vigor", amt: 0.05, col: [180, 200, 230], clime: 0, build: 1.1,
+      given: ["Bjor", "Sven", "Eir", "Fro", "Gunn", "Hak", "Ing", "Knut", "Leif", "Odd", "Rag", "Sig", "Thor", "Ulf", "Vik", "Yrs"],
+      sur: ["Frost", "Storm", "Ice", "Bear", "Wolf", "North", "Snow", "Fjord", "Thund", "Wind"] },
+    { id: 1, name: "平原人", skins: ["#e8b887", "#d9a066", "#e0ad77"], hairs: ["#4a3422", "#2a1c10", "#6b4f2a"], bias: "dili", amt: 0.04, col: [150, 190, 120], clime: 1, build: 1.0,
+      given: ["Ald", "Ber", "Cael", "Dun", "Ed", "Gar", "Hod", "Mil", "Os", "Rod", "Sam", "Tam", "Wal", "Bram", "Cob", "Gild"],
+      sur: ["Field", "Wheat", "Oak", "Mead", "Plough", "Barley", "Green", "Mill", "Corn", "Acre"] },
+    { id: 2, name: "森人", skins: ["#cda06a", "#bb9258", "#c9a878"], hairs: ["#2a1c10", "#15110b", "#3a2a18"], bias: "wit", amt: 0.05, col: [90, 160, 110], clime: 1, build: 0.93,
+      given: ["Ael", "Cael", "Elw", "Fae", "Gal", "Ith", "Lael", "Myr", "Nael", "Sylv", "Thal", "Vael", "Ylw", "Ely", "Fin", "Lor"],
+      sur: ["Leaf", "Moss", "Fern", "Glade", "Thorn", "Birch", "Willow", "Briar", "Elm", "Pine"] },
+    { id: 3, name: "砂漠人", skins: ["#c68642", "#b5763a", "#a9764b"], hairs: ["#15110b", "#2a1c10"], bias: "vigor", amt: 0.04, col: [220, 190, 110], clime: 2, build: 0.97,
+      given: ["Zah", "Ras", "Lay", "Nas", "Omar", "Far", "Hak", "Jam", "Kal", "Mun", "Raf", "Sal", "Tar", "Yas", "Zad", "Hass"],
+      sur: ["Sand", "Sun", "Dune", "Ember", "Ash", "Mirage", "Dust", "Oasis", "Amber", "Sear"] },
+    { id: 4, name: "島嶼人", skins: ["#a9764b", "#8d5524", "#9a6638"], hairs: ["#15110b", "#1c140c"], bias: "brave", amt: 0.04, col: [110, 190, 200], clime: 2, build: 1.02,
+      given: ["Kai", "Man", "Tan", "Moa", "Lani", "Hua", "Rang", "Tane", "Vao", "Ari", "Mau", "Noa", "Sina", "Tui", "Aki", "Hok"],
+      sur: ["Wave", "Reef", "Tide", "Coral", "Shell", "Surf", "Pearl", "Salt", "Drift", "Shore"] },
   ];
   function raceForClime(temp, moist, rand) {
     // 起源の地の気候から人種を定める（寒→北方、熱→砂漠/島嶼、温→平原/森）。
@@ -285,6 +310,19 @@
   const SUR_A = ["Stone", "Iron", "Oak", "Wolf", "Raven", "Hart", "Ash", "Black", "White", "Strong", "Swift", "Bright", "Frost", "Storm", "Gold", "Red", "Grey", "High", "Fair", "Stark"];
   const SUR_B = ["ward", "born", "wood", "field", "ford", "hill", "vale", "moor", "brook", "crest", "bane", "heart", "mark", "guard", "well", "ridge"];
   function surname(rand) { return SUR_A[(rand() * SUR_A.length) | 0] + SUR_B[(rand() * SUR_B.length) | 0]; }
+  // 人種ごとの固有名・家名。各民族の語幹(given/sur)に共通の接尾辞を合成し、
+  //   「北方人は Bjornwyn / Frostward」「島嶼人は Kaia / Wavecrest」のように
+  //   民族で名前の響きが分かれる。語幹が無い人種は従来の汎用生成にフォールバック。
+  function personNameFor(rid, rand) {
+    const R = RACES[rid];
+    if (!R || !R.given) return personName(rand);
+    return R.given[(rand() * R.given.length) | 0] + PERSON_B[(rand() * PERSON_B.length) | 0];
+  }
+  function surnameFor(rid, rand) {
+    const R = RACES[rid];
+    if (!R || !R.sur) return surname(rand);
+    return R.sur[(rand() * R.sur.length) | 0] + SUR_B[(rand() * SUR_B.length) | 0];
+  }
   // 近親か（親子・兄弟姉妹）。近親婚を避け、外婚（exogamy）を促すために用いる。
   function closeKin(a, b) {
     if (!a.pid || !b.pid) return false;
@@ -505,7 +543,7 @@
       tileCount: 1,
       humanCount: 0,
       roleCount: [0, 0, 0, 0, 0, 0, 0],
-      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 }, // 機能建築の総数
+      facilities: newFacilities(), // 機能建築の総数
       tools: 0,      // 道具・武具の備蓄（鍛冶が生産・住民が装備）
       clanSeq: 0,
       relations: {}, // 既知の他国 id → 関係値(-100..100)
@@ -591,8 +629,9 @@
 
   // 全都市の建物から機能建築の数を集計する（建設・占領・反乱で変動するため）。
   CivSystem.prototype._recountFacilities = function (k) {
-    const f = k.facilities || (k.facilities = { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 });
-    f.temple = f.farm = f.smithy = f.market = f.barracks = f.granary = f.wonder = 0;
+    const f = k.facilities || (k.facilities = newFacilities());
+    f.temple = f.farm = f.smithy = f.market = f.barracks = f.granary = 0;
+    f.mine = f.academy = f.harbor = f.tavern = f.wonder = 0;
     for (let c = 0; c < k.cities.length; c++) {
       const bs = k.cities[c].buildings;
       if (!bs) continue;
@@ -604,6 +643,10 @@
           case BUILDING.MARKET: f.market++; break;
           case BUILDING.BARRACKS: f.barracks++; break;
           case BUILDING.GRANARY: f.granary++; break;
+          case BUILDING.MINE: f.mine++; break;
+          case BUILDING.ACADEMY: f.academy++; break;
+          case BUILDING.HARBOR: f.harbor++; break;
+          case BUILDING.TAVERN: f.tavern++; break;
           case BUILDING.WONDER: f.wonder++; break;
         }
       }
@@ -645,22 +688,8 @@
     if (h.dili === undefined) endow(h, this.rand, pa, pb); // 性格・練度・機嫌
     if (h.pid === undefined) {
       h.pid = ++this._pidSeq;
-      h.name = personName(this.rand);
-      // 血統・家系: 両親のIDと世代、父方から継ぐ家名を記録する（血縁・家族の追跡）。
-      h.momId = pa ? (pa.pid || 0) : 0;
-      h.dadId = pb ? (pb.pid || 0) : 0;
-      h.gen = pa ? (Math.max(pa.gen || 1, pb ? (pb.gen || 1) : (pa.gen || 1)) + 1) : 1;
-      h.sur = (pb && pb.sur) ? pb.sur : (pa && pa.sur) ? pa.sur : surname(this.rand);
-      // 名声: 名門の子は幾分かの威信を生まれながらに継ぐ（貴種の血筋）。創始者は0から。
-      h.prestige = pa ? Math.min(4, ((pa.prestige || 0) + (pb ? (pb.prestige || 0) : 0)) * 0.12) : 0;
-      h.partner = null;     // 伴侶（繁殖で結ばれ、死別で深く悲しむ）
-      h.bonds = null;       // 親友（会話を重ねて結ばれる。最大 MAX_BONDS）
-      // 文化的気質（会話で伝播し、地域・国ごとの文化を創発させる）。
-      h.culture = pa
-        ? clamp01(((pa.culture == null ? 0.5 : pa.culture) + (pb ? (pb.culture == null ? 0.5 : pb.culture) : (pa.culture == null ? 0.5 : pa.culture))) / 2 + (this.rand() - 0.5) * 0.08)
-        : this.rand();
       // 人種（民族）: 親があればどちらかの人種を受け継ぐ（混血）。創始者は起源の地の
-      //   気候で定まる（寒冷→北方人 等）。見た目（肌・髪）と微小な環境適応が決まる。
+      //   気候で定まる（寒冷→北方人 等）。名前の響きにも影響するので最初に定める。
       let rid;
       if (pa) {
         const ra = pa.race != null ? pa.race : 1;
@@ -674,9 +703,27 @@
       }
       h.race = rid;
       const R = RACES[rid] || RACES[1];
+      // 固有名は人種の語幹から（民族で名前の響きが分かれる）。
+      h.name = personNameFor(rid, this.rand);
+      // 血統・家系: 両親のIDと世代、父方から継ぐ家名を記録する（血縁・家族の追跡）。
+      h.momId = pa ? (pa.pid || 0) : 0;
+      h.dadId = pb ? (pb.pid || 0) : 0;
+      h.gen = pa ? (Math.max(pa.gen || 1, pb ? (pb.gen || 1) : (pa.gen || 1)) + 1) : 1;
+      // 家名: 父方→母方の血統から継ぐ。創始者は自分の人種の語幹から作る。
+      h.sur = (pb && pb.sur) ? pb.sur : (pa && pa.sur) ? pa.sur : surnameFor(rid, this.rand);
+      // 名声: 名門の子は幾分かの威信を生まれながらに継ぐ（貴種の血筋）。創始者は0から。
+      h.prestige = pa ? Math.min(4, ((pa.prestige || 0) + (pb ? (pb.prestige || 0) : 0)) * 0.12) : 0;
+      h.partner = null;     // 伴侶（繁殖で結ばれ、死別で深く悲しむ）
+      h.bonds = null;       // 親友（会話を重ねて結ばれる。最大 MAX_BONDS）
+      // 文化的気質（会話で伝播し、地域・国ごとの文化を創発させる）。
+      h.culture = pa
+        ? clamp01(((pa.culture == null ? 0.5 : pa.culture) + (pb ? (pb.culture == null ? 0.5 : pb.culture) : (pa.culture == null ? 0.5 : pa.culture))) / 2 + (this.rand() - 0.5) * 0.08)
+        : this.rand();
       // 見た目（人種の色域から個体差つきで）。renderer がそのまま使う。
       h.skinCol = R.skins[(this.rand() * R.skins.length) | 0];
       h.hairCol = R.hairs[(this.rand() * R.hairs.length) | 0];
+      // 体格（人種の build を個体差つきで。renderer の描画サイズに反映）。
+      h.build = (R.build || 1) * (0.96 + this.rand() * 0.08);
       // 環境適応: 創始者にのみ人種の得意形質をごく僅かに付与する。子孫は遺伝で受け継ぎ、
       //   混血で薄まる（世代ごとの再加算による暴走を避ける）。
       if (!pa && R.bias && h[R.bias] != null) h[R.bias] = clampTrait(h[R.bias] + R.amt);
@@ -974,10 +1021,17 @@
         if (k.unrest < 0) k.unrest = 0; else if (k.unrest > 100) k.unrest = 100;
       }
       // 民族構成: 最多の人種を国の代表民族とし、構成比を記録（人種ビュー・UI用）。
+      //   多様性 diversity = 1 - 最多民族の比率（単一民族0 〜 多民族~0.8）。
+      //   多文化国家は技術が加速する一方、わずかな軋轢（治安への摩擦）も生む。
       if (k._raceCnt) {
         let dom = 0, dn = -1, tot = 0;
         for (let r = 0; r < k._raceCnt.length; r++) { tot += k._raceCnt[r]; if (k._raceCnt[r] > dn) { dn = k._raceCnt[r]; dom = r; } }
         k.race = dom; k.raceMix = k._raceCnt.slice(); k.raceTot = tot;
+        k.diversity = tot > 0 ? (1 - dn / tot) : 0;
+        if (k.diversity > 0) {
+          k.unrest = (k.unrest || 0) + k.diversity * CP.diversityFric;
+          if (k.unrest > 100) k.unrest = 100;
+        }
       }
       // 国を代表する英傑（名声が一定以上のときのみ掲げる）。
       if (k._topRef && k._topRef.alive && (k._topP || 0) >= FAME_THRESHOLD) {
@@ -1417,7 +1471,7 @@
   CivSystem.prototype._tradeCapacity = function (k) {
     const fac = k.facilities || {};
     const order = 1 - (k.unrest || 0) / 200;
-    let cap = (1 + (fac.market || 0) * CP.tradeMarketW + (k.roleCount[ROLE.MERCHANT] || 0) * CP.tradeMerchantW) *
+    let cap = (1 + (fac.market || 0) * CP.tradeMarketW + (fac.harbor || 0) * CP.harborTrade + (k.roleCount[ROLE.MERCHANT] || 0) * CP.tradeMerchantW) *
       this._eff(k, "trade") * order;
     if (hasTech(k, "wheel")) cap *= CP.tradeWheelBonus;
     return cap;
@@ -1611,9 +1665,9 @@
       // 富: 領土・都市・市場・宝石・記念碑（観光）・車輪（交易）から収入（商才・政体・治安・名君で増減）。
       ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + res.gems * 2.0 + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0)) * this._eff(ka, "trade") * order * kingDili;
       if (ka.wealth < 0) ka.wealth = 0;
-      // 技術: 都市・人口・富・鍛冶場・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
-      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0);
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
+      // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
+      const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech;
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
       // 武具の備蓄: 鉱石＋富で武装する（富裕国は兵を装備できる＝経済→軍事）。治安で増減。
       ka.tools += (res.ore * 0.3 + Math.min(2.5, ka.wealth * 0.0025)) * order;
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
@@ -1638,7 +1692,7 @@
       dU += warCount * 2.6;
       if (ka.humanCount > cap) dU += 3;
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
-      dU -= fac.temple * 0.7 + fac.granary * 0.4 + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0); // 信仰・食料・漁場・記念碑・法典で安定
+      dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0); // 信仰・食料・酒場・漁場・記念碑・法典で安定
 
       // 食料経済: 農民・農場・漁場・採集で生産し、人口が消費する。穀倉が備蓄上限を上げる。
       // 因果の要: 生産は「土地の肥沃度（=植生。干ばつ・火災・噴火で低下）」と「季節
@@ -1655,7 +1709,7 @@
       const clk = Game.state.clock;
       const climF = Game.state.vegetation && clk ? (1 + 0.3 * (clk.wetness || 0) + 0.1 * (clk.warmth || 0)) : 1;
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
-        res.fish * CP.foodFish + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order;
+        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order;
       const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary;
@@ -1856,7 +1910,7 @@
       cities: [{ x: city.x, y: city.y, capital: true, level: city.level || 1, buildings: (city.buildings || []) }],
       reign: 0,
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
-      facilities: { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, wonder: 0 },
+      facilities: newFacilities(),
       tools: parent.tools * 0.3,
       relations: {}, borders: {}, wars: {}, allies: {},
       tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
@@ -2660,16 +2714,20 @@
     // 建ち、産物は技術で増える。神殿は社会が成熟してから。最後は住居で人口増に対応。
     const n = bs.length;
     let want;
+    const coastal = this._coastal(world, city.x, city.y); // 沿岸都市か（港を建てられる）
     if (!has[BUILDING.FARM] && n >= 1) want = BUILDING.FARM;               // まず食料生産
     else if (dwell < 2) want = tier;                                       // 最低限の住居
+    else if (coastal && !has[BUILDING.HARBOR] && n >= 3) want = BUILDING.HARBOR; // 港（沿岸の漁・海上交易）
     else if (!has[BUILDING.SMITHY] && n >= 3) want = BUILDING.SMITHY;      // 工房（道具・武具）
     else if (!has[BUILDING.GRANARY] && n >= 4) want = BUILDING.GRANARY;    // 倉（食料安全）
     else if (!has[BUILDING.MARKET] && n >= 4) want = BUILDING.MARKET;      // 市（富）
-    else if ((this._count(k.wars) > 0 || city.capital) && !has[BUILDING.BARRACKS] && n >= 4) want = BUILDING.BARRACKS; // 兵舎
-    else if (!has[BUILDING.TEMPLE] && n >= 6) want = BUILDING.TEMPLE;      // 神殿（信仰・成熟した都市）
+    else if ((this._count(k.wars) > 0 || city.capital) && !has[BUILDING.BARRACKS] && n >= 5) want = BUILDING.BARRACKS; // 兵舎
+    else if (!has[BUILDING.TAVERN] && n >= 6) want = BUILDING.TAVERN;      // 酒場（娯楽・士気）
+    else if (!has[BUILDING.TEMPLE] && n >= 7) want = BUILDING.TEMPLE;      // 神殿（信仰・成熟した都市）
+    else if (!has[BUILDING.ACADEMY] && n >= 9 && k.tech >= TECH_PER_ERA) want = BUILDING.ACADEMY; // 学院（技術・進んだ都市）
     else if (dwell < Math.max(3, n * 0.5)) want = tier;                   // 人口に見合う住居
-    else if ((has[BUILDING.SMITHY] || 0) < 2 && n >= 11) want = BUILDING.SMITHY;    // 大都市は2軒目
-    else if ((has[BUILDING.MARKET] || 0) < 2 && n >= 13) want = BUILDING.MARKET;
+    else if ((has[BUILDING.SMITHY] || 0) < 2 && n >= 12) want = BUILDING.SMITHY;    // 大都市は2軒目
+    else if ((has[BUILDING.MARKET] || 0) < 2 && n >= 14) want = BUILDING.MARKET;
     else want = tier;                                                      // さらに住居を増やす
 
     const spot = this._buildSpot(world, k, city);

@@ -252,7 +252,7 @@
     this.bodyEl.innerHTML =
       row("統治", esc(k.ruler) + "（" + esc(k.gov) + "）") +
       (k.dynasty ? row("王朝", esc(k.dynasty) + "家") : "") +
-      (rmix.length ? row("民族", rmix.slice(0, 3).map(function (r) { return esc(r.name) + " " + r.pct + "%"; }).join(" ・ ")) : "") +
+      (rmix.length ? row("民族", rmix.slice(0, 3).map(function (r) { return esc(r.name) + " " + r.pct + "%"; }).join(" ・ ") + (k.diversity > 0.15 ? " 〔多文化〕" : "")) : "") +
       row("時代", (info ? info.era : "") + " · " + esc(k.religion)) +
       row("気質", esc(k.trait.name)) +
       row("人口", String(k.humanCount) + " 人") +

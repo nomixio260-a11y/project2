@@ -8,7 +8,8 @@
   const ROLE_HAT = [null, "#4fae4f", "#e08a2a", "#b9c2cc", "#6a6a72", "#d8b84a", "#ece9e0"];
   // 建物タイプごとの相対サイズ（実世界の規模感に合わせる。index=建物タイプ）。
   // 0小屋 1家 2邸宅 3砦 4神殿 5農場 6工房 7市場 8兵舎 9穀倉 10鉱山 11大記念碑
-  const BUILD_SIZE = [0.78, 1.0, 1.28, 1.55, 1.4, 0.95, 1.02, 0.88, 1.2, 1.0, 0.85, 2.1];
+  //              hut  house manor keep temple farm smith mkt barr gran mine wonder acad harbor tavern
+  const BUILD_SIZE = [0.78, 1.0, 1.28, 1.55, 1.4, 0.95, 1.02, 0.88, 1.2, 1.0, 0.85, 2.1, 1.45, 1.15, 0.98];
   // 個人差の肌・髪の色（人ごとに一意に選ばれ、群衆が多様に見える）。
   const SKIN = ["#f3cd9b", "#e8b887", "#d9a066", "#c68642", "#a9764b", "#8d5524"];
   const HAIR = ["#2a1c10", "#4a3422", "#6b4f2a", "#caa84a", "#b5482f", "#15110b"];
@@ -495,8 +496,9 @@
       const isChild = age < LIFE.adult;
       const isElder = age >= LIFE.elder;
       const hair = isElder ? "#dcdcdc" : (person.hairCol || HAIR[(lk >> 5) % HAIR.length]);
-      // 年齢で体格が変わる（誕生時0.55→成人で1.0、老人は0.95）。
-      const grow = isChild ? (0.55 + 0.45 * (age / LIFE.adult)) : (isElder ? 0.95 : 1);
+      // 年齢で体格が変わる（誕生時0.55→成人で1.0、老人は0.95）。人種の体格(build)も乗算。
+      const ageGrow = isChild ? (0.55 + 0.45 * (age / LIFE.adult)) : (isElder ? 0.95 : 1);
+      const grow = ageGrow * (person.build || 1);
       const uu = Math.max(1, Math.round(u * grow));
       // 歩行の振り（脚は前後、腕は逆位相）＋胴の小さなバウンド。
       const ph = moving ? t * 6 + p * 0.7 : 0;
