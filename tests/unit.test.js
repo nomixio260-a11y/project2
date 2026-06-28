@@ -847,3 +847,48 @@ test("Hud.sample: 個体数・王国・延焼を集計する", () => {
   assert.equal(s.kingdoms, 1, "生存王国数");
   assert.equal(s.fires, 2, "延焼数");
 });
+
+test("DisasterSystem: 干ばつ・地震・洪水が被害を与える", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 13 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 4; x++) w.setTerrain(x, y, Game.TERRAIN.MOUNTAIN);
+  for (let y = 0; y < 40; y++) w.setTerrain(15, y, Game.TERRAIN.SHALLOW_WATER); // 陸に挟まれた浅瀬列
+  if (w.fertility) w.fertility.fill(1);
+  if (w.moisture) w.moisture.fill(0.1);
+
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {};
+  Game.state.civ = civ;
+  Game.state.clock = { warmth: 0, wetness: 0, season: { name: "夏" } };
+
+  const A = civ.foundAt(25, 20);
+  const k = civ.kingdoms[A];
+  k.cities[0].buildings = [
+    { x: 25, y: 20, t: 3 }, // KEEP（砦）
+    { x: 26, y: 20, t: 5 }, { x: 27, y: 20, t: 6 }, { x: 25, y: 21, t: 7 },
+  ];
+  for (let t = 0; t < 60; t++) civ.tick(w);
+
+  const ds = new Game.DisasterSystem(w);
+
+  // 干ばつ: 肥沃度の帯が半減する。
+  let before = 0; for (let i = 0; i < w.fertility.length; i++) before += w.fertility[i];
+  ds._drought(w);
+  let after = 0; for (let i = 0; i < w.fertility.length; i++) after += w.fertility[i];
+  assert.ok(after < before, "干ばつで肥沃度が減るはず");
+
+  // 地震: 砦以外の建物が倒壊し、不満が上がる。
+  const bCount = k.cities[0].buildings.length;
+  const u0 = k.unrest || 0;
+  ds._earthquake(w);
+  assert.ok(k.cities[0].buildings.length < bCount, "地震で建物が倒壊するはず");
+  assert.ok((k.unrest || 0) > u0, "地震で不満が上がるはず");
+  assert.ok(k.cities[0].buildings.some((b) => b.t === 3), "砦(KEEP)は倒壊しないはず");
+
+  // 洪水: 浅瀬付近の陸地の湿度が上がる。
+  ds._flood(w);
+  let wet = 0;
+  for (let i = 0; i < w.moisture.length; i++) if (w.moisture[i] > 0.1 && Game.tile.isLand(w.terrain[i])) wet++;
+  assert.ok(wet > 0, "洪水で湿った陸地が生じるはず");
+});

@@ -7,6 +7,11 @@
   const T = Game.TERRAIN;
   const tile = Game.tile;
 
+  // 焼け跡の回復: 灰は養分に富み、パイオニア種が素早く定着する（一時的に成長が速い）。
+  const ASH_GROWTH = 2.4; // SCORCHED の成長率倍率（急速な再植生）
+  const ASH_CAP = 0.12;   // 灰による一時的な容量上乗せ
+  const ASH_MOIST = 0.15; // 回復して草地化したとき、灰が保つ養分（次段階の遷移を後押し）
+
   // 地形ごとの植生容量（0..1）。水・山・雪・砂漠は育ちにくい。
   function baseCapacity(terrain) {
     switch (terrain) {
@@ -81,7 +86,10 @@
         let localCap = cap * (0.55 + 0.45 * m) * capClim;
         if (localCap > 1) localCap = 1;
         let v = f[i];
-        v += (localCap - v) * growth;
+        // 焼け跡は灰の養分でパイオニア種が急速に戻る（一時的肥沃化＝段階的遷移の起点）。
+        let gr = growth, lc = localCap;
+        if (t === T.SCORCHED) { gr *= ASH_GROWTH; lc = Math.min(1, lc + ASH_CAP); }
+        v += (lc - v) * gr;
         if (v > 1) v = 1; else if (v < 0) v = 0;
         f[i] = v;
 
@@ -94,7 +102,8 @@
         //   温暖多雨は森林・密林を広げ、寒冷化は凍土を、灼熱乾燥は砂漠を広げる。
         let nt = t;
         if (t === T.SCORCHED) {
-          if (v > 0.3) nt = T.GRASS; // 焼け地の回復
+          // 段階的回復: まず草地が戻り（灰の養分を残す）、以後の遷移で森へ育ちうる。
+          if (v > 0.35) { nt = T.GRASS; moist[i] = Math.min(1, m + ASH_MOIST); }
         } else if (t === T.SAND) {
           // 十分に湿った砂地のみ草地化（乾いた砂浜・砂漠周縁は砂のまま）。
           if (v > 0.55 && m >= th.forestMoisture && bt > th.cold && bt < th.hot) nt = T.GRASS;

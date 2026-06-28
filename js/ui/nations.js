@@ -74,6 +74,8 @@
       const sw = document.createElement("span");
       sw.className = "nation-swatch";
       sw.style.background = "rgb(" + n.color[0] + "," + n.color[1] + "," + n.color[2] + ")";
+      // 色覚補助: 色だけに頼らず、国名の頭文字を見分けの手がかりとして重ねる。
+      sw.textContent = n.name ? n.name.charAt(0) : "?";
 
       const info = document.createElement("div");
       info.className = "nation-info";
