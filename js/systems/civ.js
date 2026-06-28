@@ -97,9 +97,10 @@
     tetherSettled: 13,   // 農民・建築家は自分の町の近くに定住
     seekRange: 3,
     conflictChance: 0.06,
-    newTownDist: 18,     // この距離を超える自国領で新集落を興す（支配を延伸）
-    foundRate: 0.02,
-    maxSettlements: 10,
+    newTownDist: 14,     // この距離を超える自国領で新集落を興す（支配を延伸）
+    foundRate: 0.05,
+    maxSettlements: 14,
+    expandChance: 0.16,  // 国が評価ごとに新たな開拓地を興そうとする確率（人口・領土に余裕がある時）
     controlRadius: 28,   // 都市が支配を及ぼす半径（これを超える辺境は手放す）
     controlPerLevel: 3,  // 都市の発展度1あたりの支配半径の増分
     maintainBand: 32,    // 領土メンテのローリング走査の行数/ティック
@@ -126,6 +127,7 @@
     raceGenesis: 0.015,  // 出生時に土地の気候に適応した民族へ変わる確率（民族の独自進化）
     sightBase: 5.2,      // 視野の基準半径（知性・年齢・昼夜で変化する）
     // 高度な認知: 危険地の記憶（嫌悪学習）と人生の志（長期目標）。
+    hungerSeek: 0.34,    // この食料を下回ると最寄りの食料地へ向かう（賢い者は早めに動く）
     dangerTtl: 900,      // 危険な目に遭った場所を覚えている期間(ティック)
     dangerR: 6,          // 記憶した危険地を避ける半径
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
@@ -720,7 +722,8 @@
   CivSystem.prototype.viewLegend = function (mode) {
     mode = mode || (Game.state && Game.state.mapView) || "nation";
     const out = [];
-    if (mode === "gov") for (let i = 0; i < GOV_TYPES.length; i++) out.push({ label: GOV_TYPES[i], color: GOV_COLORS[i] });
+    if (mode === "diplomacy") { out.push({ label: "同盟", color: [80, 210, 120] }); out.push({ label: "戦争", color: [230, 70, 60] }); out.push({ label: "従属（属国）", color: [200, 170, 70] }); }
+    else if (mode === "gov") for (let i = 0; i < GOV_TYPES.length; i++) out.push({ label: GOV_TYPES[i], color: GOV_COLORS[i] });
     else if (mode === "religion") for (let i = 0; i < RELIGIONS.length; i++) out.push({ label: RELIGIONS[i], color: REL_COLORS[i] });
     else if (mode === "era") for (let i = 0; i < ERAS.length; i++) out.push({ label: ERAS[i], color: ERA_COLORS[i] });
     else if (mode === "culture") { out.push({ label: "文化 A", color: cultureColor(0.1) }); out.push({ label: "中間", color: cultureColor(0.5) }); out.push({ label: "文化 B", color: cultureColor(0.9) }); }
@@ -2315,6 +2318,9 @@
         }
       }
 
+      // 開拓: 人口と領土に余裕がある国は、辺境に新たな街や村を興して国土を広げる。
+      this._expandSettlement(ka);
+
       // 反乱: 不満が高く、複数都市を持つ国は地方が独立しうる。
       if (ka.unrest > 80 && ka.cities.length >= 2 &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < 0.18) {
@@ -3164,6 +3170,12 @@
         }
       }
     }
+    // 1.4) 空腹の知恵: 飢えが迫ったら最寄りの食べられる土地へ向かい飢えを凌ぐ（賢い者ほど
+    //   早めに動いて餓死を避ける＝生存の知能）。家路・仕事より優先する切迫した欲求。
+    if (h.food < CP.hungerSeek * (0.75 + 0.45 * wit)) {
+      const ft = this._nearestTile(h, world, 6, function (terr) { return tile.isEdible(terr); });
+      if (ft) { h.gx = ft.x; h.gy = ft.y; h.state = 1; return; }
+    }
     // 1.5) 夜は自分の家へ帰って休む（戦時の兵士は夜も戦う）。国の中心に皆で集まるのではなく、
     //   各自が空きのある住居へ散って入り（収容上限あり）、着いたら屋内で静まる（描画されない）。
     if (this._night && !(h.role === ROLE.SOLDIER && this._count(k.wars) > 0)) {
@@ -3249,9 +3261,15 @@
     // 専門職（鍛冶・商人・神官）: 対応する施設へ出勤して働く。職場のある町に定住する
     // （職場が遠い町に属していると行動範囲外で働けないため、職場へ住み替える）。
     if (h.role === ROLE.SMITH || h.role === ROLE.MERCHANT || h.role === ROLE.PRIEST) {
-      const ftype = h.role === ROLE.SMITH ? BUILDING.SMITHY
-        : h.role === ROLE.MERCHANT ? BUILDING.MARKET : BUILDING.TEMPLE;
+      // 鍛冶は鍛冶場か鉱山で働く。鉱山があれば一部(約4割)は坑夫として採掘に就く。
+      let mining = false, ftype;
+      if (h.role === ROLE.SMITH) {
+        mining = !!(k.facilities && k.facilities.mine > 0) && (((h.pid || 0) % 5) < 2);
+        ftype = mining ? BUILDING.MINE : BUILDING.SMITHY;
+      } else ftype = h.role === ROLE.MERCHANT ? BUILDING.MARKET : BUILDING.TEMPLE;
       if (!h.work || this.rand() < 0.03) h.work = this._nearestFacility(k, h.x, h.y, ftype);
+      if (mining && !h.work) { h.work = this._nearestFacility(k, h.x, h.y, BUILDING.SMITHY); mining = false; } // 鉱山が無ければ鍛冶場へ
+      h.mining = mining;
       if (h.work) {
         h.home = { x: h.work.x, y: h.work.y }; // 職場の都市に通勤定住
         if (this.rand() < 0.7) { h.gx = h.work.x; h.gy = h.work.y; } // 出勤
@@ -3926,6 +3944,41 @@
     const fertile = !world.fertility || world.fertility[i] > 0.3;
     if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate * this._eff(k, "expand")) {
       k.cities.push({ x: h.x | 0, y: h.y | 0, capital: false, level: 1, buildings: [] });
+    }
+  };
+
+  // 国家主導の開拓: 人口・領土に余裕がある国は、既存の都市から離れた自国の肥沃な辺境に
+  //   新たな街や村を興す（移民が集まり町へ育つ）。探検者まかせにせず、国が能動的に広がる。
+  CivSystem.prototype._expandSettlement = function (ka) {
+    const cs = ka.cities;
+    if (!cs || cs.length >= CP.maxSettlements) return;
+    // 余裕の条件: 人口が都市数に対して多く、領土も都市数に比して広い（＝もう一つ町を持てる）。
+    if (ka.humanCount < cs.length * 11 + 8) return;
+    if (ka.tileCount < cs.length * 42) return;
+    if (this.rand() >= CP.expandChance * this._eff(ka, "expand")) return;
+    const world = this.world, W = world.width, H = world.height, owner = world.owner, fert = world.fertility;
+    const minD = CP.newTownDist, minD2 = minD * minD;
+    // 既存都市の周辺(newTownDist〜controlRadius)に候補を撒き、他の都市から十分離れ、自国の
+    //   肥沃な陸地である点を探す。最も肥沃な候補に村を建てる。
+    let best = null, bestF = -1;
+    for (let s = 0; s < 24; s++) {
+      const base = cs[(this.rand() * cs.length) | 0];
+      const ang = this.rand() * Math.PI * 2;
+      const r = minD + this.rand() * (CP.controlRadius - minD + 4);
+      const x = (base.x + Math.cos(ang) * r) | 0, y = (base.y + Math.sin(ang) * r) | 0;
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
+      const i = y * W + x;
+      if (owner[i] !== ka.id || !tile.isLand(world.terrain[i])) continue;
+      // すべての既存都市から newTownDist 以上離れていること（密集しすぎない）。
+      let okFar = true;
+      for (let c = 0; c < cs.length; c++) { const dx = cs[c].x - x, dy = cs[c].y - y; if (dx * dx + dy * dy < minD2) { okFar = false; break; } }
+      if (!okFar) continue;
+      const f = fert ? fert[i] : 0.5;
+      if (f > bestF) { bestF = f; best = { x: x, y: y }; }
+    }
+    if (best) {
+      cs.push({ x: best.x, y: best.y, capital: false, level: 1, buildings: [] });
+      this._logEvent("🏘 " + ka.name + " が新たな開拓地を築いた");
     }
   };
 

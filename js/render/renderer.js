@@ -333,11 +333,46 @@
     // 昼夜の環境光（全要素の上に重ねて統一した照明にする）。
     this.drawDayNight(camera);
 
+    // 外交ビュー: 国同士の関係（戦争＝赤・同盟＝緑・従属＝金）を首都間の線で一望できる。
+    if (Game.state.mapView === "diplomacy") this.drawDiplomacy(camera);
+
     // 国名ラベル（照明の影響を受けず常に読める）。
     this.drawLabels(camera);
 
     // ブラシのプレビュー（カーソル位置の円。照明の影響を受けない）。
     this.drawBrushPreview(camera);
+  };
+
+  // 外交関係を首都間の線で描く（戦争=赤・同盟=緑・従属=金）。一目で勢力図と対立が分かる。
+  Renderer.prototype.drawDiplomacy = function (camera) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const ks = civ.kingdoms;
+    const ctx = this.ctx;
+    function cap(k) { return k && k.alive && k.cities && k.cities.length ? k.cities[0] : null; }
+    function line(ca, cb, col, wdt, dash) {
+      ctx.strokeStyle = col; ctx.lineWidth = wdt;
+      if (dash) ctx.setLineDash(dash); else ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(camera.worldToScreenX((ca.x + 0.5) * tile), camera.worldToScreenY((ca.y + 0.5) * tile));
+      ctx.lineTo(camera.worldToScreenX((cb.x + 0.5) * tile), camera.worldToScreenY((cb.y + 0.5) * tile));
+      ctx.stroke();
+    }
+    ctx.save();
+    ctx.lineCap = "round";
+    // 1) 同盟（緑）と従属（金）。2) 戦争（赤・太）を上に重ねて目立たせる。
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id], ca = cap(k); if (!ca) continue;
+      if (k.allies) for (const b in k.allies) { if (+b <= id) continue; const cb = cap(ks[+b]); if (cb) line(ca, cb, "rgba(80,210,120,0.7)", 2, null); }
+      if (k.vassals) for (const v in k.vassals) { const cb = cap(ks[+v]); if (cb) line(ca, cb, "rgba(200,170,70,0.8)", 2, [6, 4]); }
+    }
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id], ca = cap(k); if (!ca) continue;
+      if (k.wars) for (const b in k.wars) { if (+b <= id) continue; const cb = cap(ks[+b]); if (cb) line(ca, cb, "rgba(232,70,60,0.85)", 3, null); }
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
   };
 
   // 生物を可視範囲だけ描画。負荷軽減のため2段階 LOD:
@@ -580,8 +615,16 @@
             ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * uu + ob - ws, uu, 6 * uu);
             ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? uu : -uu), sy - 4 * uu + ob - ws, uu, uu);
             break;
+          case 4: // 鍛冶/坑夫: 坑夫はつるはし、鍛冶は槌（採掘・鍛造中は振り下ろす）
+            if (person.mining) {
+              ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob - ws, uu, 7 * uu);       // 柄
+              ctx.fillStyle = "#9aa0a8";                                                          // つるはしの頭（両刃）
+              ctx.fillRect(hxp - uu, sy - 5 * uu + ob - ws, uu, uu);
+              ctx.fillRect(hxp + uu, sy - 6 * uu + ob - ws, uu, uu);
+              break;
+            }
+          /* falls through */
           case 2: // 建築家: 槌（普請中は槌を振る）
-          case 4: // 鍛冶: 槌（頭は鉄黒。鍛造中は振る）
             ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * uu + ob - ws, uu, 5 * uu);
             ctx.fillStyle = person.role === 4 ? "#55585f" : metal;
             ctx.fillRect(hxp - uu, sy - 4 * uu + ob - ws, 3 * uu, 2 * uu);
