@@ -1157,13 +1157,16 @@
   };
 
   // 半径内で predicate(other) を満たす同胞/敵を数える / 最寄りを返す。
-  CivSystem.prototype._scan = function (px, py, radius, want) {
+  // maxVisit を渡すと、その数の候補を調べた時点で打ち切る（過密で集まった時の O(n²) 的な
+  //   コスト爆発を防ぐ。社交など「近くに仲間がいるか・最寄りは誰か」が分かれば十分な用途向け）。
+  CivSystem.prototype._scan = function (px, py, radius, want, maxVisit) {
     const cs = CP.cellSize, gw = this._gw, gh = this._gh;
     const r = Math.ceil(radius / cs);
     const cx = (px / cs) | 0, cy = (py / cs) | 0;
     const r2 = radius * radius;
     const people = this.people, next = this._next, head = this._head;
-    let count = 0, count2 = 0, best = null, bestD = r2;
+    const cap = maxVisit || 0;
+    let count = 0, count2 = 0, best = null, bestD = r2, visited = 0;
     for (let gy = cy - r; gy <= cy + r; gy++) {
       if (gy < 0 || gy >= gh) continue;
       for (let gx = cx - r; gx <= cx + r; gx++) {
@@ -1178,6 +1181,7 @@
               const m = want(o, d);
               if (m === 1) count++;
               else if (m === 2) { count2++; if (d < bestD) { bestD = d; best = o; } }
+              if (cap && ++visited >= cap) return { count: count, count2: count2, best: best };
             }
           }
           i = next[i];
@@ -2801,10 +2805,11 @@
       this._logEvent("◆ " + h.name + "（" + k.name + "）が" + titleOf(h) + "として名を馳せた");
     }
 
-    // 近傍の同胞を数え、最寄りの一人を「会話相手」とする。
+    // 近傍の同胞を数え、最寄りの一人を「会話相手」とする。過密な群衆では候補数を打ち切り、
+    //   人が一斉に集まってもコストが膨れないようにする（社交には近くの数人が分かれば十分）。
     const scan = this._scan(h.x, h.y, CP.socialRadius, function (o) {
       return (o !== h && o.kid === h.kid) ? 2 : 0;
-    });
+    }, 40);
     const company = scan.count2;
     const other = scan.best;
     if (company > 0) h.social = 0; // 語らいで孤独が癒える
@@ -3418,22 +3423,30 @@
   // 都市の近くで建設可能な空きタイル（自国の陸地・建物が未設置）を探す。
   CivSystem.prototype._buildSpot = function (world, k, city) {
     const W = world.width, H = world.height, owner = world.owner;
-    for (let r = 1; r <= 4; r++) {
-      for (let tries = 0; tries < 6; tries++) {
-        const ang = this.rand() * Math.PI * 2;
-        const x = (city.x + Math.cos(ang) * r) | 0;
-        const y = (city.y + Math.sin(ang) * r) | 0;
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
-        const i = y * W + x;
-        if (owner[i] !== k.id || !tile.isLand(world.terrain[i])) continue;
-        let occupied = false;
-        for (let bi = 0; bi < city.buildings.length; bi++) {
-          if (city.buildings[bi].x === x && city.buildings[bi].y === y) { occupied = true; break; }
-        }
-        if (!occupied) return { x: x, y: y };
+    const bs = city.buildings;
+    // 街は広がる: 建物が増えるほど外周へ。半径は戸数に応じて拡大する（密集しすぎない）。
+    const maxR = Math.min(12, 2 + Math.ceil(Math.sqrt(bs.length + 1) * 1.6));
+    // 候補をいくつか撒き、「既存の建物から最も離れた」空き地を選ぶ＝均等に散らばる街並み。
+    let best = null, bestSpread = -1;
+    for (let tries = 0; tries < 14; tries++) {
+      const ang = this.rand() * Math.PI * 2;
+      const r = 1 + this.rand() * maxR;                  // 中心寄りも外周も拾う
+      const x = (city.x + Math.cos(ang) * r) | 0;
+      const y = (city.y + Math.sin(ang) * r) | 0;
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      const i = y * W + x;
+      if (owner[i] !== k.id || !tile.isLand(world.terrain[i])) continue;
+      // 最寄りの既存建物までの距離（大きいほど空いている＝散らばる）。占有マスは除外。
+      let nearest = 1e9, occupied = false;
+      for (let bi = 0; bi < bs.length; bi++) {
+        const dx = bs[bi].x - x, dy = bs[bi].y - y, d = dx * dx + dy * dy;
+        if (d === 0) { occupied = true; break; }
+        if (d < nearest) nearest = d;
       }
+      if (occupied) continue;
+      if (nearest > bestSpread) { bestSpread = nearest; best = { x: x, y: y }; }
     }
-    return null;
+    return best;
   };
 
   // (cx,cy) を中心とした [minR,maxR] のリング内のランダムな点を目標にする。

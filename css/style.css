@@ -583,7 +583,16 @@ html, body {
 /* ===== レスポンシブ ===== */
 @media (max-width: 680px) {
   .brand-name { display: none; }
-  .topbar { height: 44px; padding: 0 10px; }
+  /* 上部バーが画面からはみ出さないよう各操作を詰める（時計・地図選択・設定が見切れない）。 */
+  .topbar { height: 44px; padding: 0 8px; gap: 6px; }
+  .sim-cluster { gap: 3px; padding: 3px; }
+  .sim-pause { width: 28px; height: 26px; font-size: 13px; }
+  .speed-control { gap: 2px; }
+  .speed-btn { min-width: 26px; padding: 4px 5px; font-size: 10.5px; }
+  .topbar-right { gap: 5px; }
+  .topbar-clock { font-size: 10.5px; padding: 4px 8px; }
+  .topbar-select { padding: 4px 6px; font-size: 10.5px; max-width: 78px; }
+  .topbar-btn { width: 28px; height: 28px; font-size: 13px; }
 
   .toolbar-toggle { display: grid; place-items: center; }
 
@@ -614,6 +623,17 @@ html, body {
 
 @media (max-height: 460px) and (max-width: 900px) {
   .hint, .minimap { display: none; }
+}
+
+/* 極小幅: さらに詰めて上部バーの見切れを防ぐ（ブランド章を隠し、操作を最小化）。 */
+@media (max-width: 430px) {
+  .brand { display: none; }
+  .topbar { gap: 4px; padding: 0 6px; }
+  .sim-pause { width: 26px; height: 24px; }
+  .speed-btn { min-width: 22px; padding: 4px 4px; font-size: 10px; }
+  .topbar-clock { font-size: 10px; padding: 3px 6px; }
+  .topbar-select { max-width: 64px; font-size: 10px; padding: 4px 5px; }
+  .topbar-btn { width: 26px; height: 26px; font-size: 12px; }
 }
 
 /* 設定パネルのデータ操作（保存・読込・画像） */

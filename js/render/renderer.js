@@ -438,6 +438,10 @@
     const detailed = scale >= 5; // 近景は人型、遠景は簡易点
     const u = Math.max(1, Math.round(scale * 0.085)); // ドット単位（人物は世界に対し小さめ）
     const t = this._t;
+    // 夜は休む人々が建物に入る（＝描かれない）。日暮れに人が家へ入り、街に灯がともる様子を
+    //   見せる手がかり。動いている者（旅人・移住・出兵）と航海者・野は引き続き描く。
+    const townNight = (Game.config.settings && Game.config.settings.dayNight !== false) &&
+      Game.state.civ && Game.state.civ._night;
 
     for (let p = 0; p < people.length; p++) {
       const person = people[p];
@@ -448,6 +452,8 @@
       if (person.x < range.x0 || person.x > range.x1 || person.y < range.y0 || person.y > range.y1) continue;
       const moving = (person._mv || 0) > 0;
       if (moving) person._mv--;
+      // 夜、屋内で休む町人は描かない（建物に入っている＝灯る街で表現）。
+      if (townNight && !moving && person.kid && !person.sailing) continue;
       const k = person.kid ? civ.kingdoms[person.kid] : null;
       const sx = Math.round(camera.worldToScreenX((person.x + 0.5) * tile));
       const sy = Math.round(camera.worldToScreenY((person.y + 0.5) * tile));
@@ -789,33 +795,34 @@
 
   // 街道: 各国の首都と都市を結ぶ線。
   Renderer.prototype.drawRoads = function (camera) {
-    const civ = Game.state.civ;
-    if (!civ || !civ.kingdoms) return;
+    const world = this.world;
+    const list = world && world.roadList;
+    if (!list || !list.length) return;
     const tile = Game.config.tilePx;
     const scale = tile * camera.zoom;
     if (scale < 1.4) return;
+    // 実際に敷かれた街道タイル（陸地を辿り水を避ける）を描く。直線で水面を突っ切らない。
     const ctx = this.ctx;
-    const kingdoms = civ.kingdoms;
+    const W = world.width;
+    const range = camera.visibleTileRange();
+    const x0 = range.x0, x1 = range.x1, y0 = range.y0, y1 = range.y1;
+    const seg = Math.ceil(scale) + 1;          // 隣接タイルが繋がって途切れない幅
+    const edge = "rgba(58,44,28,0.55)";        // 路肩（暗い縁）
+    const surf = "rgba(196,172,122,0.85)";     // 路面（明るい土）
+    const inset = Math.max(1, scale * 0.18);
     ctx.save();
-    ctx.lineCap = "round";
-    const wBase = Math.max(1.5, scale * 0.22);
-    // 2層描き（暗い縁＋明るい路面）で「道」らしく。
+    // 2層: まず暗い縁、次に明るい路面。タイルごとに四角を置き、隣接で連続した道に見せる。
     for (let pass = 0; pass < 2; pass++) {
-      ctx.strokeStyle = pass === 0 ? "rgba(60,46,30,0.6)" : "rgba(190,168,120,0.7)";
-      ctx.lineWidth = pass === 0 ? wBase : wBase * 0.55;
-      for (let id = 1; id < kingdoms.length; id++) {
-        const k = kingdoms[id];
-        if (!k || !k.alive || !k.cities || k.cities.length < 2) continue;
-        const cap = k.cities[0];
-        const cx = camera.worldToScreenX((cap.x + 0.5) * tile);
-        const cy = camera.worldToScreenY((cap.y + 0.5) * tile);
-        for (let c = 1; c < k.cities.length; c++) {
-          const city = k.cities[c];
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(camera.worldToScreenX((city.x + 0.5) * tile), camera.worldToScreenY((city.y + 0.5) * tile));
-          ctx.stroke();
-        }
+      ctx.fillStyle = pass === 0 ? edge : surf;
+      const pad = pass === 0 ? 0 : inset;
+      const sz = pass === 0 ? seg : Math.max(1, seg - inset * 2);
+      for (let n = 0; n < list.length; n++) {
+        const i = list[n];
+        const tx = i % W, ty = (i / W) | 0;
+        if (tx < x0 - 1 || tx > x1 + 1 || ty < y0 - 1 || ty > y1 + 1) continue;
+        const sx = camera.worldToScreenX(tx * tile);
+        const sy = camera.worldToScreenY(ty * tile);
+        ctx.fillRect((sx + pad) | 0, (sy + pad) | 0, sz | 0, sz | 0);
       }
     }
     ctx.restore();

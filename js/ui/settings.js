@@ -9,6 +9,7 @@
     ["weather", "天候", "雲・雨・雷"],
     ["labels", "国名ラベル", "地図上の国名表示"],
     ["resources", "資源アイコン", "鉱石・漁場・宝石の表示"],
+    ["autoSeed", "最初から生きた世界", "新しい世界に文明と野生を芽吹かせる（オフなら空の世界から始まる）"],
   ];
 
   const Settings = { panel: null, btn: null, open: false };

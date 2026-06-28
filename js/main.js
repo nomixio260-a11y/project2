@@ -126,6 +126,8 @@
     //   これにより読み込んだ瞬間から世界が動き出し、放っておいても勝手に栄枯盛衰が進む。
     //   規模は地図の広さに応じて加減する。ユーザーは神の手ツールでさらに足せる。
     function seedLife() {
+      // 「最初から生きた世界」は選択制。オフなら空の世界から始める。
+      if (Game.config.settings && Game.config.settings.autoSeed === false) return;
       const w = Game.state.world, civ = Game.state.civ, ent = Game.state.entities;
       if (!w || !civ || !ent) return;
       const W = w.width, H = w.height, area = W * H;
