@@ -299,6 +299,10 @@
     // 田畑（農場の周りに耕地を描く）。建物の下に敷く。
     this.drawFields(camera);
 
+    // 樹木（森・密林に木のドット絵を立てる）と伐採アニメ。建物・人の下に描く。
+    this.drawTrees(camera);
+    this.drawFellings(camera);
+
     // 交易路（同盟国の首都を結ぶ金色の線）。
     this.drawTradeRoutes(camera);
 
@@ -514,6 +518,13 @@
       const ph = moving ? t * 6 + p * 0.7 : 0;
       const sw = moving ? Math.round(Math.sin(ph) * uu) : 0; // -uu..uu
       const ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * uu * 0.5) : 0; // 上下動
+      // 仕事の動作: 建築(6)・耕作(7)・専門職(12)、または交戦中の兵は道具/武器を振る。
+      //   瞬時に終わらず、振りかぶって打ち下ろす動きで「働いている」ことが見える。
+      const st = person.state;
+      const working = (st === 6 || st === 7 || st === 12);
+      const swinging = working || (person.role === 3 && person._enemy);
+      // 0..1 の打ち下ろし量（上に振り上げ、下に打つ）。
+      const ws = swinging ? Math.round((Math.sin(t * 7 + p * 1.3) * 0.5 + 0.5) * uu * 2.2) : 0;
       // 影。
       ctx.fillStyle = "rgba(0,0,0,0.30)";
       ctx.fillRect(sx - 2 * uu, sy + 3 * uu, 4 * uu, uu);
@@ -560,20 +571,20 @@
         const wood = "#6b4a2a";
         const hxp = fd > 0 ? sx + 2 * uu : sx - 3 * uu; // 手の位置
         switch (person.role) {
-          case 3: // 兵士: 槍（鋼が進むと剣に鍔がつく）
-            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob, uu, 7 * uu);
-            ctx.fillStyle = metal; ctx.fillRect(hxp, sy - 6 * uu + ob, uu, 2 * uu);
-            if (g >= 3) { ctx.fillStyle = metal; ctx.fillRect(hxp - uu, sy - 5 * uu + ob, 3 * uu, uu); }
+          case 3: // 兵士: 槍（鋼が進むと剣に鍔がつく）。交戦中は突き出す/振り下ろす。
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob - ws, uu, 7 * uu);
+            ctx.fillStyle = metal; ctx.fillRect(hxp, sy - 6 * uu + ob - ws, uu, 2 * uu);
+            if (g >= 3) { ctx.fillStyle = metal; ctx.fillRect(hxp - uu, sy - 5 * uu + ob - ws, 3 * uu, uu); }
             break;
-          case 1: // 農民: 鍬
-            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * uu + ob, uu, 6 * uu);
-            ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? uu : -uu), sy - 4 * uu + ob, uu, uu);
+          case 1: // 農民: 鍬（耕作中は振り上げて打ち下ろす）。
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 4 * uu + ob - ws, uu, 6 * uu);
+            ctx.fillStyle = metal; ctx.fillRect(hxp + (fd > 0 ? uu : -uu), sy - 4 * uu + ob - ws, uu, uu);
             break;
-          case 2: // 建築家: 槌
-          case 4: // 鍛冶: 槌（頭は鉄黒）
-            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * uu + ob, uu, 5 * uu);
+          case 2: // 建築家: 槌（普請中は槌を振る）
+          case 4: // 鍛冶: 槌（頭は鉄黒。鍛造中は振る）
+            ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 3 * uu + ob - ws, uu, 5 * uu);
             ctx.fillStyle = person.role === 4 ? "#55585f" : metal;
-            ctx.fillRect(hxp - uu, sy - 4 * uu + ob, 3 * uu, 2 * uu);
+            ctx.fillRect(hxp - uu, sy - 4 * uu + ob - ws, 3 * uu, 2 * uu);
             break;
           case 6: // 神官: 杖（先端が金色）
             ctx.fillStyle = wood; ctx.fillRect(hxp, sy - 5 * uu + ob, uu, 7 * uu);
@@ -902,18 +913,87 @@
               const sx = camera.worldToScreenX(fx * tile) | 0;
               const sy = camera.worldToScreenY(fy * tile) | 0;
               const sz = Math.ceil(scale);
-              // 土の下地。
-              ctx.fillStyle = "rgba(106,78,46,0.82)";
+              // 土の下地（耕した畝）。
+              ctx.fillStyle = "rgba(102,74,44,0.85)";
               ctx.fillRect(sx, sy, sz, sz);
-              // 畝: 作物の緑の横縞（1本おき）。
-              ctx.fillStyle = "rgba(126,168,72,0.85)";
-              for (let r = 0; r < sz; r += px * 2) ctx.fillRect(sx, sy + r, sz, px);
+              // 作物の育ち: 肥沃なほど青々と高く実る。畝(うね)ごとに茎＋穂先を描く。
+              const fz = world.fertility ? world.fertility[fi] : 0.6;
+              const ripe = 0.55 + 0.45 * Math.min(1, fz);          // 実りの濃さ
+              const stem = "rgba(" + (96 + 30 * (1 - ripe)) + "," + (150 + 40 * ripe) + ",70,0.9)";
+              const tip = fz > 0.7 ? "rgba(224,200,96,0.95)" : "rgba(150,196,96,0.95)"; // 熟すと黄金の穂
+              const step = Math.max(2, px * 2);
+              for (let r = px; r < sz - px; r += step) {
+                ctx.fillStyle = stem; ctx.fillRect(sx, sy + r, sz, px);          // 茎の列
+                ctx.fillStyle = tip; ctx.fillRect(sx, sy + r - px, sz, Math.max(1, px * 0.5)); // 穂先
+              }
             }
           }
         }
       }
     }
     ctx.restore();
+  };
+
+  // 樹木: 森・密林のタイルに木のドット絵を立てて、平らな緑から「木立」へ。風で梢が揺れる。
+  //   近景のみ・可視範囲のみ・本数に上限を設けて負荷を抑える。設定でオフにもできる。
+  Renderer.prototype.drawTrees = function (camera) {
+    if (Game.config.settings && Game.config.settings.trees === false) return;
+    const world = this.world;
+    const tile = Game.config.tilePx, scale = tile * camera.zoom;
+    if (scale < 5) return;
+    const ctx = this.ctx, W = world.width, terr = world.terrain, T = Game.TERRAIN;
+    const range = camera.visibleTileRange();
+    const u = Math.max(1, scale * 0.13);
+    const sway = Math.sin(this._t * 1.6) * scale * 0.04; // そよ風
+    let drawn = 0; const CAP = 3600;
+    for (let ty = range.y0; ty <= range.y1 && drawn < CAP; ty++) {
+      for (let tx = range.x0; tx <= range.x1; tx++) {
+        const i = ty * W + tx, tt = terr[i];
+        if (tt !== T.FOREST && tt !== T.JUNGLE) continue;
+        const hsh = (i * 2654435761) >>> 0;
+        const jx = ((hsh % 256) / 256 - 0.5) * scale * 0.45;
+        const jy = (((hsh >> 8) % 256) / 256 - 0.5) * scale * 0.35;
+        const cx = camera.worldToScreenX((tx + 0.5) * tile) + jx;
+        const cy = camera.worldToScreenY((ty + 0.92) * tile) + jy;
+        const jungle = tt === T.JUNGLE;
+        const sz = u * (jungle ? 1.5 : 1.2) * (0.82 + ((hsh >> 16) % 100) / 100 * 0.4);
+        ctx.fillStyle = "rgba(0,0,0,0.16)"; ctx.fillRect((cx - sz * 0.6) | 0, cy | 0, (sz * 1.2) | 0, Math.max(1, sz * 0.3) | 0); // 影
+        ctx.fillStyle = "#5a3f24"; ctx.fillRect((cx - sz * 0.16) | 0, (cy - sz * 1.05) | 0, Math.max(1, sz * 0.34) | 0, (sz * 1.05) | 0); // 幹
+        const topx = cx + sway * (jungle ? 1.2 : 1);
+        ctx.fillStyle = jungle ? "#2f6b34" : "#3f7e3c"; // 梢（風で揺れる）
+        ctx.fillRect((topx - sz * 0.9) | 0, (cy - sz * 2.0) | 0, (sz * 1.8) | 0, (sz * 1.1) | 0);
+        ctx.fillRect((topx - sz * 0.6) | 0, (cy - sz * 2.5) | 0, (sz * 1.2) | 0, (sz * 0.7) | 0);
+        ctx.fillStyle = jungle ? "#3f8746" : "#56a04e"; // 陽の当たる面
+        ctx.fillRect((topx - sz * 0.5) | 0, (cy - sz * 2.35) | 0, (sz * 0.75) | 0, (sz * 0.55) | 0);
+        if (++drawn >= CAP) break;
+      }
+    }
+  };
+
+  // 伐採の動き: 切られた木が瞬時に消えるのではなく、傾いて倒れていく（civ が伐採点を伝える）。
+  Renderer.prototype.drawFellings = function (camera) {
+    const fl = Game.state.fellings;
+    if (!fl || !fl.length) return;
+    const tile = Game.config.tilePx, scale = tile * camera.zoom;
+    const ctx = this.ctx, range = camera.visibleTileRange();
+    const DUR = 48;
+    for (let n = fl.length - 1; n >= 0; n--) {
+      const f = fl[n];
+      f.age++;
+      if (f.age > DUR) { fl.splice(n, 1); continue; }
+      if (scale < 4) continue;
+      if (f.x < range.x0 - 1 || f.x > range.x1 + 1 || f.y < range.y0 - 1 || f.y > range.y1 + 1) continue;
+      const cx = camera.worldToScreenX((f.x + 0.5) * tile), cy = camera.worldToScreenY((f.y + 0.92) * tile);
+      const prog = f.age / DUR, sz = Math.max(2, scale * 0.16);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(prog * 1.45);                 // だんだん倒れる
+      ctx.globalAlpha = 1 - prog * 0.55;
+      ctx.fillStyle = "#5a3f24"; ctx.fillRect(-sz * 0.16, -sz * 1.05, sz * 0.34, sz * 1.05); // 幹
+      ctx.fillStyle = "#3f7e3c"; ctx.fillRect(-sz * 0.9, -sz * 2.0, sz * 1.8, sz * 1.1);      // 梢
+      ctx.restore();
+      if (prog > 0.6) { ctx.fillStyle = "rgba(116,84,48,0.7)"; ctx.fillRect((cx - sz * 0.25) | 0, (cy - sz * 0.25) | 0, (sz * 0.5) | 0, (sz * 0.35) | 0); } // 切り株
+    }
   };
 
   // 交易路: 実際に交易のある国どうしの首都を金色の点線で結ぶ（太さは交易量に比例）。
