@@ -234,6 +234,9 @@
     rallyBonus: 0.45,    // 将の近くで戦う兵の打撃・士気の上昇
     siegeRise: 0.05,     // 敵兵が都市に迫ると攻囲度が上がる速さ
     siegeDecay: 0.9,     // 攻囲が解けると下がる係数／評価
+    siegeWreck: 0.05,    // 攻囲の進んだ都市で建物が崩れて瓦礫になる確率／ティック
+    sackFrac: 0.35,      // 攻略された都市が劫掠され瓦礫になる建物の割合
+    warTrample: 0.6,     // 戦火に奪われたタイルの肥沃度に残る係数（踏み荒らし）
     // 戦争の重み: 維持費と厭戦（長期戦は国庫と人心を蝕む）
     warUpkeep: 0.12,     // 軍事力1あたりの戦時維持費／評価（×交戦数）
     warWearyRise: 0.05,  // 交戦中に厭戦が積もる速さ／評価（×交戦数）
@@ -640,14 +643,16 @@
   };
 
   // 戦場の痕跡を残す（戦死地点。描画でしばらく赤黒く残り薄れていく）。
-  CivSystem.prototype._addMark = function (x, y) {
+  // 戦いが「生み出す」もの: 戦死者の亡骸(corpse)・破壊された建物の瓦礫(rubble)。一過性の
+  //   演出ではなく、実際の戦闘・破壊の結果として地に残り、長い時間をかけて土に還る。
+  CivSystem.prototype._addMark = function (x, y, type, ttl) {
     const m = this.marks;
-    m.push({ x: x, y: y, ttl: 360, life: 360 });
-    if (m.length > 240) m.shift();
+    const life = ttl || (type === "rubble" ? 2600 : 1400);
+    m.push({ x: x, y: y, ttl: life, life: life, type: type || "corpse" });
+    if (m.length > 600) m.shift();
   };
 
-  // 戦闘演出: 一過性の効果（白刃の火花 clash・矢 arrow・流血 blood）を描画側へ渡す。
-  //   描画側が age を進め寿命で消す。本数に上限を設けて負荷を抑える。
+  // 飛翔体（矢・銃弾）: 実際の遠戦で放たれた弾の飛跡を短時間だけ描く（射撃という行為そのもの）。
   CivSystem.prototype._fx = function (type, x, y, x2, y2) {
     const fx = Game.state.battleFx || (Game.state.battleFx = []);
     if (fx.length > 200) return;
@@ -3910,15 +3915,15 @@
           e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) *
             (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF * rally;
           practice(h); // 実戦で武を磨く
-          if (this.rand() < 0.4) this._fx("clash", (h.x + e.x) * 0.5, (h.y + e.y) * 0.5); // 白刃の火花
-          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); this._fx("blood", e.x, e.y); h.prestige = (h.prestige || 0) + 1.2; k._kills = (k._kills || 0) + 1; }
+          // 戦死: 倒れた兵は亡骸として戦場に残る（演出ではなく実際の死の跡）。
+          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y, "corpse"); h.prestige = (h.prestige || 0) + 1.2; k._kills = (k._kills || 0) + 1; }
         } else if (d2 < CP.rangeR * CP.rangeR) {
-          // 遠戦: 弓（基本）と銃（火薬以降）で射かける。命中すれば小ダメージ＋矢/銃弾の演出。
+          // 遠戦: 弓（基本）と銃（火薬以降）で射かける。放たれた弾が飛び、命中すれば損害。
           const gun = hasTech(k, "gunpowder");
           if (this.rand() < (gun ? CP.gunChance : CP.bowChance)) {
             e.food -= CP.attack * (gun ? CP.gunDmg : CP.bowDmg) * (0.6 + edge) * (0.6 + 0.4 * ability(h, "brave")) * rally;
-            this._fx(gun ? "shot" : "arrow", h.x, h.y, e.x, e.y);
-            if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y); this._fx("blood", e.x, e.y); h.prestige = (h.prestige || 0) + 1; k._kills = (k._kills || 0) + 1; }
+            this._fx(gun ? "shot" : "arrow", h.x, h.y, e.x, e.y); // 実際に放たれた弾の飛跡
+            if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y, "corpse"); h.prestige = (h.prestige || 0) + 1; k._kills = (k._kills || 0) + 1; }
           }
         }
       } else {
@@ -3943,7 +3948,15 @@
             const ddx = cc.x - tx, ddy = cc.y - ty, dd = ddx * ddx + ddy * ddy;
             if (dd < sd) { sd = dd; siegeCity = cc; }
           }
-          if (siegeCity) siegeCity.siege = Math.min(1, (siegeCity.siege || 0) + CP.siegeRise);
+          if (siegeCity) {
+            siegeCity.siege = Math.min(1, (siegeCity.siege || 0) + CP.siegeRise);
+            // 攻囲が進んだ都市は、砲火と破壊で実際に建物が崩れ瓦礫となる（戦争が生む廃墟）。
+            if (siegeCity.siege > 0.5 && siegeCity.buildings && siegeCity.buildings.length > 1 && this.rand() < CP.siegeWreck) {
+              for (let bi = 0; bi < siegeCity.buildings.length; bi++) {
+                if (siegeCity.buildings[bi].t !== BUILDING.KEEP) { const rb = siegeCity.buildings[bi]; this._addMark(rb.x, rb.y, "rubble"); siegeCity.buildings.splice(bi, 1); break; }
+              }
+            }
+          }
           // 防備: 砦(KEEP)を備えた都市タイルは攻めにくいが、攻囲が進めば城壁の守りは薄れる。
           for (let c = 0; c < other.cities.length; c++) {
             const cc = other.cities[c];
@@ -3955,6 +3968,7 @@
           const chance = CP.conflictChance * 2 * (m1 / (m1 + m2)) * defMul;
           if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < chance) {
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
+            if (world.fertility) world.fertility[ti] *= CP.warTrample; // 戦火に踏み荒らされた地（植生が癒す）
             if (this.renderer) this.renderer.markTerritoryDirty(tx, ty);
             // 都市の攻略: 足下に敵都市があれば占領（自国の都市になる）。
             for (let c = 0; c < other.cities.length; c++) {
@@ -3964,6 +3978,16 @@
                 other.cities.splice(c, 1);
                 captured.capital = false;
                 k.cities.push(captured);
+                // 都市の劫掠: 攻略された都市は半ば破壊され、いくつもの建物が瓦礫と化す（戦争の傷跡）。
+                if (captured.buildings) {
+                  for (let bi = captured.buildings.length - 1; bi >= 0; bi--) {
+                    if (captured.buildings[bi].t !== BUILDING.KEEP && this.rand() < CP.sackFrac) {
+                      this._addMark(captured.buildings[bi].x, captured.buildings[bi].y, "rubble");
+                      captured.buildings.splice(bi, 1);
+                    }
+                  }
+                }
+                captured.siege = 0;
                 this._fuse(k, other); // 占領した都市の文明（技術・信仰）を取り込む（融合）
                 if (other.cities.length === 0) {
                   other.alive = false; // 最後の都市を失い国家崩壊
