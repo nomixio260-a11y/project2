@@ -216,6 +216,7 @@
           row("気質", persona(p) + (p.aspire != null && civ.aspireName ? "（志:" + esc(civ.aspireName(p.aspire)) + "）" : "")) +
           (p.memDanger ? row("警戒", "危険な土地を避けている") : "") +
           bar("練度", Math.round(Math.max(0, Math.min(1, p.skill || 0)) * 100), false) +
+          (p.mind !== undefined ? bar("叡智", Math.round(Math.max(0, Math.min(1, p.mind)) * 100), false) : "") +
           bar("機嫌", Math.round(Math.max(0, Math.min(1, p.mood == null ? 0.6 : p.mood)) * 100), false);
       }
       // 感情・視野（実装されていれば表示）。今その人を支配している感情を示す。

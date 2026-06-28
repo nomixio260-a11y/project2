@@ -128,6 +128,13 @@
     sightBase: 5.2,      // 視野の基準半径（知性・年齢・昼夜で変化する）
     // 高度な認知: 危険地の記憶（嫌悪学習）と人生の志（長期目標）。
     hungerSeek: 0.34,    // この食料を下回ると最寄りの食料地へ向かう（賢い者は早めに動く）
+    // 知識・叡智(mind): 思考の高度化。経験・学び・教え・文字で育ち、判断と発明を高める。
+    mindInherit: 0.5,    // 親の知識を子がどれだけ受け継ぐか（世代を超えた成長の土台）
+    mindGrow: 0.0009,    // 経験による知識の自然な伸び／think（賢い者・文字のある社会ほど速い）
+    mindTeach: 0.06,     // 会話で年長・賢者から学ぶ速さ（教育・師弟・口伝）
+    mindElderW: 1.8,     // 古老の教えの重み（長く生きた者は多くを伝える）
+    mindInventW: 0.9,    // 知識が発明力を高める強さ
+    mindWisdomW: 0.6,    // 知識が判断の質（思慮深さ）を高める強さ
     dangerTtl: 900,      // 危険な目に遭った場所を覚えている期間(ティック)
     dangerR: 6,          // 記憶した危険地を避ける半径
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
@@ -501,6 +508,11 @@
     h.sight = 5; // 視野（_think で毎回再計算される初期値）
     h.skill = 0.06 + rand() * 0.08; // 練度は低くから始まり、経験で伸びる
     h.mood = 0.6;                    // 機嫌（感情の集約。普通から始まる）
+    // 知識・叡智(mind): 生涯をかけて経験・学び・教えで深まる「思考の練度」。判断の質と発明力を
+    //   高め、会話で次代へ受け継がれる（文明の集合知が下から育つ）。親の知をいくらか受け継いで
+    //   始まるため、世代を重ねるほど賢く育ちうる（自ら進化・成長する精神）。
+    const pm = pa ? (((pa.mind || 0) + (pb ? (pb.mind || 0) : (pa.mind || 0))) * 0.5) : 0;
+    h.mind = pa ? Math.min(0.65, pm * CP.mindInherit + 0.02) : (0.02 + rand() * 0.04);
     return h;
   }
   // 仕事を続けて練度を上げる（賢い者ほど速く習熟する）。役割変更で skill は別途下がる。
@@ -2934,6 +2946,14 @@
       // 知識の伝播: 相手の方が熟練していれば技を学ぶ（賢い者ほど速い。言葉が通じるほど速い）。
       const gap = (other.skill || 0) - (h.skill || 0);
       if (gap > 0.02) { h.skill += gap * 0.05 * (h.wit || 1) * infl * mi; if (h.skill > 1) h.skill = 1; }
+      // 叡智の伝承: より賢い相手から学び、思考が深まる（師弟・口伝。古老の教えは特に重い）。
+      //   これにより知識は会話を通じて広まり、世代を超えて文明の集合知が育つ。
+      const mgap = (other.mind || 0) - (h.mind || 0);
+      if (mgap > 0.01) {
+        const elderW = other.age >= CP.elderAge ? CP.mindElderW : 1;
+        h.mind += mgap * CP.mindTeach * (0.6 + 0.4 * (h.wit || 1)) * infl * mi * elderW;
+        if (h.mind > 1) h.mind = 1;
+      }
       // 食料地の知らせを分かち合う（自分が知らず相手が知っていれば教わる。要・意思疎通）。
       if (!h.memFood && other.memFood && mi > 0.55) h.memFood = { x: other.memFood.x, y: other.memFood.y };
       // 文化の混交（相手の気質に少し近づく。名士の文化ほど・言葉が通じるほど伝播力が強い）。
@@ -3003,9 +3023,10 @@
   CivSystem.prototype._invent = function (h, k, company) {
     if (h.age < CP.adultAge) return;            // 創造は成熟した心から
     const creat = h.creat || 1;
-    // 個の創造力: 創造性が主、知と練度と心の余裕が支える。志が創造なら一段高ぶる。
+    // 個の創造力: 創造性が主、知と練度と心の余裕が支える。志が創造なら一段高ぶる。さらに
+    //   蓄えた知識(mind)が大きく押し上げる――深く考える者ほど新しいものを生み出す。
     const power = creat * (0.55 + 0.45 * (h.wit || 1)) * (0.3 + 0.7 * (h.skill || 0)) *
-      moodFactor(h.mood) * (h.aspire === 5 ? CP.aspireCreate : 1);
+      moodFactor(h.mood) * (h.aspire === 5 ? CP.aspireCreate : 1) * (1 + (h.mind || 0) * CP.mindInventW);
     // 環境: 人との交わり（着想の交換）・国の多様性・平穏・暮らしの余裕・文字が閃きを育む。
     const exchange = 1 + Math.min(0.6, (company || 0) * 0.12) + (k.diversity || 0) * 0.5;
     const ease = (h.food > 0.55 ? 1.15 : 0.8) * (this._count(k.wars) > 0 ? 0.7 : 1) * (k.famine ? 0.5 : 1);
@@ -3076,6 +3097,14 @@
       const down = up * 0.22; // 習い性はゆっくりしか抜けない（経験が永く残る）
       h.synSafe = learn(h.synSafe, (h.fear || 0) > 0.4 ? 1.3 : 1.0, up, down);
       h.synFood = learn(h.synFood, h.food < 0.3 ? 1.3 : 1.0, up, down);
+    }
+    // 知識・叡智の成長: 生きるほど経験で深まる。賢い者ほど速く、文字を持つ社会では書物で
+    //   加速し、老いては円熟する（生涯にわたり思考が高度化していく）。
+    if (h.mind !== undefined && h.mind < 1) {
+      const lit = 1 + (hasTech(k, "writing") ? 0.4 : 0) + (hasTech(k, "printing") ? 0.5 : 0);
+      const elder = h.age >= CP.elderAge ? 1.3 : 1;
+      h.mind += (1 - h.mind) * CP.mindGrow * (0.5 + 0.7 * wit) * lit * elder;
+      if (h.mind > 1) h.mind = 1;
     }
     // 近傍の土地を確保（足下は毎ティック）。
     this._claimNeighbors(h, k, world);
@@ -3206,7 +3235,7 @@
     }
     // 1.4) 空腹の知恵: 飢えが迫ったら最寄りの食べられる土地へ向かい飢えを凌ぐ（賢い者ほど
     //   早めに動いて餓死を避ける＝生存の知能）。家路・仕事より優先する切迫した欲求。
-    if (h.food < CP.hungerSeek * (0.75 + 0.45 * wit)) {
+    if (h.food < CP.hungerSeek * (0.75 + 0.45 * wit + 0.3 * (h.mind || 0))) {
       const ft = this._nearestTile(h, world, 6, function (terr) { return tile.isEdible(terr); });
       if (ft) { h.gx = ft.x; h.gy = ft.y; h.state = 1; return; }
     }
@@ -3317,7 +3346,7 @@
     // FARMER（既定）: 町の周りに自分の畑を持ち、出勤して耕し、たまに帰宅する（職住近接）。
     // 賢い農夫は数か所を見比べて最も肥沃な土地を選ぶ（知性→食料生産の質）。
     if (!h.farm) {
-      const samples = world.fertility ? (1 + Math.round(wit * 2)) : 1; // wit~1で約3か所
+      const samples = world.fertility ? (1 + Math.round(wit * 2 * (0.7 + CP.mindWisdomW * (h.mind || 0)))) : 1; // 賢く博識な農夫ほど多くの土地を見比べる
       let bx = 0, by = 0, bf = -1;
       for (let s = 0; s < samples; s++) {
         const ang = this.rand() * Math.PI * 2;
