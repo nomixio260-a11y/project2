@@ -196,6 +196,11 @@
     masterwork: 0.3,     // 工芸力1.0あたりの業物（一段上の傑作）を打つ確率
     craftToolW: 0.4,     // 鍛冶場1棟あたりの道具産出（工芸力で増減）
     craftLuxW: 0.6,      // 工芸力による奢侈品（金・宝石）の付加価値
+    // 生物群系の資源（地形ごとの恵み）
+    horseMil: 0.06,      // 馬1つあたりの軍事力上乗せ（騎兵。上限あり）
+    spiceWealth: 2.2,    // 香辛料1つの富（高値の奢侈。工芸で付加価値）
+    timberWealth: 0.8,   // 良材1つの富（建材・交易）
+    saltStore: 6,        // 塩1つあたりの食料備蓄上限の増加（保存）
     // 製錬の燃料（炭）: 領内の森林タイル数で表す。鉄・鋼ほど高い炉熱＝多くの燃料を要する。
     fuelIron: 6,         // 鉄器の製錬に要する燃料（森林）の最低量
     fuelSteel: 18,       // 鋼の製錬に要する燃料（さらに高い炉熱）
@@ -688,7 +693,7 @@
       famine: false, // 飢饉中か（繁殖停止・餓死）
       unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
       plague: 0,     // 疫病の残り評価回数（>0 で流行中）
-      res: { ore: 0, fish: 0, gems: 0, gold: 0 }, // 領有資源（_tallyResources が更新）
+      res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 }, // 領有資源（_tallyResources が更新）
       tradeVol: 0,    // 直近の交易量（活況の指標。毎評価で減衰し交易で増える）
       tradeIncome: 0, // 直近評価での交易による富の増分（表示用）
       foodTrade: 0,   // 直近の食料の純流入（+輸入 / -輸出）。飢饉の緩和を示す
@@ -948,8 +953,8 @@
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive) continue;
-      if (!k.res) k.res = { ore: 0, fish: 0, gems: 0, gold: 0 };
-      else { k.res.ore = 0; k.res.fish = 0; k.res.gems = 0; k.res.gold = 0; }
+      if (!k.res) k.res = { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
+      else { k.res.ore = 0; k.res.fish = 0; k.res.gems = 0; k.res.gold = 0; k.res.horses = 0; k.res.spice = 0; k.res.salt = 0; k.res.timber = 0; }
     }
     const list = world.resourceList;
     if (!list || !list.length) return;
@@ -971,6 +976,10 @@
       if (r.t === 1) k.res.ore++;
       else if (r.t === 2) k.res.fish++;
       else if (r.t === 4) k.res.gold++;
+      else if (r.t === 5) k.res.horses++;
+      else if (r.t === 6) k.res.spice++;
+      else if (r.t === 7) k.res.salt++;
+      else if (r.t === 8) k.res.timber++;
       else k.res.gems++;
     }
   };
@@ -1379,7 +1388,9 @@
     const armed = 1 + Math.min(1, (k.tools || 0) / soldiers) * 0.6; // 武装した兵ほど強い
     // 軍事技術（青銅器→鉄器→火薬）で戦力が段階的に増す。
     const techMul = 1 + (hasTech(k, "bronze") ? 0.15 : 0) + (hasTech(k, "iron") ? 0.2 : 0) + (hasTech(k, "gunpowder") ? 0.5 : 0);
-    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul;
+    // 騎兵: 馬を持つ国は機動力で軍事力が増す（上限つき）。
+    const cav = 1 + Math.min(0.5, (k.res ? (k.res.horses || 0) : 0) * CP.horseMil);
+    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -1625,20 +1636,24 @@
     { id: "sea", name: "海産", base: 0.9, w: 0.9 },     // 漁獲。需要=人口
     { id: "luxury", name: "奢侈品", base: 2.2, w: 0.9 }, // 宝石。需要=富・人口
     { id: "tools", name: "道具", base: 1.6, w: 1.1 },   // 道具・武具。需要=人口・鍛冶
+    { id: "horse", name: "軍馬", base: 1.8, w: 1.0 }, // 馬。需要=軍備・人口（騎兵）
+    { id: "spice", name: "香辛料", base: 2.6, w: 0.95 }, // 香辛料。需要=富・人口（高値の奢侈）
   ];
 
   // 文明の市場価格を求める（財ごとの供給と需要の比＝希少度。0.1〜8 にクランプ）。
   // 供給が少なく需要が多い財ほど高価になり、交易で輸入されやすくなる。
   CivSystem.prototype._marketPrices = function (k) {
-    const res = k.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
+    const res = k.res || { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
     const fac = k.facilities || {};
     const pop = Math.max(1, k.humanCount);
     const supply = {
-      grain: 0.2 + (k.food || 0) * 0.15 + (k.roleCount[ROLE.FARMER] || 0) * 0.5 + (fac.farm || 0) * 1.2,
+      grain: 0.2 + (k.food || 0) * 0.15 + (k.roleCount[ROLE.FARMER] || 0) * 0.5 + (fac.farm || 0) * 1.2 + (res.salt || 0) * 0.6, // 塩は食料の保存＝供給を底上げ
       metal: 0.3 + res.ore,
       sea: 0.3 + res.fish,
       luxury: 0.2 + res.gems + (res.gold || 0) * 0.7, // 宝石・金（奢侈品）
-      tools: 0.3 + (k.tools || 0),
+      tools: 0.3 + (k.tools || 0) + (res.timber || 0) * 0.4, // 良材は道具・建材の供給
+      horse: 0.2 + (res.horses || 0),
+      spice: 0.15 + (res.spice || 0),
     };
     const demand = {
       grain: pop * 0.5,
@@ -1646,6 +1661,8 @@
       sea: pop * 0.18,
       luxury: pop * 0.08 + (k.wealth || 0) * 0.002,
       tools: pop * 0.2 + (fac.barracks || 0),
+      horse: pop * 0.06 + (fac.barracks || 0) * 1.5 + this._count(k.wars) * 2, // 軍備・戦時に騎兵需要
+      spice: pop * 0.05 + (k.wealth || 0) * 0.0015, // 富裕層の奢侈需要
     };
     const p = {};
     for (let i = 0; i < GOODS.length; i++) {
@@ -1754,7 +1771,7 @@
   // seller→buyer の方向に食料を売る（buyer が不足し seller に余剰があるときのみ）。
   CivSystem.prototype._tradeFood = function (sa, ba, seller, buyer, route) {
     const sFac = seller.facilities || {};
-    const sMax = CP.foodStoreBase + (sFac.granary || 0) * CP.foodStoreGranary;
+    const sMax = CP.foodStoreBase + (sFac.granary || 0) * CP.foodStoreGranary + ((seller.res && seller.res.salt) || 0) * CP.saltStore;
     const surplus = seller.food - sMax * 0.35;       // 備蓄に余裕がある分だけ売る
     if (surplus <= 1) return;
     // 買い手の不足度（飢饉なら最大、平時でも乏しければ少し買う）。
@@ -1846,7 +1863,7 @@
       //   整合するよう、被害適用後に施設数を取り直す。
       if (this._fireNear) { this._fireDamageBuildings(ka, this.world); this._recountFacilities(ka); }
       const fac = ka.facilities;
-      const res = ka.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
+      const res = ka.res || { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
       ka.tradeVol *= 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0;
       ka.tradeIncome = 0; ka.foodTrade = 0; ka.partners = null;
@@ -1868,7 +1885,7 @@
       ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili;
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -1897,7 +1914,7 @@
       if (ka._fuelTile >= 0 && craftTier(ka) >= 3 && this.rand() < CP.charcoalChance * (0.5 + (ka.craft || 0))) {
         const fi = ka._fuelTile, Wd = this.world.width;
         this.world.terrain[fi] = Game.TERRAIN.GRASS;
-        if (this.renderer) this.renderer.markDirty(fi % Wd, (fi / Wd) | 0);
+        if (this.renderer && this.renderer.markDirty) this.renderer.markDirty(fi % Wd, (fi / Wd) | 0);
         ka._fuelTile = -1;
       }
       // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
@@ -1946,7 +1963,7 @@
         res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order;
       const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
-      const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary;
+      const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary + (res.salt || 0) * CP.saltStore; // 塩で保存（備蓄増）
       ka._famineDeaths = 0;
       if (ka.food < 0) {
         // 飢饉: 不足分に応じて餓死者が出る（後でまとめて適用）。社会も動揺。
@@ -2167,7 +2184,7 @@
       langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
       langY: clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05),
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
-      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0 }, alive: true,
+      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
     // 宗派分裂（独立に伴う異端の発生）: 独立国はしばしば母国の信仰から分かれ、

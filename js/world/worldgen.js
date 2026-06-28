@@ -75,7 +75,10 @@
       // 川を刻む（湿った高地→海への最急降下）。
       this.carveRivers(world, seed);
 
-      // 戦略資源を配置（地形に応じた鉱石・漁場・宝石）。
+      // オアシス: 砂漠に点在する水と緑の島（自然の地形）。
+      this.placeOasis(world, seed);
+
+      // 戦略資源を配置（地形に応じた鉱石・漁場・宝石ほか）。
       this.placeResources(world, seed);
     },
 
@@ -99,6 +102,19 @@
             if (v < 0.012) r = R.GEMS;        // 宝石（稀）
             else if (v < 0.026) r = R.GOLD;   // 金鉱石（稀。貨幣の素材）
             else if (v < 0.11) r = R.ORE;     // 鉱石
+          } else if (ter === T.GRASS || ter === T.SAVANNA) {
+            // 草原・サバンナ: 野生の馬（騎兵・交易）。サバンナには香辛料も稀に。
+            const v = rand();
+            if (v < 0.020) r = R.HORSES;
+            else if (ter === T.SAVANNA && v < 0.030) r = R.SPICE;
+          } else if (ter === T.FOREST || ter === T.JUNGLE) {
+            // 森・密林: 良材。密林には香辛料が多い。
+            const v = rand();
+            if (ter === T.JUNGLE && v < 0.040) r = R.SPICE;
+            else if (v < 0.055) r = R.TIMBER;
+          } else if (ter === T.DESERT) {
+            // 砂漠: 塩湖の名残（塩）。
+            if (rand() < 0.030) r = R.SALT;
           } else if (ter === T.SHALLOW_WATER) {
             // 陸に隣接する浅瀬＝沿岸の漁場。
             let coast = false;
@@ -112,6 +128,26 @@
         }
       }
       world.resourceList = list;
+    },
+
+    // オアシス: 砂漠の只中に水場と緑地を点在させる（自然の恵み。隊商や生物の生命線）。
+    placeOasis: function (world, seed) {
+      const W = world.width, H = world.height, T = Game.TERRAIN;
+      const rand = Game.utils.mulberry32((seed ^ 0x51ed270b) >>> 0);
+      for (let y = 2; y < H - 2; y++) {
+        for (let x = 2; x < W - 2; x++) {
+          const i = y * W + x;
+          if (world.terrain[i] !== T.DESERT) continue;
+          if (rand() < 0.0009) {
+            world.terrain[i] = T.SHALLOW_WATER; world.moisture[i] = 1; // 泉
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const ni = (y + dy) * W + (x + dx);
+              if (world.terrain[ni] === T.DESERT) { world.terrain[ni] = T.GRASS; world.moisture[ni] = 0.7; } // 緑地
+            }
+          }
+        }
+      }
     },
 
     // 湿った高地を水源に、最急降下で水まで川を引く。seed で再現可能。

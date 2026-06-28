@@ -245,7 +245,7 @@
     let info = null;
     if (civ.getNations) { const list = civ.getNations(); info = list.find(function (n) { return n.id === k.id; }); }
     const res = k.res || { ore: 0, fish: 0, gems: 0, gold: 0 };
-    const resStr = [res.ore ? "⛏" + res.ore : "", res.fish ? "🐟" + res.fish : "", res.gems ? "💎" + res.gems : "", res.gold ? "🪙" + res.gold : ""].filter(Boolean).join(" ") || "なし";
+    const resStr = [res.ore ? "⛏" + res.ore : "", res.fish ? "🐟" + res.fish : "", res.gems ? "💎" + res.gems : "", res.gold ? "🪙" + res.gold : "", res.horses ? "🐴" + res.horses : "", res.spice ? "🌶" + res.spice : "", res.salt ? "🧂" + res.salt : "", res.timber ? "🪵" + res.timber : ""].filter(Boolean).join(" ") || "なし";
     const hasCoin = !!(k.techBits && k.techBits.coin);
     const ci = civ.craftInfo ? civ.craftInfo(k) : null;
     const craftStr = ci ? (ci.name + "（工芸 " + (ci.level >= 0.6 ? "高" : ci.level >= 0.3 ? "中" : "低") +
