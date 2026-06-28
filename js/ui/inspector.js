@@ -262,7 +262,7 @@
       (k.langX != null && civ.langNameOf ? row("言語", esc(civ.langNameOf(k))) : "") +
       row("時代", (info ? info.era : "")) +
       row("信仰", esc(k.religion) + (k.faith != null ? "（" + (k.faith >= 0.6 ? "篤い" : k.faith >= 0.35 ? "普通" : "希薄") + "）" : "")) +
-      row("気質", esc(k.trait.name)) +
+      row("気質", esc(k.trait.name) + (k.ethos && k.ethos.name ? " ・ " + esc(k.ethos.name) : "")) +
       row("人口", String(k.humanCount) + " 人") +
       row("都市", String(k.cities.length) + " · 領土 " + k.tileCount) +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
