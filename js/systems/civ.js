@@ -135,6 +135,10 @@
     mindElderW: 1.8,     // 古老の教えの重み（長く生きた者は多くを伝える）
     mindInventW: 0.9,    // 知識が発明力を高める強さ
     mindWisdomW: 0.6,    // 知識が判断の質（思慮深さ）を高める強さ
+    // 遺伝（組換え・突然変異）: 子は片親へ寄りつつ僅かに混ざり、変異が個性と進化を生む。
+    mutAmt: 0.16,        // 微小な突然変異の幅
+    mutBig: 0.05,        // 大変異(突然変異体)が起きる確率／形質
+    mutBigAmt: 0.5,      // 大変異の跳び幅
     dangerTtl: 900,      // 危険な目に遭った場所を覚えている期間(ティック)
     dangerR: 6,          // 記憶した危険地を避ける半径
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
@@ -166,6 +170,11 @@
     //   結束）を国にもたらし、創造が文明を広く形づくる。維持されねば緩やかに薄れる。
     innovGain: 0.006,     // 平凡な閃きが分野水準を高める量（×創造力）
     innovBreak: 0.07,     // 画期的発明が分野水準を高める量
+    frontierDamp: 0.7,    // 分野が熟すほど平凡な閃きの伸びを抑える（収穫逓減）
+    frontierCompound: 0.8,// 蓄積ある分野ほど飛躍的発明が起きやすく大きい（複利）
+    academyInventW: 0.18, // 学院1棟あたりの創造（共同研究）寄与
+    academyInventCap: 0.7,// 学院による創造寄与の上限
+    collectiveMindW: 0.6, // 国の集合知（平均叡智）が創造を後押しする係数
     innovDecay: 0.997,    // 維持されぬ革新が1評価ごとに薄れる係数
     innovTechW: 0.45,     // 技術革新→研究速度
     innovCraftW: 0.30,    // 工芸革新→工芸力
@@ -466,11 +475,17 @@
     const n = cur + (target - cur) * rate;
     return n < 0.65 ? 0.65 : n > 1.35 ? 1.35 : n;
   }
-  // 親があれば中間値を、無ければランダムに継承する1形質。
+  // 1形質の遺伝（組換え＋突然変異）。常に両親の中間を取るのではなく、どちらかの親の対立
+  //   遺伝子へ寄りつつ僅かに混ざり、小さな変異と稀な大変異(sport)が加わる。これにより
+  //   兄弟でも個性が分かれ、血統が際立ち、淘汰への応答（自然・性淘汰）が速くなる。
   function heritTrait(rand, a, b) {
-    if (a != null && b != null) return inheritTrait(rand, (a + b) / 2);
-    if (a != null) return inheritTrait(rand, a);
-    return randTrait(rand);
+    if (a == null && b == null) return randTrait(rand);
+    if (a == null) a = b; else if (b == null) b = a;
+    const dom = rand() < 0.5 ? a : b;              // 優性側（どちらかの親に似る）
+    let v = dom * 0.72 + (a + b) * 0.5 * 0.28;     // 主に片親、いくらか両親の混合
+    v += (rand() - 0.5) * CP.mutAmt;               // 微小な突然変異
+    if (rand() < CP.mutBig) v += (rand() - 0.5) * CP.mutBigAmt; // 稀な大変異（突然変異体）
+    return clampTrait(v);
   }
   // 志（人生の長期目標）: 最も際立つ素質から定まる生き方。行動の持続的な偏りになる。
   //   0=立身(均衡・出世) 1=武功(勇) 2=探求(知) 3=蓄財(勤) 4=家族(社交)。
@@ -1311,6 +1326,7 @@
       if (h.repro > 0) h.repro--;
       // 民心・文化・民族の集計（社会→国家の因果＋地図の文化/人種ビュー用）。
       k._moodS = (k._moodS || 0) + h.mood; k._moodN = (k._moodN || 0) + 1;
+      k._mindS = (k._mindS || 0) + (h.mind || 0); // 国の集合知（賢人の蓄積が創造を加速）
       k._cultS = (k._cultS || 0) + (h.culture == null ? 0.5 : h.culture);
       k._lxS = (k._lxS || 0) + (h.lx == null ? 0.5 : h.lx); k._lyS = (k._lyS || 0) + (h.ly == null ? 0.5 : h.ly);
       if (h.race != null) (k._raceCnt || (k._raceCnt = [0, 0, 0, 0, 0]))[h.race]++;
@@ -1393,6 +1409,7 @@
       if (k._moodN) {
         const avg = k._moodS / k._moodN;
         k.moodAvg = avg;
+        k.mindAvg = k._mindS / k._moodN; // 国の集合知（創造の土壌）
         k.cultureAvg = k._cultS / k._moodN; // 国の平均的な文化（地図の文化ビュー用）
         k.langX = k._lxS / k._moodN; k.langY = k._lyS / k._moodN; // 国の言葉の重心（方言の収束を反映）
         k.unrest = (k.unrest || 0) + (0.55 - avg) * 0.05;
@@ -1422,7 +1439,7 @@
       // 将を確定（武名ある兵がいれば）。次ティックの戦闘で軍を鼓舞する（ループ中は安定）。
       k._genRef = (k._genReftmp && k._genReftmp.alive && (k._genPtmp || 0) >= FAME_THRESHOLD * 0.4) ? k._genReftmp : null;
       k._genPtmp = 0; k._genReftmp = null;
-      k._moodS = 0; k._moodN = 0; k._cultS = 0; k._lxS = 0; k._lyS = 0; k._fireLoss = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
+      k._moodS = 0; k._moodN = 0; k._mindS = 0; k._cultS = 0; k._lxS = 0; k._lyS = 0; k._fireLoss = 0; k._raceCnt = null; k._topP = 0; k._topRef = null;
     }
 
     // 出生を追加。
@@ -1583,7 +1600,9 @@
   };
 
   // 国の軍事力。兵士数を基礎に、技術・兵舎・武装度（道具/武具の備蓄）で底上げ。
+  //   同一ティック内で何度も呼ばれる（戦闘・外交）ため、ティック単位でキャッシュする（最適化）。
   CivSystem.prototype._military = function (k) {
+    if (k._milTick === this._tickN) return k._milCache;
     const soldiers = k.roleCount[ROLE.SOLDIER] + 1;
     const barracks = k.facilities ? k.facilities.barracks : 0;
     const armed = 1 + Math.min(1, (k.tools || 0) / soldiers) * 0.6; // 武装した兵ほど強い
@@ -1593,7 +1612,9 @@
     const cav = 1 + Math.min(0.5, (k.res ? (k.res.horses || 0) : 0) * CP.horseMil);
     // 軍事革新（兵器・戦術の工夫）で戦力が増す。
     const innovMil = 1 + ((k.innov && k.innov[4]) || 0) * CP.innovWarW;
-    return soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil;
+    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil;
+    k._milTick = this._tickN; k._milCache = mil;
+    return mil;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -3028,7 +3049,12 @@
     const power = creat * (0.55 + 0.45 * (h.wit || 1)) * (0.3 + 0.7 * (h.skill || 0)) *
       moodFactor(h.mood) * (h.aspire === 5 ? CP.aspireCreate : 1) * (1 + (h.mind || 0) * CP.mindInventW);
     // 環境: 人との交わり（着想の交換）・国の多様性・平穏・暮らしの余裕・文字が閃きを育む。
-    const exchange = 1 + Math.min(0.6, (company || 0) * 0.12) + (k.diversity || 0) * 0.5;
+    //   さらに学院は知を組織化し、国の集合知（賢人の蓄積）が共同研究の地力となる――
+    //   独りの閃きより、知が積もり交わる社会ほど新しいものを多く生む。
+    const academy = k.facilities ? k.facilities.academy : 0;
+    const exchange = 1 + Math.min(0.6, (company || 0) * 0.12) + (k.diversity || 0) * 0.5
+      + Math.min(CP.academyInventCap, academy * CP.academyInventW)
+      + (k.mindAvg || 0) * CP.collectiveMindW;
     const ease = (h.food > 0.55 ? 1.15 : 0.8) * (this._count(k.wars) > 0 ? 0.7 : 1) * (k.famine ? 0.5 : 1);
     const literacy = 1 + (hasTech(k, "writing") ? 0.3 : 0) + (hasTech(k, "printing") ? 0.4 : 0);
     const spark = CP.insightBase * power * exchange * ease * literacy;
@@ -3042,10 +3068,13 @@
     // 生まれた知は国の蓄積（技術）へ。さらに分野ごとの永続的な「強み」(革新)として根づく。
     k.insight = (k.insight || 0) + CP.insightTech * power;
     if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.02 * power;
-    innov[dom] = Math.min(1, innov[dom] + CP.innovGain * power);
-    // 画期的発明: 高い創造力ほど起きやすい。国の知と分野の強みを跳ね上げ、創造者は名を刻む。
-    if (this.rand() < CP.breakthroughChance * Math.min(2.5, power)) {
-      k.insight += CP.breakthroughTech * (0.6 + 0.4 * power);
+    // 知のフロンティア: ある分野が熟すほど平凡な閃きでは伸びにくくなる（収穫逓減）。
+    //   未開拓の分野は伸び代が大きく、成熟した分野は飛躍的発明を待つ。
+    innov[dom] = Math.min(1, innov[dom] + CP.innovGain * power * (1 - innov[dom] * CP.frontierDamp));
+    // 画期的発明: 高い創造力ほど起きやすい。蓄積ある分野ほど次の飛躍も起こりやすく（複利）、
+    //   国の知と分野の強みを跳ね上げ、創造者は名を刻む。
+    if (this.rand() < CP.breakthroughChance * Math.min(2.5, power) * (1 + innov[dom] * CP.frontierCompound)) {
+      k.insight += CP.breakthroughTech * (0.6 + 0.4 * power) * (1 + innov[dom] * CP.frontierCompound);
       if (dom === 1) k.craftLore = (k.craftLore || 0) + 0.06 * power;
       innov[dom] = Math.min(1, innov[dom] + CP.innovBreak * (0.6 + 0.4 * power));
       h.prestige += CP.breakthroughFame;
