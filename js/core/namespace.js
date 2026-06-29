@@ -15,6 +15,7 @@ window.Game = window.Game || {};
       resources: true, // 資源アイコン
       weather: true,   // 天候（雲・雨・雷）
       trees: true,     // 樹木の描画（森・密林に木を立てる。重ければオフに）
+      water: true,     // 水面のきらめき（海・湖が波打つ演出。重ければオフに）
       autoSeed: true,  // 新しい世界に最初から文明・野生を芽吹かせる（選択制）
     },
 
