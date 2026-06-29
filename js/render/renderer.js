@@ -290,6 +290,9 @@
     ctx.drawImage(this.borderCanvas, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
 
+    // 水面のきらめき（海・湖が穏やかに波打つ。静的な地形に生命を与える）。
+    this.drawWater(camera);
+
     // 戦略資源（鉱石・漁場・宝石）。
     this.drawResources(camera);
 
@@ -562,7 +565,7 @@
       // 歩行の振り（脚は前後、腕は逆位相）＋胴の小さなバウンド。
       const ph = moving ? t * 6 + p * 0.7 : 0;
       const sw = moving ? Math.round(Math.sin(ph) * uu) : 0; // -uu..uu
-      const ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * uu * 0.5) : 0; // 上下動
+      let ob = moving ? -Math.round(Math.abs(Math.sin(ph)) * uu * 0.5) : 0; // 上下動
       // 仕事の動作: 建築(6)・耕作(7)・専門職(12)、または交戦中の兵は道具/武器を振る。
       //   瞬時に終わらず、振りかぶって打ち下ろす動きで「働いている」ことが見える。
       const st = person.state;
@@ -570,9 +573,20 @@
       const swinging = working || (person.role === 3 && person._enemy);
       // 0..1 の打ち下ろし量（上に振り上げ、下に打つ）。
       const ws = swinging ? Math.round((Math.sin(t * 7 + p * 1.3) * 0.5 + 0.5) * uu * 2.2) : 0;
-      // 影。
+      // 状態ごとの動き（余暇・休息で姿が多彩に動く）。子は跳ね、踊り手は揺れ、祈る者は頭を垂れ、
+      //   野宿は寝息、立ち止まる者も微かに呼吸する＝世界が凍りつかず、何をしているか姿で分かる。
+      let hx = 0, emote = 0;
+      if (st === 20) { ob -= Math.round(Math.abs(Math.sin(t * 6 + p)) * uu * (moving ? 0.5 : 1.0)); if (!moving) emote = 3; } // 遊ぶ子: 跳ねる(+喜び)
+      else if (!moving && !swinging) {
+        if (st === 17) { hx = Math.round(Math.sin(t * 5 + p * 1.7) * uu * 0.8); emote = 1; }            // 祭り: 踊る ♪
+        else if (st === 18) { ob += Math.round((Math.sin(t * 1.1 + p) * 0.5 + 0.5) * uu * 0.9); }       // 礼拝: 頭を垂れる
+        else if (st === 13 && !person._sheltered) { emote = 2; ob += Math.round((Math.sin(t * 1.4 + p) * 0.5 + 0.5) * uu * 0.3); } // 野宿: 寝息 Zzz
+        else { ob += Math.round(Math.sin(t * 1.8 + p) * uu * 0.18); }                                    // 静止時の呼吸
+      }
+      // 影（地面に固定。踊りで胴は揺れても影は動かさない）。
       ctx.fillStyle = "rgba(0,0,0,0.30)";
       ctx.fillRect(sx - 2 * uu, sy + 3 * uu, 4 * uu, uu);
+      if (hx) sx += hx; // 踊り手は体を左右に揺らす（影の後に適用して足元は留める）
       // 脚（暗・交互に踏み出す）。
       ctx.fillStyle = "#3a2f1e";
       ctx.fillRect(sx - 2 * uu + sw, sy + uu, 2 * uu, 2 * uu);
@@ -657,6 +671,25 @@
             break;
         }
       }
+      // 感情・行動のしるし（頭上に小さく）: 祭り=♪音符 / 野宿=Zzz / 遊び=喜びの光。
+      if (emote && scale >= 6) {
+        const ey = sy - 6 * uu + ob, bob = Math.round(Math.sin(t * 3 + p) * uu * 0.4);
+        if (emote === 1) {            // ♪ 音符（祭り・団欒）
+          ctx.fillStyle = "#ffe27a";
+          ctx.fillRect((sx + 2 * uu) | 0, (ey - uu + bob) | 0, uu, 3 * uu);            // 棒
+          ctx.fillRect((sx + uu) | 0, (ey + 2 * uu + bob) | 0, 2 * uu, Math.max(1, uu * 1.2) | 0); // 玉
+        } else if (emote === 2) {     // Zzz（野宿の眠り）
+          ctx.fillStyle = "rgba(220,230,255,0.8)";
+          const zb = Math.round(Math.sin(t * 1.4 + p) * uu * 0.6);
+          ctx.fillRect((sx + uu) | 0, (ey + zb) | 0, Math.max(1, uu * 1.6) | 0, Math.max(1, uu * 0.6) | 0);
+          ctx.fillRect((sx + 2 * uu) | 0, (ey + uu + zb) | 0, Math.max(1, uu) | 0, Math.max(1, uu * 0.6) | 0);
+        } else if (emote === 3) {     // 喜びの光（遊ぶ子）
+          const tw = 0.5 + 0.5 * Math.sin(t * 6 + p);
+          ctx.fillStyle = "rgba(255,236,150," + tw.toFixed(2) + ")";
+          ctx.fillRect((sx - uu) | 0, (ey + bob) | 0, uu, uu);
+          ctx.fillRect((sx + uu) | 0, (ey - uu + bob) | 0, uu, uu);
+        }
+      }
     }
   };
 
@@ -685,6 +718,27 @@
       ctx.beginPath();
       ctx.arc(sx, sy, r, 0, Math.PI * 2);
       ctx.fill();
+      // 降雨: 水分の多い雲は雨脚を落とす（風に流れる斜めの雨筋が降りそそぐ）。
+      if (cl.water > 0.45 && scale >= 2.5) {
+        const rainA = Math.min(0.4, (cl.water - 0.45) * 1.0);
+        ctx.strokeStyle = "rgba(170,196,230," + rainA.toFixed(3) + ")";
+        ctx.lineWidth = Math.max(1, scale * 0.05);
+        const wind = (weather.wind || { x: 0, y: 0 });
+        const slant = (wind.x || 0) * scale * 2 + scale * 0.18;
+        const len = scale * 0.9;
+        const t = this._t;
+        ctx.beginPath();
+        for (let d = 0; d < 14; d++) {
+          const hx = ((d * 73) % 100) / 100 - 0.5;
+          const hz = ((d * 137) % 100) / 100;
+          const px = sx + hx * r * 1.4;
+          const fall = (t * 1.6 + hz) % 1;
+          const py = sy - r * 0.6 + fall * r * 1.6;
+          ctx.moveTo(px, py);
+          ctx.lineTo(px + slant * 0.3, py + len);
+        }
+        ctx.stroke();
+      }
       // 落雷フラッシュ。
       if (cl.flash) {
         ctx.fillStyle = "rgba(235,240,255," + (cl.flash / 10).toFixed(2) + ")";
@@ -995,6 +1049,39 @@
     ctx.restore();
   };
 
+  // 水面のきらめき: 可視範囲の水タイルに、位相をずらした淡い波筋を加算で重ねて揺らす。
+  //   穏やかに寄せては返す光で、静的な海・湖・川が生きて見える。近景のみ・上限つきで軽量。
+  Renderer.prototype.drawWater = function (camera) {
+    if (Game.config.settings && Game.config.settings.water === false) return;
+    const world = this.world;
+    const tile = Game.config.tilePx, scale = tile * camera.zoom;
+    if (scale < 4) return; // 近景のみ（負荷と見栄えの両立。引きの海はベタ塗りで十分）
+    const ctx = this.ctx, W = world.width, terr = world.terrain, isWater = Game.tile.isWater;
+    const range = camera.visibleTileRange();
+    const t = this._t;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    let drawn = 0; const CAP = 8000;
+    for (let ty = range.y0; ty <= range.y1 && drawn < CAP; ty++) {
+      const sy0 = camera.worldToScreenY(ty * tile);
+      for (let tx = range.x0; tx <= range.x1; tx++) {
+        if (!isWater(terr[ty * W + tx])) continue;
+        const sx = camera.worldToScreenX(tx * tile);
+        // タイルごとに位相をずらした2筋のさざ波（寄せては返す）。
+        const ph = t * 1.2 + tx * 0.6 + ty * 0.45;
+        const a = 0.04 + 0.06 * (Math.sin(ph) * 0.5 + 0.5);
+        const yo = (Math.sin(ph) * 0.5 + 0.5) * scale * 0.55;
+        ctx.fillStyle = "rgba(150,205,238," + a.toFixed(3) + ")";
+        ctx.fillRect(sx, sy0 + yo, scale, Math.max(1, scale * 0.1));
+        const yo2 = (Math.sin(ph + 2.1) * 0.5 + 0.5) * scale * 0.7;
+        ctx.fillStyle = "rgba(190,225,245," + (a * 0.7).toFixed(3) + ")";
+        ctx.fillRect(sx + scale * 0.3, sy0 + yo2, scale * 0.5, Math.max(1, scale * 0.08));
+        if (++drawn >= CAP) break;
+      }
+    }
+    ctx.restore();
+  };
+
   // 樹木: 森・密林のタイルに木のドット絵を立てて、平らな緑から「木立」へ。風で梢が揺れる。
   //   近景のみ・可視範囲のみ・本数に上限を設けて負荷を抑える。設定でオフにもできる。
   Renderer.prototype.drawTrees = function (camera) {
@@ -1164,6 +1251,7 @@
     const kingdoms = civ.kingdoms;
     const sprites = Game.sprites;
     const detailed = scale >= 3 && sprites; // 近景は建物、遠景は色点
+    const t = this._t; // 煙・旗のなびきなどのアニメ用
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
@@ -1219,6 +1307,20 @@
             ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
             ctx.fill();
             ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
+            // 竈の煙: 鍛冶場(6)・酒場(14)・住居(0..2)の炉から煙が立ちのぼり、街に営みの気配を添える。
+            //   損なわれた建物（cond低）は火が消え煙も細る。近景のみ・各棟2筋で軽量。
+            if (scale >= 5 && cond > 0.3 && (bd.t === 6 || bd.t === 14 || bd.t <= 2)) {
+              const strong = (bd.t === 6 || bd.t === 14); // 工房・酒場は濃い煙
+              const cx0 = bx + bw * (bd.t === 6 ? 0.18 : 0.1);
+              for (let s = 0; s < 2; s++) {
+                const ph = (t * (strong ? 0.5 : 0.34) + bi * 0.7 + s * 0.5) % 1;
+                const ry = by - bh - ph * bh * (strong ? 1.0 : 0.7);
+                const drift = Math.sin(t * 1.1 + bi + s * 2) * bw * 0.12;
+                const rr = Math.max(1, bw * (0.1 + ph * 0.16));
+                ctx.fillStyle = "rgba(150,148,150," + ((strong ? 0.32 : 0.2) * (1 - ph) * cond).toFixed(3) + ")";
+                ctx.fillRect((cx0 + drift - rr) | 0, (ry - rr) | 0, (rr * 2) | 0 || 1, (rr * 2) | 0 || 1);
+              }
+            }
             // 荒廃の表現: 傷んだ建物は黒ずみ、ひどく荒れると亀裂・崩れが見える（実際の損耗）。
             if (cond < 0.78) {
               const dim = Math.min(0.55, (0.78 - cond) * 0.9);
@@ -1234,10 +1336,12 @@
                 ctx.stroke();
               }
             } else if (lvl >= 3 && scale >= 5 && (bd.t === 4 || bd.t === 7 || bd.t === 11 || bd.t === 12)) {
-              // 最高段階の公共建築（神殿・市・記念碑・学院）には小さな旗を立て、街の発展を示す。
+              // 最高段階の公共建築（神殿・市・記念碑・学院）には風になびく小旗を立て、発展を示す。
               const fs = Math.max(1.5, scale * 0.22);
+              const wv = Math.round(Math.sin(t * 4 + bi) * fs * 0.4);
+              ctx.fillStyle = "#6b4a2a"; ctx.fillRect((bx - fs * 0.1) | 0, (by - bh - fs * 2) | 0, Math.max(1, fs * 0.3) | 0, (fs * 2) | 0); // 旗竿
               ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
-              ctx.fillRect((bx - fs * 0.5) | 0, (by - bh - fs) | 0, fs, fs);
+              ctx.fillRect((bx + fs * 0.2) | 0, (by - bh - fs * 2 + wv) | 0, fs, fs * 0.7);
             }
             // 鉱山(MINE=10): 採掘の現場を建物の手前に描く。わきにズリ山(残土)とトロッコ。
             if (bd.t === 10 && scale >= 5) {
@@ -1260,10 +1364,15 @@
           }
         }
         if (city.capital) {
-          // 国旗（砦の上）。
+          // 国旗（砦の上）: 風になびく。旗竿に翻る旗で首都が一目で分かる。
           const fs = Math.max(2, scale * 0.5);
+          const fy = sy - Math.max(10, scale * 1.6);
+          const wv = Math.round(Math.sin(t * 3.5 + id) * fs * 0.35);
+          ctx.fillStyle = "#3a2716"; ctx.fillRect((sx - fs * 0.5) | 0, (fy - fs * 0.6) | 0, Math.max(1, fs * 0.3) | 0, (fs * 2) | 0); // 旗竿
           ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
-          ctx.fillRect((sx - fs * 0.5) | 0, (sy - Math.max(10, scale * 1.6)) | 0, fs, fs);
+          ctx.fillRect((sx - fs * 0.2) | 0, (fy - fs * 0.6 + wv) | 0, fs, fs * 0.8);
+          ctx.fillStyle = "rgba(255,255,255,0.45)";
+          ctx.fillRect((sx - fs * 0.2) | 0, (fy - fs * 0.6 + wv) | 0, fs, Math.max(1, fs * 0.25) | 0);
         }
       }
     }
