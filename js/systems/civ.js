@@ -360,6 +360,14 @@
     plagueDuration: 7,     // 外交評価（diploInterval）何回ぶん続くか
     plagueMortality: 0.0006, // 流行中の1ティックあたり病没率
     plagueSpread: 0.25,    // 隣国へ広がる確率
+    // 自然死（前近代の死亡曲線）: 乳幼児期に高く、成人期は低く、老いて再び高まる。飢餓・老衰・
+    //   炎・疫病に加えて常に働く基礎死亡（事故・風土病・出産）。栄養・生命力・衛生(神殿)が
+    //   生死を分ける。これにより人口は上限に貼り付かず、出生と死亡の均衡として自然に揺らぐ。
+    mortInfant: 0.0010,    // 乳幼児期の基礎死亡率/ティック（誕生時が最も高く成人へ向け低下）
+    mortAdult: 0.00002,   // 成人期の基礎死亡率/ティック（事故・病）
+    mortElder: 0.0009,    // 老年期に加わる死亡率（老衰の漸増）
+    mortStarveMul: 4.0,   // 栄養不良(食料<0.35)で死亡率が上がる倍率
+    mortTempleSan: 0.05,  // 神殿1棟あたりの衛生改善（死亡率の低減・上限あり）
   };
 
   const RULER_NAMES = ["Alaric", "Brana", "Cedric", "Dara", "Eirik", "Freya", "Galen", "Hilda", "Ivar", "Juno", "Kael", "Lyra", "Magnus", "Nadia", "Osric", "Petra", "Rurik", "Sigrid", "Tarek", "Ulla", "Viktor", "Wrenn"];
@@ -1014,6 +1022,21 @@
     }
   };
 
+  // 年齢別の基礎死亡率（前近代の死亡曲線）: 乳幼児期に高く、成人期は低く、老いて再び高まる。
+  //   生命力(vigor)が高い者は生き延び（生命力への淘汰圧）、栄養不良で跳ね上がり、神殿の癒やし
+  //   が普及した社会ほど死ににくい。1ティックあたりの死亡確率を返す。
+  CivSystem.prototype._baseMortality = function (h, k) {
+    const vg = h.vigor || 1;
+    let m;
+    if (h.age < CP.adultAge) m = CP.mortInfant * (1 - 0.55 * (h.age / CP.adultAge));     // 乳幼児ほど高い
+    else if (h.age < CP.elderAge) m = CP.mortAdult;                                       // 成人期は低い
+    else m = CP.mortAdult + CP.mortElder * ((h.age - CP.elderAge) / (CP.maxAge - CP.elderAge)); // 老いて上昇
+    m /= vg;                                          // 頑健な者は生き延びる
+    if (h.food < 0.35) m *= CP.mortStarveMul;         // 栄養不良で死にやすい
+    const san = 1 - Math.min(0.45, (k && k.facilities ? k.facilities.temple : 0) * CP.mortTempleSan); // 衛生・医療
+    return m * san;
+  };
+
   // 建物の維持（評価ごと）: 平時の富んだ国は普請で都市を良好に保ち、戦時・飢饉・包囲は
   //   建物を傷める。荒れ果てた建物は倒壊して瓦礫となり、都市を動揺させる。これにより
   //   「繁栄＝整った街・衰退＝荒れた街」が街並みと国力に表れる（盛衰が見て取れる）。
@@ -1451,7 +1474,7 @@
       this._move(h, null, world);
       this._roleTick(h, k, world, ti);
 
-      // 死亡（餓死・老衰・疫病）。生命力(vigor)が高いほど長寿で病に強い（遺伝）。
+      // 死亡（餓死・老衰・疫病・基礎死亡）。生命力(vigor)が高いほど長寿で病に強い（遺伝＝淘汰）。
       const vg = h.vigor || 1;
       if (h.food <= 0 || h.age > CP.maxAge * vg) {
         h.alive = false;
@@ -1459,6 +1482,8 @@
         h.alive = false; // 焼死
       } else if (k.plague > 0 && this.rand() < CP.plagueMortality / vg) {
         h.alive = false; // 疫病で病没（生命力で抵抗）
+      } else if (this.rand() < this._baseMortality(h, k)) {
+        h.alive = false; // 基礎死亡（前近代の死亡曲線）
       }
     }
 
