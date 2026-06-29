@@ -248,6 +248,9 @@
     faithDiploFric: 0.35, // 異なる信仰の国とは隔たる（外交関係の摩擦）
     faithWarFervor: 0.6,  // 異教との開戦を後押しする信仰の熱（聖戦）
     schismChance: 0.5,    // 反乱・独立の際に宗派が分裂して異端が生まれる確率
+    // 帝国の過伸長（版図が広がりすぎた国は遠隔地の統制を失い分裂する＝帝国の興亡）
+    overstretchCities: 5, // この都市数を超えると過伸長で分裂しうる
+    overstretchBase: 0.0035, // 過伸長による分裂の基準確率（都市1つ超過ごと・評価ごと）
     // 外交
     diploInterval: 90,  // 外交を評価する間隔(ティック)
     warThreshold: -50,   // 関係がこれ以下で開戦しうる
@@ -2494,6 +2497,19 @@
       if (ka.unrest > 80 && ka.cities.length >= 2 &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < 0.18) {
         this._rebellion(ka);
+      }
+      // 帝国の過伸長: 版図が広く都市が多い国ほど、遠隔の地方は中央の統制から外れて独立しやすい
+      //   （統治の限界・地方分権・継承の綻び）。活力ある名君の国・文化的威信の高い国は結束を保ち、
+      //   不満が高い国はいっそう崩れやすい。これにより巨大帝国も永遠ではなく、興亡が繰り返される。
+      else if (ka.cities.length >= CP.overstretchCities &&
+          this.kingdoms.length - 1 < Game.config.sim.maxKingdoms) {
+        const cohesion = 0.5 + 0.5 * (ka.fortune == null ? 0.5 : ka.fortune) +
+          (ka.figure ? 0.15 : 0) + Math.min(0.2, (ka.renown || 0) * 0.02) - (ka.unrest || 0) / 300;
+        const p = CP.overstretchBase * (ka.cities.length - CP.overstretchCities + 1) / Math.max(0.4, cohesion);
+        if (this.rand() < p) {
+          this._rebellion(ka);
+          this._logEvent("🏴 " + ka.name + " の版図が広がりすぎ、辺境の地方が独立した");
+        }
       }
     }
 
