@@ -311,15 +311,19 @@
         if (tile.isEdible(world.terrain[i]) && (!owner || owner[i] === 0)) return { x: x, y: y }; }
       return null;
     }
-    // 草食の移入（絶滅寸前のときだけ。辺境に小さな群れが現れる）。
-    if (herb < cap * 0.015) {
+    // 生態系の均衡個体数は地形（可食地）で決まり、生物の格納上限(maxEntities)よりずっと小さい。
+    //   再導入のしきい値を maxEntities 基準にすると現実の個体数では永遠に発火しない（捕食者が
+    //   絶滅したまま戻らない）。実際の草食数に対する絶対的な目安で判定する。
+    // 草食の移入（少なくなったら辺境に小さな群れが現れる）。
+    if (herb < Math.min(cap * 0.015, 120)) {
       const sp = wildSpot();
-      if (sp) for (let k = 0; k < 10; k++) e.spawn(S.HERBIVORE, sp.x + 0.5 + (rand() - 0.5) * 3, sp.y + 0.5 + (rand() - 0.5) * 3, 0.6);
+      if (sp) for (let k = 0; k < 12; k++) e.spawn(S.HERBIVORE, sp.x + 0.5 + (rand() - 0.5) * 3, sp.y + 0.5 + (rand() - 0.5) * 3, 0.6);
     }
-    // 捕食者の再導入（獲物が十分いて捕食者が絶えているとき、稀に番が戻る）。
-    if (pred === 0 && herb > cap * 0.02 && rand() < 0.6) {
+    // 捕食者の再導入: 獲物が一定数いて捕食者がほぼ絶えていれば、辺境から番（つがい）が移り住む。
+    //   低密度では伴侶を見つけられず自然回復できないため、互いに近い小群で導入し再興を促す。
+    if (pred < 2 && herb >= 24 && rand() < 0.6) {
       const sp = wildSpot();
-      if (sp) for (let k = 0; k < 3; k++) e.spawn(S.PREDATOR, sp.x + 0.5 + (rand() - 0.5) * 2, sp.y + 0.5 + (rand() - 0.5) * 2, 0.85);
+      if (sp) for (let k = 0; k < 5; k++) e.spawn(S.PREDATOR, sp.x + 0.5 + (rand() - 0.5) * 2, sp.y + 0.5 + (rand() - 0.5) * 2, 0.9);
     }
   };
 
