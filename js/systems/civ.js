@@ -44,6 +44,19 @@
     return { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, mine: 0, academy: 0, harbor: 0, tavern: 0, wonder: 0 };
   }
 
+  // 建物を生成する。すべての建物は段階(lvl 1..)と状態(cond 0..1)を持つ。
+  //   lvl: 普請で育ち、機能（生産・防備など）が増す。  cond: 戦火・飢饉・包囲で傷み、
+  //   建築家と富で直る。荒れ果てれば倒壊して瓦礫になる。建物が「育ち・傷み・直る」。
+  function mkBuilding(x, y, t) { return { x: x, y: y, t: t, lvl: 1, cond: 1 }; }
+  // 建物の機能上の実効重み: 段階で増し、状態で減る。新築の1段(lvl1,cond1)はちょうど 1.0
+  //   ＝従来どおりの寄与（経済の基準を保つ）。育てば1を超え、荒れれば1を下回る。
+  //   lvl/cond 未設定の旧データ・テスト用建物は新築（1.0）として扱う。
+  function buildWeight(b) {
+    const lvl = b.lvl || 1;
+    const cond = b.cond == null ? 1 : b.cond;
+    return (1 + (lvl - 1) * CP.buildLvlBonus) * cond;
+  }
+
   // 時代に応じた住居の種別（石器=小屋 / 青銅・鉄=家 / 古典以降=邸宅）。
   function dwellingTier(tech) {
     const era = (tech / TECH_PER_ERA) | 0;
@@ -267,6 +280,17 @@
     steerEvery: 3,       // 操舵(経路再計算)の間隔。間は前回の速度で前進（移動は毎ティック滑らか）
     homeDefense: 0.5,    // 自国領で戦う守備兵が受ける被害の軽減
     fortDefense: 0.5,    // 砦(KEEP)のある都市タイルの攻略しにくさ（防備）
+    // 建物の成長・損耗・維持（建物が育ち、傷み、直る）
+    buildLvlMax: 3,        // 建物の最大段階（普請で育つ）
+    buildLvlBonus: 0.5,    // 1段ごとの機能（生産・防備など）の増分
+    buildUpgradeChance: 0.4, // 普請が新築でなく既存の格上げになる確率（成熟＝密度化）
+    buildRepair: 0.05,     // 1評価で状態(cond)が1へ近づく速さ（×維持の地力）
+    buildWarDecay: 0.03,   // 戦時に建物が傷む量／評価
+    buildFamineDecay: 0.02,// 飢饉に建物が傷む量／評価
+    buildSiegeDecay: 0.06, // 包囲下で建物が傷む量／評価（×攻囲度）
+    buildRuin: 0.12,       // この状態を下回ると倒壊（廃墟化）しうる
+    buildRuinChance: 0.3,  // 荒廃した建物が1評価で倒壊する確率
+    fireCondHit: 0.3,      // 延焼を浴びて焼け残った建物が失う状態
     // 交易と平和（経済的相互依存は戦争を抑える）
     tradePeace: 0.6,     // 主要交易相手とは開戦しにくい（相互依存）
     // 交易（取引）: 文明どうしが余剰と不足を交換し、双方が富む（比較優位）。
@@ -855,7 +879,7 @@
       gov: GOV_TYPES[govIdx],
       govMod: GOV_MODS[govIdx], // 政体の振る舞い補正
       color: makeColor(this.rand),
-      cities: [{ x: x, y: y, capital: true, level: 1, buildings: [{ x: x, y: y, t: BUILDING.KEEP }] }],
+      cities: [{ x: x, y: y, capital: true, level: 1, buildings: [mkBuilding(x, y, BUILDING.KEEP)] }],
       tileCount: 1,
       humanCount: 0,
       roleCount: [0, 0, 0, 0, 0, 0, 0],
@@ -960,20 +984,60 @@
       const bs = k.cities[c].buildings;
       if (!bs) continue;
       for (let i = 0; i < bs.length; i++) {
+        // 実効重み（段階×状態）で数える。育った建物は手厚く、荒れた建物は薄く効く。
+        const w = buildWeight(bs[i]);
         switch (bs[i].t) {
-          case BUILDING.TEMPLE: f.temple++; break;
-          case BUILDING.FARM: f.farm++; break;
-          case BUILDING.SMITHY: f.smithy++; break;
-          case BUILDING.MARKET: f.market++; break;
-          case BUILDING.BARRACKS: f.barracks++; break;
-          case BUILDING.GRANARY: f.granary++; break;
-          case BUILDING.MINE: f.mine++; break;
-          case BUILDING.ACADEMY: f.academy++; break;
-          case BUILDING.HARBOR: f.harbor++; break;
-          case BUILDING.TAVERN: f.tavern++; break;
-          case BUILDING.WONDER: f.wonder++; break;
+          case BUILDING.TEMPLE: f.temple += w; break;
+          case BUILDING.FARM: f.farm += w; break;
+          case BUILDING.SMITHY: f.smithy += w; break;
+          case BUILDING.MARKET: f.market += w; break;
+          case BUILDING.BARRACKS: f.barracks += w; break;
+          case BUILDING.GRANARY: f.granary += w; break;
+          case BUILDING.MINE: f.mine += w; break;
+          case BUILDING.ACADEMY: f.academy += w; break;
+          case BUILDING.HARBOR: f.harbor += w; break;
+          case BUILDING.TAVERN: f.tavern += w; break;
+          case BUILDING.WONDER: f.wonder += w; break;
         }
       }
+    }
+  };
+
+  // 建物の維持（評価ごと）: 平時の富んだ国は普請で都市を良好に保ち、戦時・飢饉・包囲は
+  //   建物を傷める。荒れ果てた建物は倒壊して瓦礫となり、都市を動揺させる。これにより
+  //   「繁栄＝整った街・衰退＝荒れた街」が街並みと国力に表れる（盛衰が見て取れる）。
+  CivSystem.prototype._maintain = function (k) {
+    if (!k.cities) return;
+    const atWar = this._count(k.wars) > 0;
+    const famine = !!k.famine;
+    // 維持の地力: 建築家の層と富の余裕が、傷んだ建物をどれだけ直せるかを決める。
+    const builders = (k.roleCount && k.roleCount[ROLE.BUILDER]) || 0;
+    const wealthPerTile = k.wealth / Math.max(1, k.tileCount);
+    const upkeep = Math.min(1, builders * 0.05 + Math.min(0.6, wealthPerTile * 0.6));
+    const repair = CP.buildRepair * (0.25 + upkeep);
+    // 平時で損耗源が無ければ建物は新築水準(1.0)へ収束する＝経済の基準を保つ。
+    const stress = (atWar ? CP.buildWarDecay : 0) + (famine ? CP.buildFamineDecay : 0);
+    let ruined = 0;
+    for (let c = 0; c < k.cities.length; c++) {
+      const city = k.cities[c], bs = city.buildings;
+      if (!bs || !bs.length) continue;
+      const siegeWear = city.siege > 0.1 ? city.siege * CP.buildSiegeDecay : 0;
+      const decay = stress + siegeWear;
+      for (let i = bs.length - 1; i >= 0; i--) {
+        const b = bs[i];
+        if (b.cond == null) b.cond = 1;
+        b.cond += repair * (1 - b.cond) - decay;
+        if (b.cond > 1) b.cond = 1;
+        // 荒れ果てた建物は倒壊して瓦礫に（砦＝都市の核は崩れない）。
+        if (b.cond < CP.buildRuin && b.t !== BUILDING.KEEP && this.rand() < CP.buildRuinChance) {
+          if (this._addMark) this._addMark(b.x, b.y, "rubble");
+          bs.splice(i, 1); ruined++;
+        }
+      }
+    }
+    if (ruined > 0) {
+      k.unrest = Math.min(100, (k.unrest || 0) + ruined * 1.2);
+      this._logEvent("🏚 " + k.name + " で荒廃した建物 " + ruined + " 棟が倒壊した");
     }
   };
 
@@ -2162,6 +2226,8 @@
         this._logEvent("☠ " + ka.name + " が滅亡した");
         continue;
       }
+      // 建物を維持（傷み・修復・倒壊）してから、機能建築の効果（実効重み）を集計する。
+      this._maintain(ka);
       // 機能建築の数を集計（市場・鍛冶場・神殿などの効果に使う）。
       this._recountFacilities(ka);
       // 火災が領内に及んでいれば建物が焼失する（被害→施設減→不満）。集計の前後で
@@ -3498,12 +3564,16 @@
       if (!hasWonder) {
         const spot = this._buildSpot(world, k, city, BUILDING.WONDER);
         if (spot) {
-          bs.push({ x: spot.x, y: spot.y, t: BUILDING.WONDER });
+          bs.push(mkBuilding(spot.x, spot.y, BUILDING.WONDER));
           this._logEvent("🏛 " + k.name + " が大記念碑を建立した");
           return;
         }
       }
     }
+
+    // 成熟した街は外へ広がるばかりでなく、既存の建物を「育てる」（密度化＝段階を上げる）。
+    //   ある程度建て込み、技術が時代に見合えば、新築より格上げを選ぶことがある。
+    if (bs.length >= 5 && this.rand() < CP.buildUpgradeChance && this._upgrade(k, city)) return;
 
     // 上限に達したら建て替え（時代遅れの住居を更新）のみ。
     if (bs.length >= MAX_BUILDINGS) { this._rebuild(k, city); return; }
@@ -3523,7 +3593,7 @@
     if (!has[BUILDING.MINE] && bs.length >= 2) {
       const ore = this._oreSpotNear(world, k, city);
       if (ore) {
-        bs.push({ x: ore.x, y: ore.y, t: BUILDING.MINE });
+        bs.push(mkBuilding(ore.x, ore.y, BUILDING.MINE));
         city.level = 1 + ((bs.length / 3) | 0);
         return;
       }
@@ -3551,9 +3621,32 @@
 
     const spot = this._buildSpot(world, k, city, want);
     if (spot) {
-      bs.push({ x: spot.x, y: spot.y, t: want });
+      bs.push(mkBuilding(spot.x, spot.y, want));
       city.level = 1 + ((bs.length / 3) | 0);
     }
+  };
+
+  // 既存の建物を一段育てる（普請＝密度化）。時代に見合う段階までしか上げられない
+  //   （lvl2 は古典期以降、lvl3 は中世以降）。最も低い段階の機能建築を優先して育て、
+  //   都市が均整よく成熟していく。住居・砦は建て替え/防備で別途扱うため対象外。
+  CivSystem.prototype._upgrade = function (k, city) {
+    const era = (k.tech / TECH_PER_ERA) | 0;
+    const maxLvl = Math.min(CP.buildLvlMax, 1 + Math.max(0, era - 1)); // era1→1, era2→2, era3+→3
+    if (maxLvl < 2) return false;
+    const bs = city.buildings;
+    let target = null;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i], t = b.t;
+      // 機能建築のみを育てる（住居・砦は対象外）。
+      if (t === BUILDING.HUT || t === BUILDING.HOUSE || t === BUILDING.MANOR || t === BUILDING.KEEP) continue;
+      const lvl = b.lvl || 1;
+      if (lvl >= maxLvl) continue;
+      if (!target || lvl < (target.lvl || 1)) target = b;
+    }
+    if (!target) return false;
+    target.lvl = (target.lvl || 1) + 1;
+    target.cond = 1; // 普請したての建物は良好
+    return true;
   };
 
   // 時代遅れの住居を現代の様式へ建て替える（古いものは建て替える）。
@@ -3877,6 +3970,7 @@
         const ti = bd.y * W + bd.x;
         const ablaze = (burn && burn[ti] > 0) || world.terrain[ti] === SC;
         if (ablaze && this.rand() < CP.fireBuildBurn) { bs.splice(b, 1); lost++; }
+        else if (ablaze) { bd.cond = Math.max(0, (bd.cond == null ? 1 : bd.cond) - CP.fireCondHit); } // 焼け残りも傷む
       }
     }
     if (lost > 0) {

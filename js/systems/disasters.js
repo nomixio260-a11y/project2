@@ -234,6 +234,14 @@
             if (!idxs.length) break;
             city.buildings.splice(idxs[(rand() * idxs.length) | 0], 1); destroyed++;
           }
+          // 倒壊を免れた建物も揺れで傷む（状態が下がる＝後の維持で直す）。
+          if (city.buildings) {
+            for (let bi = 0; bi < city.buildings.length; bi++) {
+              const b = city.buildings[bi];
+              if (b.t === 3) continue; // 砦は揺れに耐える
+              b.cond = Math.max(0, (b.cond == null ? 1 : b.cond) - 0.25 * mag);
+            }
+          }
         }
         k.unrest = Math.min(100, (k.unrest || 0) + 6 + mag * 18);
       }

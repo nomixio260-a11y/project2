@@ -271,6 +271,18 @@
       row("気質", esc(k.trait.name) + (k.ethos && k.ethos.name ? " ・ " + esc(k.ethos.name) : "")) +
       row("人口", String(k.humanCount) + " 人") +
       row("都市", String(k.cities.length) + " · 領土 " + k.tileCount) +
+      (function () {
+        // 街の発展: 建物の平均段階(普請で育つ)と整備度(状態)を集計して示す。
+        let n = 0, lvlS = 0, condS = 0;
+        if (k.cities) for (let c = 0; c < k.cities.length; c++) {
+          const bs = k.cities[c].buildings; if (!bs) continue;
+          for (let i = 0; i < bs.length; i++) { n++; lvlS += (bs[i].lvl || 1); condS += (bs[i].cond == null ? 1 : bs[i].cond); }
+        }
+        if (!n) return "";
+        const lvl = lvlS / n, cond = condS / n;
+        const upkeep = cond >= 0.85 ? "整備" : cond >= 0.6 ? "やや荒廃" : "荒廃";
+        return row("街並", "🏗 " + n + "棟 · 平均段階 " + lvl.toFixed(1) + " · " + upkeep + "（" + Math.round(cond * 100) + "%）");
+      })() +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
       ((k.industry || 0) >= 0.08 ? row("産業", "🏭 " + (k.industry >= 0.6 ? "高" : k.industry >= 0.3 ? "中" : "低") + "（" + Math.round(k.industry * 100) + "）") : "") +
       bar("不満", Math.round(k.unrest), true) +
