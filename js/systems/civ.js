@@ -120,6 +120,15 @@
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
+    // 余暇・文化（基本的な欲求が満たされた人々の多彩な日常）。安全と空腹が満たされた
+    //   日中、人は思い思いに過ごす――子は遊び、大人は祭り・礼拝・市・物見へ。性格・信仰・
+    //   近隣の施設で行動が分かれ、集いが社交と文化の交わりを生む（日常に個性と彩りが出る）。
+    leisureChance: 0.12, // 平時・日中・充足した大人が余暇に出る基準確率
+    playChance: 0.5,     // 子供が働く代わりに遊ぶ確率
+    leisureJoy: 0.12,    // 余暇で高まる喜び
+    leisureMoodW: 0.03,  // 余暇が機嫌へ与える小さな彩り
+    leisureFoodGate: 0.55, // これ未満の空腹では余暇より生業を優先（負のフィードバック）
+    playLearn: 0.0008,   // 遊び・見聞が子の練度・叡智を伸ばす量（賢いほど伸びる）
     // 言語（個人の「言葉」は2次元の言語空間 lx,ly 上の位置。近いほど通じ合う）。
     langScale: 0.42,     // 相互理解度が0になる言語距離（これ以上で意思疎通が困難）
     langFloor: 0.4,      // 相互理解度の下限（身振り等で完全には途絶えない）
@@ -3165,6 +3174,71 @@
     }
   };
 
+  // 余暇・文化のふるまい。安全と空腹が満たされた日中、人は生業の合間に思い思いに過ごす。
+  //   性格(志・知性・社交性)・信仰・年齢・近隣の施設によって行動が多彩に分かれ、日常に
+  //   彩りと個性が生まれる。集い(祭り・礼拝・市)は人を寄せ、社交と文化の交わりを促す。
+  //   何か始めたら gx,gy,state を設定して true を返す。生業を優先するなら false。
+  CivSystem.prototype._leisure = function (h, k, world, hcx, hcy) {
+    const adult = h.age >= CP.adultAge;
+    // 子供は遊ぶ: 仲間と群れ、遊びの中で学び（練度・叡智）、喜びを得る（働く前にまず子供時代）。
+    if (!adult) {
+      if (this.rand() >= CP.playChance) return false;
+      const mate = this._scan(h.x, h.y, 6, function (o) { return (o !== h && o.kid === h.kid && o.age < CP.adultAge) ? 1 : 0; }).best;
+      if (mate) { h.gx = mate.x | 0; h.gy = mate.y | 0; }     // 友のもとへ駆け寄って遊ぶ
+      else this._ringGoal(h, world, hcx, hcy, 0, 4);          // 家の周りで遊ぶ
+      h.joy = clamp01((h.joy || 0) + CP.leisureJoy);
+      if ((h.skill || 0) < 1) h.skill = Math.min(1, (h.skill || 0) + CP.playLearn * (0.6 + 0.6 * (h.wit || 1)));
+      if (h.mind !== undefined && h.mind < 1) h.mind += (1 - h.mind) * CP.playLearn * 0.5;
+      h.social = 0;
+      h.state = 20; return true;
+    }
+    // 大人の余暇は平時・充足したときだけ（飢えや戦時は生業・防衛が優先）。
+    if (this._count(k.wars) > 0 || h.food < CP.leisureFoodGate) return false;
+    const elder = h.age >= CP.elderAge;
+    // 騒然とした国（高い不満）では祭りや団欒は影をひそめる――民が落ち着いてこそ余暇は栄える。
+    const calm = Math.max(0, 1 - (k.unrest || 0) / 90);
+    if (calm <= 0) return false;
+    let chance = CP.leisureChance * calm * (0.5 + 0.8 * (h.mood == null ? 0.6 : h.mood)) * (0.7 + 0.5 * (h.synSoc || 1));
+    if (h.aspire === 4) chance *= 1.3;   // 家族の志はよく集う
+    if (elder) chance *= 0.8;            // 老人は控えめ
+    if (this.rand() >= chance) return false;
+
+    const fac = k.facilities || {};
+    const r = this.rand();
+    // a) 信心深い者は礼拝へ（神殿・記念碑）。心が安らぐ。
+    if ((h.role === ROLE.PRIEST || (k.faith || 0) > 0.4) && (fac.temple > 0 || fac.wonder > 0) && r < 0.3) {
+      const w = this._nearestFacility(k, h.x, h.y, BUILDING.TEMPLE) || this._nearestFacility(k, h.x, h.y, BUILDING.WONDER);
+      if (w) {
+        h.gx = w.x; h.gy = w.y;
+        h.joy = clamp01((h.joy || 0) + CP.leisureJoy * 0.8);
+        h.mood = clamp01((h.mood == null ? 0.6 : h.mood) + CP.leisureMoodW);
+        h.state = 18; return true;
+      }
+    }
+    // b) 好奇心旺盛な者（探求の志・賢い・創造的）は名所を物見、なければ自然を散策。見聞が知を広げる。
+    if ((h.aspire === 2 || (h.wit || 1) > 1.15 || (h.creat || 1) > 1.15) && r < 0.55) {
+      const w = fac.wonder > 0 ? this._nearestFacility(k, h.x, h.y, BUILDING.WONDER) : null;
+      if (w) { h.gx = w.x; h.gy = w.y; }
+      else this._ringGoal(h, world, hcx, hcy, 3, CP.tetherSettled);
+      h.joy = clamp01((h.joy || 0) + CP.leisureJoy * 0.7);
+      if (h.mind !== undefined && h.mind < 1) h.mind += (1 - h.mind) * CP.playLearn * 0.3;
+      h.state = 21; return true;
+    }
+    // c) 市の見物・買い物（市場があれば賑わいへ）。
+    if (fac.market > 0 && r < 0.72) {
+      const m = this._nearestFacility(k, h.x, h.y, BUILDING.MARKET);
+      if (m) { h.gx = m.x; h.gy = m.y; h.joy = clamp01((h.joy || 0) + CP.leisureJoy * 0.6); h.state = 19; return true; }
+    }
+    // d) 団欒・祭り: 酒場・記念碑・町の広場に集って楽しむ（人が寄り、社交と文化が混ざり合う）。
+    const hub = (fac.tavern > 0 ? this._nearestFacility(k, h.x, h.y, BUILDING.TAVERN) : null)
+      || (fac.wonder > 0 ? this._nearestFacility(k, h.x, h.y, BUILDING.WONDER) : null);
+    if (hub) { h.gx = hub.x; h.gy = hub.y; } else { h.gx = hcx; h.gy = hcy; }
+    h.joy = clamp01((h.joy || 0) + CP.leisureJoy);
+    h.mood = clamp01((h.mood == null ? 0.6 : h.mood) + CP.leisureMoodW);
+    h.social = 0;
+    h.state = 17; return true;
+  };
+
   // AI: 欲求と役割を勘案して目標(gx,gy)を決める「熟考」。thinkInterval 毎にのみ実行。
   CivSystem.prototype._think = function (h, k, world) {
     const self = this;
@@ -3341,6 +3415,9 @@
       this._claimHome(h, k, (this._tickN / tpd) | 0);
       h.gx = h.hbx; h.gy = h.hby; h.state = 13; return;
     }
+    // 1.6) 余暇・文化: 安全と空腹が満たされた日中、人は生業の合間に思い思いに過ごす。
+    //   子は遊び、大人は性格・信仰に応じて祭り・礼拝・市・物見へ。日常に彩りと個性が出る。
+    if (this._leisure(h, k, world, hcx, hcy)) return;
     // 2) 孤独 → 同胞のもとへ集まる。
     if (h.social > 1) {
       const soc = this._scan(h.x, h.y, CP.socialRadius, function (o) { return o.kid === h.kid ? 1 : 0; });
