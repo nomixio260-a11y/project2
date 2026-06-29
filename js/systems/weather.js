@@ -102,8 +102,9 @@
       cl.water -= (landTiles + mountainTiles) / samples * 0.03 * wf;
       if (cl.water < 0.1) cl.water = 0.1; else if (cl.water > 1) cl.water = 1;
 
-      // 落雷: 雲の下の「乾いた」可燃地にまれに着火（湿った草原は燃えない）。
-      if (this.rand() < lightningP && fire) {
+      // 落雷: 背の高い水分の多い積乱雲ほど雷を生む（薄く乾いた雲はめったに光らない＝実際の雷雨）。
+      //   雲の下の「乾いた」可燃地にまれに着火する（湿った草原は燃えない）。
+      if (this.rand() < lightningP * (0.15 + 0.85 * cl.water) && fire) {
         const lx = (cl.x + (this.rand() * 2 - 1) * cl.r * 0.7) | 0;
         const ly = (cl.y + (this.rand() * 2 - 1) * cl.r * 0.7) | 0;
         if (lx >= 0 && ly >= 0 && lx < W && ly < H) {

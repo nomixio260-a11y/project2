@@ -38,6 +38,8 @@
     herdSpacing: 1.6, // これより近ければ寄らない（密集しすぎない）
     mateRadius: 4,   // 繁殖時に配偶者を探す距離（有性生殖）
     mateMinEnergy: 0.5, // 配偶者がこのエネルギー以上なら繁殖できる
+    winterBreedSuppress: 0.4, // 寒い季節に草食の繁殖を抑える確率（季節繁殖。獲物の基盤を崩さぬ範囲）
+    senesce: 0.0009, // 老衰の係数（齢が寿命に近づくほど死にやすくなる漸増）
     thinkEvery: 2, // 重い近傍探索の間隔(ティック)。大きいほど低負荷（移動・採食・捕食は毎ティック）
   };
 
@@ -182,7 +184,9 @@
       const gSpd = e.geneSpd[i] || 1;    // 俊敏
       const gSense = e.geneSense[i] || 1; // 感覚
       ageA[i] += 1;
-      energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * (type === 0 ? coldF : coldFp); // 大型ほど・寒冷ほど燃費が悪い（肉食は寒さに強い）
+      // 基礎代謝: 大型・寒冷に加え、俊敏さ・鋭敏な感覚も燃費を悪くする（速い・賢い体は高くつく）。
+      //   これで「速さ・感覚はタダではない」=形質のトレードオフが生まれ、淘汰が意味を持つ。
+      energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * (0.86 + 0.14 * gSpd) * (0.93 + 0.07 * gSense) * (type === 0 ? coldF : coldFp);
 
       const tx = ex[i] | 0, ty = ey[i] | 0;
       const idx = ty * W + tx;
@@ -237,6 +241,8 @@
         let canRepro = energy[i] > P.reproduceAt[type] && e.live < maxEntities &&
           rand() < P.reproduceChance[type] * (0.6 + 0.4 * (e.geneFert[i] || 1)) * th;
         if (canRepro && type === S.HERBIVORE && vegOK && fertArr[idx] < P.herbReproFert) canRepro = false;
+        // 季節繁殖: 多くの草食は暖かい季節に子を産み、寒い冬には繁殖を控える（現実の繁殖期）。
+        if (canRepro && type === S.HERBIVORE && effWarmth < -0.04 && rand() < P.winterBreedSuppress) canRepro = false;
         if (canRepro) {
           const mate = this._nearest(ex[i], ey[i], type, P.mateRadius, i);
           if (mate !== -1 && energy[mate] > P.mateMinEnergy) {
@@ -267,8 +273,11 @@
         if (tg >= 0 && alive[tg] && energy[i] < P.satiation) {
           const dx = ex[tg] - ex[i], dy = ey[tg] - ey[i], dist = Math.sqrt(dx * dx + dy * dy);
           if (dist <= P.eatRadius) {
-            // 多くの狩りは失敗する（被食者の避難余地＝共存の安定化）。体格で成否が変わる。
-            if (rand() < P.catchChance * (0.6 + 0.4 * gene)) { e.kill(tg); energy[i] = Math.min(1, energy[i] + P.preyGain); ct[i] = -1; }
+            // 多くの狩りは失敗する（被食者の避難余地＝共存の安定化）。捕食者の体格で成否が上がり、
+            //   獲物の俊敏さ・鋭敏さで下がる（被食者の速さ・感覚も淘汰される＝捕食者と被食者の共進化）。
+            let pc = P.catchChance * (0.6 + 0.4 * gene) * (1 - 0.28 * ((e.geneSpd[tg] || 1) - 1) - 0.16 * ((e.geneSense[tg] || 1) - 1));
+            if (pc < 0.08) pc = 0.08;
+            if (rand() < pc) { e.kill(tg); energy[i] = Math.min(1, energy[i] + P.preyGain); ct[i] = -1; }
           } else { dirX = dx / dist; dirY = dy / dist; chasing = true; }
         } else { dirX = cdx[i]; dirY = cdy[i]; }
       }
@@ -289,8 +298,10 @@
         if (!tile.isWater(terrain[(nyp | 0) * W + (nxp | 0)])) { ex[i] = nxp; ey[i] = nyp; }
       }
 
-      // 死亡判定。
-      if (energy[i] <= 0 || ageA[i] > P.maxAge[type]) e.kill(i);
+      // 死亡判定: 餓死に加え、老いるほど死にやすくなる（突然の寿命の壁ではなく緩やかな老衰）。
+      const maxA = P.maxAge[type];
+      if (energy[i] <= 0 || ageA[i] > maxA ||
+          (ageA[i] > maxA * 0.6 && rand() < P.senesce * (ageA[i] / maxA))) e.kill(i);
     }
     // 個体数が激減した後の無駄な空走査を抑えるため、時折ストアの末尾を切り詰める。
     if ((tickN & 127) === 0) e.trim();
