@@ -219,6 +219,8 @@
     nomadFoundChance: 0.04,
     nomadFoundRadius: 6,
     nomadClusterRadius: 8,
+    nomadCarryR: 7,      // 放浪者の扶養力を測る半径（この内の同胞数で繁殖を抑える）
+    nomadCarry: 8,       // 放浪の小集団が荒野で養える上限（超えると増えない＝過剰増殖の防止）
     // 食料経済（外交評価＝diploInterval ごとに収支を計算）
     foodConsume: 0.7,     // 1人あたりの消費
     foodFarmer: 1.5,      // 農民1人の生産（食料は農民・農場に強く依存）
@@ -2888,6 +2890,13 @@
     if (h.age < CP.adultAge || h.age > CP.elderAge) return;
     if (h.food < CP.reproFood || h.repro > 0) return;
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return;
+    // 荒野の扶養力: 放浪の小集団が養える数には限りがある（狩猟採集の低い扶養力）。国の領内を
+    //   さまよう群れ（加入も建国もできず溢れた民）はそこで繁殖せず、荒野でも局所の同胞が多すぎ
+    //   れば増えない。これにより放浪者は際限なく膨れ上がらず、やがて加入・建国へ向かう。
+    const ti = (h.y | 0) * this.world.width + (h.x | 0);
+    if (this.world.owner[ti] !== 0) return;            // 国の領内では繁殖しない（加入か建国が筋）
+    const band = this._scan(h.x, h.y, CP.nomadCarryR, function (o) { return (o.kid === 0 && o.alive) ? 1 : 0; }, 40).count;
+    if (band > CP.nomadCarry) return;                  // 局所の扶養力を超えたら増えない
     const partner = this._scan(h.x, h.y, CP.reproRadius, function (o) {
       return (o.kid === 0 && o !== h && o.alive && o.age >= CP.adultAge && o.food >= CP.reproFood &&
         o.repro <= 0 && !closeKin(h, o)) ? 2 : 0;
