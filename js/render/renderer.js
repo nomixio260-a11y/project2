@@ -1205,8 +1205,11 @@
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
             const img = sprites.building(bd.t);
-            // 種別ごとの相対サイズ: 小屋は小さく、邸宅・砦・神殿・記念碑は大きく。
-            const bw = size * (BUILD_SIZE[bd.t] || 1);
+            // 段階(lvl)で建物は大きく育ち、状態(cond)が悪いと荒れて見える（街並みに盛衰が出る）。
+            const lvl = bd.lvl || 1;
+            const cond = bd.cond == null ? 1 : bd.cond;
+            // 種別ごとの相対サイズ: 小屋は小さく、邸宅・砦・神殿・記念碑は大きく。育った建物は一回り大きい。
+            const bw = size * (BUILD_SIZE[bd.t] || 1) * (1 + (lvl - 1) * 0.18);
             const bh = bw * (img.height / img.width);
             const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
             const by = camera.worldToScreenY((bd.y + 0.5) * tile);
@@ -1216,6 +1219,26 @@
             ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
             ctx.fill();
             ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
+            // 荒廃の表現: 傷んだ建物は黒ずみ、ひどく荒れると亀裂・崩れが見える（実際の損耗）。
+            if (cond < 0.78) {
+              const dim = Math.min(0.55, (0.78 - cond) * 0.9);
+              ctx.fillStyle = "rgba(20,16,12," + dim.toFixed(2) + ")";
+              ctx.fillRect((bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
+              if (cond < 0.4 && scale >= 4) {
+                ctx.strokeStyle = "rgba(30,24,20,0.6)";
+                ctx.lineWidth = Math.max(1, scale * 0.06);
+                ctx.beginPath();
+                ctx.moveTo((bx - bw * 0.2) | 0, (by - bh * 0.85) | 0);
+                ctx.lineTo((bx + bw * 0.12) | 0, (by - bh * 0.35) | 0);
+                ctx.lineTo((bx - bw * 0.04) | 0, by | 0);
+                ctx.stroke();
+              }
+            } else if (lvl >= 3 && scale >= 5 && (bd.t === 4 || bd.t === 7 || bd.t === 11 || bd.t === 12)) {
+              // 最高段階の公共建築（神殿・市・記念碑・学院）には小さな旗を立て、街の発展を示す。
+              const fs = Math.max(1.5, scale * 0.22);
+              ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
+              ctx.fillRect((bx - fs * 0.5) | 0, (by - bh - fs) | 0, fs, fs);
+            }
             // 鉱山(MINE=10): 採掘の現場を建物の手前に描く。わきにズリ山(残土)とトロッコ。
             if (bd.t === 10 && scale >= 5) {
               const u = Math.max(1, scale * 0.16);
