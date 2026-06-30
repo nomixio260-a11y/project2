@@ -157,6 +157,7 @@
     mindElderW: 1.8,     // 古老の教えの重み（長く生きた者は多くを伝える）
     mindInventW: 0.9,    // 知識が発明力を高める強さ
     mindWisdomW: 0.6,    // 知識が判断の質（思慮深さ）を高める強さ
+    eminenceMul: 2.6,    // 年代記に名を刻むのは名声がこの倍率×閾値を超えた真の傑物のみ
     // 遺伝（組換え・突然変異）: 子は片親へ寄りつつ僅かに混ざり、変異が個性と進化を生む。
     mutAmt: 0.16,        // 微小な突然変異の幅
     mutBig: 0.05,        // 大変異(突然変異体)が起きる確率／形質
@@ -663,7 +664,7 @@
     if ((h.age || 0) >= CP.elderAge) return "古老";
     return "名士";
   }
-  const FAME_THRESHOLD = 6; // この名声を超えると「名のある人物」として歴史に刻まれる
+  const FAME_THRESHOLD = 6; // この名声を超えると「名のある人物」（頭上に金の輝き）になる
   // 創造の産物の名。領域(発明の分野)ごとに、人が「生み出した」ものを彩る語彙。
   //   0=技術 1=工芸 2=商 3=農 4=軍 5=文化/芸術。役割・志から領域が定まる。
   const INVENT_NAMES = [
@@ -3054,9 +3055,13 @@
     // 名声: 練度・齢・徳がにじみ出て、ゆっくり高まる（功績＝武功・普請は別途加算）。
     // 熟達し齢を重ねた者ほど周囲に一目置かれ、やがて名のある人物となる（ごく一部）。
     h.prestige = (h.prestige || 0) + 0.05 * (0.2 + (h.skill || 0)) * (h.age > CP.elderAge ? 1.6 : h.age > CP.adultAge ? 1 : 0.2) * ((h.aspire === 0 || h.aspire === 3) ? CP.aspirePrestige : 1);
-    // 名のある人物として歴史に登場（初めて閾値を超えたとき）。
-    if (!h._famed && h.prestige >= FAME_THRESHOLD) {
-      h._famed = true;
+    // 名のある人物として頭上に金の輝きを灯す（地域で一目置かれる＝視覚的な標識）。
+    if (!h._famed && h.prestige >= FAME_THRESHOLD) h._famed = true;
+    // 年代記には、地域の名士すべてではなく真に傑出した者だけを刻む（歴史は王・偉人・大業を
+    //   記すもので、土地の篤農や古老まで全て書き残しはしない）。これで年代記が出来事の洪水に
+    //   埋もれず、戦争・建国・発明・災厄といった重大事が読み取れる。
+    if (!h._chronicled && h.prestige >= FAME_THRESHOLD * CP.eminenceMul) {
+      h._chronicled = true;
       this._logEvent("◆ " + h.name + "（" + k.name + "）が" + titleOf(h) + "として名を馳せた");
     }
 
