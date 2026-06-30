@@ -1447,3 +1447,32 @@ test("CivSystem: 年代記には傑出した人物のみを刻む（地域の名
   const great = chronicleCountAfter(50);
   assert.ok(great.chronicled && great.logged, "傑出した人物は年代記に刻まれる");
 });
+
+test("CivSystem: 大建造物は種類ごとに固有の恩恵を持ち、国の性格で選ばれる", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30, seed: 11 });
+  const w = new Game.World(30, 30); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(15, 15);
+  const k = civ.kingdoms[A];
+
+  // 種類テーブルが公開され、技術・信仰・軍事・交易を網羅する。
+  assert.ok(Array.isArray(Game.WONDER_KINDS) && Game.WONDER_KINDS.length >= 4, "ワンダー種類が定義されている");
+  const fields = Game.WONDER_KINDS.map(function (x) { return x.field; });
+  ["tech", "faith", "war", "trade"].forEach(function (f) { assert.ok(fields.indexOf(f) >= 0, "恩恵 " + f + " を持つ種類がある"); });
+
+  // 大図書館(tech)を建てて集計 → wonderField.tech が増える。
+  const lib = Game.WONDER_KINDS.findIndex(function (x) { return x.field === "tech"; });
+  k.cities[0].buildings.push({ x: 16, y: 15, t: 11, kind: lib, lvl: 1, cond: 1 });
+  civ._recountFacilities(k);
+  assert.ok(k.facilities.wonder >= 1, "ワンダーが集計される");
+  assert.ok(k.wonderField.tech > 0, "大図書館で技術の恩恵が集計される: " + k.wonderField.tech);
+  assert.equal(k.wonderField.faith, 0, "建てていない分野の恩恵は付かない");
+
+  // 神権制は大聖堂(faith)へ傾く（確率的なので多数試行で偏りを確認）。
+  const faithIdx = Game.WONDER_KINDS.findIndex(function (x) { return x.field === "faith"; });
+  k.gov = "神権制"; k.ethos = { name: "敬虔" };
+  let faithPicks = 0;
+  for (let i = 0; i < 200; i++) if (civ._chooseWonderKind(k, false) === faithIdx) faithPicks++;
+  assert.ok(faithPicks > 100, "神権・敬虔の国は大聖堂へ傾くはず: " + faithPicks + "/200");
+});
