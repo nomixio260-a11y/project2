@@ -209,6 +209,11 @@
     innovSpread: 0.05,    // 接触する文明へ革新が伝播する速さ（知は世界へ広がる）
     // 名声(renown): 不朽の傑作が国にもたらす文化的威信。世界に知られ、諸国の敬意を
     //   集め（外交が和らぐ）、国民の誇りとなって結束を生む。語り継がれ緩やかに薄れる。
+    // 大建造物の固有の恩恵（種類ごと・実効重み×係数で産出を押し上げる。小さく有界に）
+    wonderTechW: 1.6,     // 大図書館→技術研究
+    wonderFaithW: 0.5,    // 大聖堂→信仰
+    wonderWarW: 0.12,     // 巨像→軍事力（倍率）
+    wonderTradeW: 4,      // 大灯台→富
     renownGain: 1.0,      // 傑作1つが国の文化的威信へ与える量
     renownDecay: 0.992,   // 文化的威信が1評価ごとに薄れる係数
     renownCalm: 0.04,     // 文化的威信が国の不満を和らげる係数
@@ -421,6 +426,15 @@
     { war: 1.3, ally: 1.15, trade: 0.9, tech: 0.9, unrest: 1.1, faith: 1.05, expand: 1.15 },  // 封建制: 武門・諸侯
   ];
   const RELIGIONS = ["太陽信仰", "月の教団", "大地母神", "風の精霊", "祖霊崇拝", "星辰教"];
+  // 大建造物（ワンダー）の種類: それぞれ固有の名と恩恵を持つ。建立する国の性格に応じて
+  //   選ばれ、文明ごとに異なる強みを生む（同じ世界の再現を防ぎ、個性を与える）。field は
+  //   _recountFacilities で集計され、対応する産出（技術/信仰/軍事/交易）を押し上げる。
+  const WONDER_KINDS = [
+    { name: "大図書館", field: "tech" },   // 知の殿堂: 技術研究を加速
+    { name: "大聖堂", field: "faith" },    // 大伽藍: 信仰を篤くし民を結束させる
+    { name: "巨像", field: "war" },        // 守護の巨像: 軍事と威信を高める
+    { name: "大灯台", field: "trade" },    // 交易の灯: 富と商いを潤す
+  ];
   const SECT_SUFFIX = ["改革派", "正統派", "異端", "刷新派", "原理派", "神秘派"];
   // 宗派分裂: 既存の信仰から派生した宗派の名を作る（基幹の信仰名＋派の名）。
   //   既に宗派なら基幹名（「・」より前）を取り、際限ない接尾辞の連結を防ぐ。
@@ -1003,6 +1017,9 @@
     const f = k.facilities || (k.facilities = newFacilities());
     f.temple = f.farm = f.smithy = f.market = f.barracks = f.granary = 0;
     f.mine = f.academy = f.harbor = f.tavern = f.wonder = 0;
+    // 大建造物の固有恩恵を種類ごとに集計（実効重みで。種類が無い旧ワンダーは無印）。
+    const wf = k.wonderField || (k.wonderField = { tech: 0, faith: 0, war: 0, trade: 0 });
+    wf.tech = wf.faith = wf.war = wf.trade = 0;
     for (let c = 0; c < k.cities.length; c++) {
       const bs = k.cities[c].buildings;
       if (!bs) continue;
@@ -1020,7 +1037,7 @@
           case BUILDING.ACADEMY: f.academy += w; break;
           case BUILDING.HARBOR: f.harbor += w; break;
           case BUILDING.TAVERN: f.tavern += w; break;
-          case BUILDING.WONDER: f.wonder += w; break;
+          case BUILDING.WONDER: f.wonder += w; { const wk = bs[i].kind != null ? WONDER_KINDS[bs[i].kind] : null; if (wk) wf[wk.field] += w; } break;
         }
       }
     }
@@ -1716,7 +1733,8 @@
     const cav = 1 + Math.min(0.5, (k.res ? (k.res.horses || 0) : 0) * CP.horseMil);
     // 軍事革新（兵器・戦術の工夫）で戦力が増す。
     const innovMil = 1 + ((k.innov && k.innov[4]) || 0) * CP.innovWarW;
-    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil;
+    const wonderWar = 1 + (k.wonderField ? k.wonderField.war : 0) * CP.wonderWarW; // 巨像が軍を鼓舞
+    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar;
     k._milTick = this._tickN; k._milCache = mil;
     return mil;
   };
@@ -2334,7 +2352,7 @@
       const indF = 1 + ka.industry * CP.industryWealthW;
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君・産業で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW) * indF;
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (ka.wonderField ? ka.wonderField.trade : 0) * CP.wonderTradeW + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW) * indF;
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -2352,7 +2370,7 @@
       }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech + innov[0] * CP.innovTechW + ka.industry * CP.industryTechW;
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2) * this._eff(ka, "tech") * techRate * order * kingWit;
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2 + (ka.wonderField ? ka.wonderField.tech : 0) * CP.wonderTechW) * this._eff(ka, "tech") * techRate * order * kingWit;
       // 人々の閃きの蓄積（創造システム）を技術へ転化する。文明は建物だけでなく「人」が進める。
       //   一評価あたりの転化は上限を設け、人口増による暴走を防ぐ（残りは次評価へ持ち越し）。
       if (ka.insight > 0) {
@@ -2391,7 +2409,7 @@
       else if (eidx > ka._eraIdx) { ka._eraIdx = eidx; this._logEvent("✦ " + ka.name + " が" + ERAS[eidx] + "を迎えた"); }
 
       // 信仰の篤さ: 神殿・記念碑・神官が育み、政体(神権制)・敬虔な君主が増幅する。
-      const devote = (fac.temple * 0.4 + fac.wonder * 0.6 + (ka.roleCount[ROLE.PRIEST] || 0) * 0.2) / Math.max(1, ka.cities.length);
+      const devote = (fac.temple * 0.4 + fac.wonder * 0.6 + (ka.wonderField ? ka.wonderField.faith : 0) * CP.wonderFaithW + (ka.roleCount[ROLE.PRIEST] || 0) * 0.2) / Math.max(1, ka.cities.length);
       let faithTgt = clamp01(0.12 + devote * 0.28 + innov[5] * CP.innovArtFaithW) * this._eff(ka, "faith");
       if (faithTgt > 1) faithTgt = 1;
       ka.faith = (ka.faith || 0) + (faithTgt - (ka.faith || 0)) * 0.1; // ゆっくり推移
@@ -3696,8 +3714,10 @@
       if (!hasWonder) {
         const spot = this._buildSpot(world, k, city, BUILDING.WONDER);
         if (spot) {
-          bs.push(mkBuilding(spot.x, spot.y, BUILDING.WONDER));
-          this._logEvent("🏛 " + k.name + " が大記念碑を建立した");
+          const b = mkBuilding(spot.x, spot.y, BUILDING.WONDER);
+          b.kind = this._chooseWonderKind(k, this._coastal(world, spot.x, spot.y));
+          bs.push(b);
+          this._logEvent("🏛 " + k.name + " が" + WONDER_KINDS[b.kind].name + "を建立した");
           return;
         }
       }
@@ -3756,6 +3776,23 @@
       bs.push(mkBuilding(spot.x, spot.y, want));
       city.level = 1 + ((bs.length / 3) | 0);
     }
+  };
+
+  // 建立する大建造物の種類を国の性格・立地から選ぶ（神権は大聖堂、商都・沿岸は大灯台、
+  //   武の国は巨像、学術の国は大図書館へ傾く）。これで文明ごとに異なる象徴と強みが生まれる。
+  CivSystem.prototype._chooseWonderKind = function (k, coastal) {
+    const wt = [1, 1, 1, 1]; // 0=大図書館(tech) 1=大聖堂(faith) 2=巨像(war) 3=大灯台(trade)
+    const g = k.gov;
+    if (g === "神権制") wt[1] += 2.5;
+    else if (g === "都市国家" || g === "共和制") wt[0] += 1.6;
+    else if (g === "帝国" || g === "部族連合" || g === "封建制") wt[2] += 1.6;
+    if (coastal) wt[3] += 2.2;
+    const en = k.ethos && k.ethos.name;
+    if (en === "敬虔") wt[1] += 2; else if (en === "賢明" || en === "開明") wt[0] += 2;
+    else if (en === "好戦的" || en === "残虐") wt[2] += 2; else if (en === "商才" || en === "狡猾") wt[3] += 2;
+    let tot = wt[0] + wt[1] + wt[2] + wt[3], r = this.rand() * tot;
+    for (let i = 0; i < 4; i++) { if (r < wt[i]) return i; r -= wt[i]; }
+    return 0;
   };
 
   // 既存の建物を一段育てる（普請＝密度化）。時代に見合う段階までしか上げられない
@@ -4338,6 +4375,7 @@
 
   Game.CivSystem = CivSystem;
   Game.ROLE = ROLE;
+  Game.WONDER_KINDS = WONDER_KINDS;
   // 描画の年齢段階（子供/老人）と一致させるための閾値。
   Game.lifeStages = { adult: CP.adultAge, elder: CP.elderAge };
 })(window.Game);

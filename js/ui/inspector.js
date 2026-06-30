@@ -306,6 +306,19 @@
       (k.inventions && k.inventions.length ? row("発明", "💡 " + esc(k.inventions.slice(-3).join("・"))) : "") +
       (k.artworks && k.artworks.length ? row("作品", "🎨 " + esc(k.artworks.slice(-3).join("・"))) : "") +
       (function () {
+        // 建立した大建造物（種類つき）を列挙する。
+        const kinds = Game.WONDER_KINDS;
+        if (!kinds || !k.cities) return "";
+        const names = [];
+        for (let c = 0; c < k.cities.length; c++) {
+          const bs = k.cities[c].buildings; if (!bs) continue;
+          for (let i = 0; i < bs.length; i++) {
+            if (bs[i].t === 11) names.push(bs[i].kind != null && kinds[bs[i].kind] ? kinds[bs[i].kind].name : "大記念碑");
+          }
+        }
+        return names.length ? row("大建造物", "🏛 " + esc(names.join("・"))) : "";
+      })() +
+      (function () {
         if (!k.innov) return "";
         const LABELS = ["技術", "工芸", "商業", "農業", "軍事", "文化"];
         const parts = [];
