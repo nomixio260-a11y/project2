@@ -1476,3 +1476,27 @@ test("CivSystem: 大建造物は種類ごとに固有の恩恵を持ち、国の
   for (let i = 0; i < 200; i++) if (civ._chooseWonderKind(k, false) === faithIdx) faithPicks++;
   assert.ok(faithPicks > 100, "神権・敬虔の国は大聖堂へ傾くはず: " + faithPicks + "/200");
 });
+
+test("Climate: 季節の効きは緯度で変わる（赤道は年間安定・極は厳しい四季）", () => {
+  const Game = loadCore({ mapWidth: 10, mapHeight: 10, seed: 1 });
+  const SEASONS = Game.SEASONS;
+  const winter = SEASONS.find(function (s) { return s.name === "冬"; });
+  const summer = SEASONS.find(function (s) { return s.name === "夏"; });
+
+  // poleness: 中央(赤道)=0、上下端(極)=1。
+  assert.ok(Game.poleness(0.5) < 0.01, "赤道(中央)の poleness は 0");
+  assert.ok(Game.poleness(0) > 0.99 && Game.poleness(1) > 0.99, "極(端)の poleness は 1");
+  assert.ok(Math.abs(Game.poleness(0.25) - 0.5) < 0.01, "中緯度の poleness は 0.5");
+
+  // 中緯度(poleness=0.5)では従来の全球一律の季節と一致する（較正）。
+  assert.ok(Math.abs(Game.seasonGrowthMul(winter, 0.5) - winter.growth) < 1e-9, "中緯度=従来の成長係数");
+  assert.ok(Math.abs(Game.seasonTempDelta(winter, 0.5) - winter.tempOffset) < 1e-9, "中緯度=従来の気温補正");
+
+  // 冬: 極ほど成長が落ち込み、赤道ほど穏やか（極 < 中緯度 < 赤道）。
+  assert.ok(Game.seasonGrowthMul(winter, 1) < Game.seasonGrowthMul(winter, 0.5), "極の冬は中緯度より成長が落ちる");
+  assert.ok(Game.seasonGrowthMul(winter, 0.5) < Game.seasonGrowthMul(winter, 0), "中緯度の冬は赤道より落ちる");
+  // 冬の寒さ(気温補正)は極ほど深い（より負）。
+  assert.ok(Game.seasonTempDelta(winter, 1) < Game.seasonTempDelta(winter, 0), "極の冬は赤道より寒い");
+  // 夏: 極ほど暑く繁る（軸傾斜の四季）。
+  assert.ok(Game.seasonGrowthMul(summer, 1) > Game.seasonGrowthMul(summer, 0), "極の夏は赤道より繁る");
+});

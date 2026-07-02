@@ -2441,7 +2441,10 @@
       // 植生システムがある時のみ肥沃度を反映（無い環境＝テスト等では中立=1）。
       const fert = Game.state.vegetation ? (0.55 + 0.55 * this._landFertility(ka)) : 1; // 0.55〜1.1
       const season = Game.state.clock && Game.state.clock.season;
-      const seasonF = season ? (0.55 + 0.45 * season.growth) : 1; // 冬≈0.66 夏≈1.16
+      // 季節の実りは緯度で変わる: 熱帯の国は年間ほぼ一定、高緯度の国は厳冬に大きく落ち込む
+      //   （北の文明は冬の飢えに備え倉が要る＝気候の地理が文明の暮らしに表れる）。
+      const capY = (ka.cities[0] && this.world) ? ka.cities[0].y / this.world.height : 0.5;
+      const seasonF = season ? (0.55 + 0.45 * Game.seasonGrowthMul(season, Game.poleness(capY))) : 1; // 中緯度は従来と一致
       // 長期気候: 多雨で実り、乾燥で痩せる。温暖は概ね恵み（平均0中心なので経済の均衡は不変、
       //   ただし「豊穣の時代／旱魃の時代」という起伏を作る）。植生のある環境でのみ反映。
       const clk = Game.state.clock;
