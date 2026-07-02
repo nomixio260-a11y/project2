@@ -221,6 +221,12 @@
     cultivate: 0.03,     // 農民が高める fertility
     attack: 0.05,        // 兵士が敵に与える食料ダメージ
     cellSize: 6,
+    // 人の移住は暮らしの良し悪しに従う（統治→人口の因果）。悪政・戦乱・飢饉は民を離れさせ、
+    //   栄えて安定した国は移民を引き寄せる。良い国は栄え、荒れた国は人が去って衰える。
+    emigrateBase: 0.014,  // 不遇からの離郷の基準確率（×押し出しの強さ）
+    emigrateMoodMax: 0.32,// これ未満の機嫌でなければ離郷を考えない
+    emigrateUnrest: 55,   // これを超える国の不満が離郷を後押しする
+    joinTroubled: 0.3,    // 荒れた国（高不満・戦時・飢饉）に放浪者が加わる確率（普段は見送る）
     nomadFoundBand: 4,   // 建国に必要な近隣の放浪者数
     nomadFoundChance: 0.04,
     nomadFoundRadius: 6,
@@ -2833,11 +2839,13 @@
 
     // 思考（重い処理は間引き）: 加入・建国・定住地探し・繁殖。
     if (((tN + i) % CP.thinkInterval) === 0) {
-      // 1) 加入: 足下が既存国の領土なら、その国に加わる（最優先）。
+      // 1) 加入: 足下が既存国の領土なら、その国に加わる。ただし荒れた国（悪政・戦乱・飢饉）は
+      //   多くの流民に見送られる――移民は機会を求めて栄えた国へ向かう（国勢→移民の因果）。
       const o = world.owner[ti];
       if (o !== 0) {
         const k = this.kingdoms[o];
-        if (k && k.alive && k.humanCount < CP.perKingdomCap) { this._joinKingdom(h, k); return; }
+        if (k && k.alive && k.humanCount < CP.perKingdomCap &&
+            (!this._kingdomTroubled(k) || this.rand() < CP.joinTroubled)) { this._joinKingdom(h, k); return; }
       }
       // 2) 近くに国の民がいれば、そこへ向かって加入を目指す。
       const citizen = this._scan(h.x, h.y, CP.joinRadius, function (oo) {
@@ -2847,7 +2855,8 @@
         const dx = citizen.x - h.x, dy = citizen.y - h.y;
         if (dx * dx + dy * dy < 6) {
           const k = this.kingdoms[citizen.kid];
-          if (k && k.alive && k.humanCount < CP.perKingdomCap) { this._joinKingdom(h, k); return; }
+          if (k && k.alive && k.humanCount < CP.perKingdomCap &&
+              (!this._kingdomTroubled(k) || this.rand() < CP.joinTroubled)) { this._joinKingdom(h, k); return; }
         }
         h.gx = citizen.x | 0; h.gy = citizen.y | 0; h.state = 9;
       } else {
@@ -2895,6 +2904,11 @@
     h.social = 0;
     k.humanCount++;
     k.roleCount[h.role]++;
+  };
+
+  // 国が危機（高い不満・戦時・飢饉・疫病）にあるか。移民の受け入れ忌避に使う。
+  CivSystem.prototype._kingdomTroubled = function (k) {
+    return (k.unrest || 0) > 60 || !!k.famine || (k.plague || 0) > 0 || this._count(k.wars) > 0;
   };
 
   // 過密＋飢餓の市民は国を離れて流民になり、よりよい土地を求める（移民）。
@@ -3362,6 +3376,17 @@
     const capacity = this._capacity(k);
     if (h.food < 0.3 && k.humanCount > capacity && this.rand() < 0.12) {
       this._leaveKingdom(h, k); return;
+    }
+    // 0.1) 不遇からの離郷: 慢性的に不幸な大人は、荒れた国（悪政・戦乱・飢饉）を捨て、より良い
+    //   暮らしを求めて流れ出る。統治の失敗が人心を離れさせ人口を削る（統治→人口の因果）。
+    //   家族の志を持つ者は腰が重く、勇気ある者・若者ほど新天地へ踏み出す。
+    if (h.age >= CP.adultAge && (h.mood == null ? 0.5 : h.mood) < CP.emigrateMoodMax &&
+        (k.unrest > CP.emigrateUnrest || k.famine || this._count(k.wars) > 0)) {
+      const push = (CP.emigrateMoodMax - h.mood) +
+        (k.unrest > CP.emigrateUnrest ? (k.unrest - CP.emigrateUnrest) * 0.004 : 0);
+      const family = h.aspire === 4 ? 0.5 : 1;         // 家族持ちは腰が重い
+      const daring = 0.7 + 0.3 * (h.brave || 1);       // 勇者ほど旅立つ
+      if (this.rand() < CP.emigrateBase * push * family * daring) { this._leaveKingdom(h, k); return; }
     }
 
     // 0.2) 適応: 慢性的な飢えで農民が手薄なら食料生産へ転職。戦時に兵が手薄なら民間人が

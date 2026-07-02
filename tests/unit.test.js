@@ -1500,3 +1500,45 @@ test("Climate: 季節の効きは緯度で変わる（赤道は年間安定・�
   // 夏: 極ほど暑く繁る（軸傾斜の四季）。
   assert.ok(Game.seasonGrowthMul(summer, 1) > Game.seasonGrowthMul(summer, 0), "極の夏は赤道より繁る");
 });
+
+test("CivSystem: 移住の因果 — 荒れた国の判定と、不遇からの離郷（統治→人口）", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 42 });
+  const w = new Game.World(40, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  if (w.fertility) w.fertility.fill(1);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  Game.state.clock = { year: 1, season: null };
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+
+  // 荒れた国の判定: 高不満・戦時・飢饉・疫病のいずれかで真。
+  k.unrest = 10; k.famine = false; k.wars = {}; k.plague = 0;
+  assert.ok(!civ._kingdomTroubled(k), "平穏な国は troubled でない");
+  k.unrest = 90; assert.ok(civ._kingdomTroubled(k), "高い不満は troubled");
+  k.unrest = 10; k.famine = true; assert.ok(civ._kingdomTroubled(k), "飢饉は troubled"); k.famine = false;
+  k.wars = { 9: 0 }; assert.ok(civ._kingdomTroubled(k), "戦時は troubled"); k.wars = {};
+  k.plague = 3; assert.ok(civ._kingdomTroubled(k), "疫病は troubled"); k.plague = 0;
+
+  // 不遇からの離郷: 慢性的に不幸な大人が、荒れた国からより良い暮らしを求めて去る。
+  // 十分な食料（餓死・過密経路を排除）で不満だけを高くし、離郷が起きることを確認する。
+  //   点在させ（孤独で機嫌が上がらない）、飢饉＋高不満で慢性的な不遇を作る。放浪化した者は
+  //   荒れた国へ戻りにくい（joinTroubled）ので、累計で「一度でも去った」人数を数える。
+  const citizens = [];
+  for (let i = 0; i < 30; i++) {
+    const h = { x: 4 + i, y: 4 + i, hx: 0, hy: 0,
+      kid: A, clan: 3, age: 1200, food: 0.6, role: 1, state: 0, gx: 4 + i, gy: 4 + i,
+      repro: 999, social: 0, alive: true, mood: 0.1, wit: 1, brave: 1.2, vigor: 1, creat: 1,
+      dili: 1, synSafe: 1, synFood: 1, synSoc: 1, skill: 0.3, mind: 0.2, aspire: 0, lx: 0.5, ly: 0.5, culture: 0.5, prestige: 0 };
+    citizens.push(h); civ.people.push(h);
+  }
+  k.humanCount += 30; k.roleCount[1] += 30;
+  const everLeft = new Set();
+  for (let t = 0; t < 1500; t++) {
+    k.unrest = 90; k.famine = true;      // 慢性的な悪政と飢饉
+    for (const h of citizens) { if (h.kid === A && h.food < 0.5) h.food = 0.6; } // 餓死は防ぐ（離郷因子を分離）
+    civ.tick(w);
+    for (const h of citizens) { if (h.alive && h.kid === 0) everLeft.add(h); }
+    if (everLeft.size >= 3) break;
+  }
+  assert.ok(everLeft.size > 0, "不遇な民は荒れた国を去る（統治→人口の因果）: " + everLeft.size);
+});
