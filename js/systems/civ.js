@@ -4375,7 +4375,9 @@
 
   Game.CivSystem = CivSystem;
   Game.ROLE = ROLE;
+  Game.ROLE_NAMES = ["開拓者", "農民", "建築家", "兵士", "鍛冶", "商人", "神官"];
   Game.WONDER_KINDS = WONDER_KINDS;
+  Game.eraOf = eraOf; // 技術→時代名（ホバー説明・UI用）
   // 描画の年齢段階（子供/老人）と一致させるための閾値。
   Game.lifeStages = { adult: CP.adultAge, elder: CP.elderAge };
 })(window.Game);

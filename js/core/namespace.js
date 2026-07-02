@@ -173,6 +173,7 @@ window.Game = window.Game || {};
     activeToolId: "raise",
     brush: null,
     mouseTile: { x: -1, y: -1 },
+    mouseScreen: { x: -1, y: -1 }, // カーソルのスクリーン座標（ホバー説明の吹き出し位置に使う）
     // 気候の時計（climate システムが進める）。
     clock: { tick: 0, day: 0, year: 1, seasonIndex: 0, season: null },
   };

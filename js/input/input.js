@@ -53,6 +53,8 @@
       const t = self.camera.screenToTile(e.clientX, e.clientY);
       Game.state.mouseTile.x = t.x;
       Game.state.mouseTile.y = t.y;
+      Game.state.mouseScreen.x = e.clientX;
+      Game.state.mouseScreen.y = e.clientY;
 
       if (self.panning) {
         self.camera.panByScreen(dx, dy);
@@ -65,6 +67,12 @@
       self.painting = false;
       self.panning = false;
       canvas.classList.remove("panning");
+    });
+
+    // カーソルが盤面を離れたらホバー表示を消す（吹き出しが UI 上に残らないように）。
+    canvas.addEventListener("mouseleave", function () {
+      Game.state.mouseTile.x = -1; Game.state.mouseTile.y = -1;
+      Game.state.mouseScreen.x = -1; Game.state.mouseScreen.y = -1;
     });
 
     // 右クリックメニュー抑止（右ドラッグパン用）。

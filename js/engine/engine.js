@@ -98,36 +98,102 @@
     requestAnimationFrame(this._loop);
   };
 
+  // 資源の絵文字（種別ごと）。
+  const RES_EMOJI = { 1: "⛏", 2: "🐟", 3: "💎", 4: "🪙", 5: "🐎", 6: "🌶", 7: "🧂", 8: "🪵" };
+
   Engine.prototype._updateCoords = function () {
     const el = document.getElementById("coords");
-    if (!el) return;
+    const tip = document.getElementById("hovertip");
     const mt = Game.state.mouseTile;
     const world = Game.state.world;
-    if (mt.x >= 0 && world.inBounds(mt.x, mt.y)) {
-      const i = mt.y * world.width + mt.x;
+    if (!(mt.x >= 0 && world.inBounds(mt.x, mt.y))) {
+      if (el) el.textContent = "";
+      if (tip) tip.classList.remove("show");
+      return;
+    }
+    const i = mt.y * world.width + mt.x;
+    const civ = Game.state.civ;
+    const owner = (civ && world.owner) ? world.owner[i] : 0;
+    const k = owner > 0 && civ.kingdoms ? civ.kingdoms[owner] : null;
+
+    // 下部バー: 詳細な地勢（標高・気温・湿度・植生・資源）。
+    if (el) {
       const name = Game.TERRAIN_NAMES[world.terrain[i]];
       let txt = "(" + mt.x + "," + mt.y + ") " + name +
         " 標高" + world.elevation[i].toFixed(2) +
         " 気温" + world.temperature[i].toFixed(2) +
         " 湿度" + world.moisture[i].toFixed(2);
       if (world.fertility) txt += " 植生" + world.fertility[i].toFixed(2);
-      // 資源（鉱石・漁場・宝石）。
       if (world.resource && world.resource[i]) {
         const r = world.resource[i];
-        txt += "  " + (r === 1 ? "⛏鉱石" : r === 2 ? "🐟漁場" : "💎宝石");
+        txt += "  " + (RES_EMOJI[r] || "◆") + (Game.RESOURCE_NAMES[r] || "");
       }
-      // 領有国（国名）。
-      const civ = Game.state.civ;
-      if (civ && world.owner) {
-        const id = world.owner[i];
-        const k = id > 0 ? civ.kingdoms[id] : null;
-        if (k) txt += "  ▣ " + k.name + "（" + (k.religion || "") + "）";
-      }
+      if (k) txt += "  ▣ " + k.name;
       el.textContent = txt;
-    } else {
-      el.textContent = "";
+    }
+
+    // カーソルの吹き出し: 「今ここに何があるか」を一目で（国・人物・地形）。
+    if (tip) {
+      const ms = Game.state.mouseScreen;
+      if (ms.x < 0) { tip.classList.remove("show"); return; }
+      let html = "";
+      // 近景では、カーソル直下の人物を拾って名前・役割・様子を示す。
+      const person = this._personAt(mt.x, mt.y);
+      if (person) {
+        const kk = person.kid && civ.kingdoms ? civ.kingdoms[person.kid] : null;
+        const LIFE = Game.lifeStages || { adult: 200, elder: 2600 };
+        const stage = person.age < LIFE.adult ? "子供" : (person.age >= LIFE.elder ? "老人" : "成人");
+        const role = Game.ROLE_NAMES ? Game.ROLE_NAMES[person.role] : "";
+        html += '<div class="ht-title">' + (person._famed ? "★ " : "") + esc(person.name || "名も無き者") + "</div>";
+        html += '<div class="ht-sub">' + esc((kk ? kk.name + "・" : "") + role + "（" + stage + "）") + "</div>";
+      } else if (k) {
+        // 領有国: 国名・政体・宗教・時代、統治者と人口。
+        const era = (Game.eraOf && k.tech != null) ? Game.eraOf(k.tech) : "";
+        html += '<div class="ht-title"><span class="ht-dot" style="background:rgb(' + k.color[0] + "," + k.color[1] + "," + k.color[2] + ')"></span>' + esc(k.name) + "</div>";
+        html += '<div class="ht-sub">' + esc([k.gov, k.religion, era].filter(Boolean).join("・")) + "</div>";
+        const ruler = (k.rulerRef && k.rulerRef.alive && k.rulerRef.name) ? k.rulerRef.name : k.ruler;
+        html += '<div class="ht-sub">' + (ruler ? "👑" + esc(ruler) + "　" : "") + "👥" + (k.humanCount || 0) + "</div>";
+      } else {
+        // 無所属の地: 生物群系（地形名）。
+        html += '<div class="ht-title">' + esc(Game.TERRAIN_NAMES[world.terrain[i]]) + "</div>";
+        const res = world.resource && world.resource[i];
+        if (res) html += '<div class="ht-sub">' + (RES_EMOJI[res] || "◆") + esc(Game.RESOURCE_NAMES[res] || "") + "</div>";
+      }
+      tip.innerHTML = html;
+      // 位置: カーソル右上に少しずらし、画面端でははみ出さないよう反転する。
+      tip.classList.add("show");
+      const pad = 14, tw = tip.offsetWidth, thh = tip.offsetHeight;
+      let px = ms.x + pad, py = ms.y - thh - 8;
+      if (px + tw > window.innerWidth - 4) px = ms.x - tw - pad;
+      if (py < 4) py = ms.y + pad;
+      tip.style.left = px + "px";
+      tip.style.top = py + "px";
     }
   };
+
+  // カーソル直下（同タイル付近）の人物を1人返す。近景でのみ探す（負荷を抑える）。
+  Engine.prototype._personAt = function (tx, ty) {
+    const civ = Game.state.civ;
+    if (!civ || !civ.people) return null;
+    const scale = Game.config.tilePx * this.camera.zoom;
+    if (scale < 5) return null; // 人が描かれない引きでは拾わない
+    const cx = tx + 0.5, cy = ty + 0.5, R = 0.85, R2 = R * R;
+    const people = civ.people;
+    let best = null, bd = R2;
+    for (let p = 0; p < people.length; p++) {
+      const o = people[p];
+      if (!o.alive) continue;
+      const dx = o.x - cx, dy = o.y - cy, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best;
+  };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;";
+    });
+  }
 
   Game.Engine = Engine;
 })(window.Game);
