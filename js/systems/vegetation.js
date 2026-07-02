@@ -68,7 +68,8 @@
     const temp = world.temperature;
     const clk = Game.state.clock;
     const season = (clk && clk.season) || Game.SEASONS[0];
-    const growth = cfg.vegGrowth * season.growth;
+    // 成長率は緯度で変わる（赤道は年間一定・極は冬に強く落ちる）。行(y)ごとに算出する。
+    const baseGrowth = cfg.vegGrowth;
     // 長期気候: 多雨は植生容量を上げ、乾燥は枯らす。温暖/寒冷は体感気温を押し引きする。
     const wetness = clk ? (clk.wetness || 0) : 0;
     const warmth = clk ? (clk.warmth || 0) : 0;
@@ -89,6 +90,13 @@
     const y1 = Math.min(H, y0 + cfg.vegBandRows);
 
     for (let y = y0; y < y1; y++) {
+      // この緯度の季節性（赤道は穏やか・極は冬に厳しい）。growth=回復の速さ、capSeason=冬枯れ。
+      const pol = Game.poleness(y / H);
+      const growth = baseGrowth * Game.seasonGrowthMul(season, pol);
+      // 季節の枯れ／繁り: 冬は植生容量が下がり草木が枯れ込み、夏は繁る。年平均はほぼ中立
+      //   （相対値・対称なクランプ）なので経済の均衡を崩さず、季節と緯度の風景だけが生まれる。
+      let capSeason = 1 + Game.seasonTempDelta(season, pol) * 1.3;
+      if (capSeason < 0.5) capSeason = 0.5; else if (capSeason > 1.5) capSeason = 1.5;
       for (let x = 0; x < W; x++) {
         const i = y * W + x;
         const t = terr[i];
@@ -109,8 +117,8 @@
         if (m < 0) m = 0; else if (m > 1) m = 1;
         moist[i] = m;
 
-        // 容量へ向けて成長（湿度＋長期気候で容量を変調）。
-        let localCap = cap * (0.55 + 0.45 * m) * capClim;
+        // 容量へ向けて成長（湿度＋長期気候＋季節の枯れ／繁りで容量を変調）。
+        let localCap = cap * (0.55 + 0.45 * m) * capClim * capSeason;
         if (localCap > 1) localCap = 1;
         let v = f[i];
         // 焼け跡は灰の養分でパイオニア種が急速に戻る（一時的肥沃化＝段階的遷移の起点）。

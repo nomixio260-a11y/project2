@@ -105,5 +105,21 @@
     return { tod: tod, sun: sun, darkness: darkness, twilight: twilight };
   };
 
+  // 季節の効き目は緯度で変わる（軸傾斜の現実）: 赤道は年間ほぼ安定（常夏）、極は激しい四季
+  //   （厳冬と短い夏）。poleness は 0(赤道)..1(極)。中緯度(poleness=0.5)で係数が 1 になるよう
+  //   較正してあり、そこでは従来の全球一律の季節と一致する（全体の均衡を保ちつつ地理を与える）。
+  const SEASON_EQ = 0.5, SEASON_POLE = 1.0; // 赤道0.5倍 / 中緯度1.0倍 / 極1.5倍
+  // 正規化 y (0..1) から poleness(0..1) を得る。
+  Game.poleness = function (ny) { let p = Math.abs(ny - 0.5) * 2; return p < 0 ? 0 : p > 1 ? 1 : p; };
+  // その緯度での季節による体感気温の増減（冬は負・夏は正。極ほど大きく振れる）。
+  Game.seasonTempDelta = function (season, poleness) {
+    return (season ? (season.tempOffset || 0) : 0) * (SEASON_EQ + SEASON_POLE * poleness);
+  };
+  // その緯度での季節による植生・食料の成長係数（赤道は年間ほぼ一定、極は冬に強く落ちる）。
+  Game.seasonGrowthMul = function (season, poleness) {
+    const g = season ? (season.growth == null ? 1 : season.growth) : 1;
+    return 1 + (g - 1) * (SEASON_EQ + SEASON_POLE * poleness);
+  };
+
   Game.ClimateSystem = ClimateSystem;
 })(window.Game);

@@ -153,14 +153,11 @@
 
     // 気候・季節と生態: 寒い季節・寒冷期ほど基礎代謝が上がって飢えやすく（冬枯れ）、暑い
     //   ほど渇きが早まる（夏は水場へ集まる）。これで個体数に季節の波が生まれる（現実の生態）。
+    //   季節の効きは緯度で変わる（赤道は年間安定・極は厳冬）ため、体感気温は個体ごとに算出する。
     const clk = Game.state.clock;
-    const seasonOff = (clk && clk.season) ? (clk.season.tempOffset || 0) : 0;
-    const effWarmth = (clk ? (clk.warmth || 0) : 0) + seasonOff;
-    // 種で寒さへの強さが違う: 肉食(毛皮・高活動)は寒さに比較的強く、草食はより堪える。
-    const coldNeg = Math.max(0, -effWarmth);
-    const coldF = 1 + coldNeg * 0.45;                    // 草食基準の寒さ燃費
-    const coldFp = 1 + coldNeg * 0.28;                   // 肉食は寒さに比較的強い
-    const thirstMul = 1 + Math.max(0, effWarmth) * 0.8;  // 暑いほど渇きが早い
+    const baseWarmth = clk ? (clk.warmth || 0) : 0;
+    const soff = (clk && clk.season) ? (clk.season.tempOffset || 0) : 0; // 季節の気温補正（極で増幅）
+    const Hinv = 1 / H;
     const tickN = this._tickN = (this._tickN || 0) + 1;
     // 植生・炎システムの参照をループ外で1回だけ解決（毎個体の lookup を避ける）。
     const veg = Game.state.vegetation;
@@ -184,6 +181,12 @@
       const gSpd = e.geneSpd[i] || 1;    // 俊敏
       const gSense = e.geneSense[i] || 1; // 感覚
       ageA[i] += 1;
+      // この個体の緯度での体感気温（極ほど季節が激しく振れる）と、寒暖の効き。
+      let pol = Math.abs(ey[i] * Hinv - 0.5) * 2; if (pol > 1) pol = 1;
+      const ew = baseWarmth + soff * (0.5 + pol);      // 季節の効き: 赤道0.5×・中緯度1×・極1.5×
+      const coldNeg = ew < 0 ? -ew : 0;
+      const coldF = 1 + coldNeg * 0.45, coldFp = 1 + coldNeg * 0.28; // 肉食は寒さに比較的強い
+      const thirstMul = 1 + (ew > 0 ? ew : 0) * 0.8;   // 暑いほど渇きが早い
       // 基礎代謝: 大型・寒冷に加え、俊敏さ・鋭敏な感覚も燃費を悪くする（速い・賢い体は高くつく）。
       //   これで「速さ・感覚はタダではない」=形質のトレードオフが生まれ、淘汰が意味を持つ。
       energy[i] -= P.metabolism[type] * (0.6 + 0.4 * gene) * (0.86 + 0.14 * gSpd) * (0.93 + 0.07 * gSense) * (type === 0 ? coldF : coldFp);
@@ -242,7 +245,7 @@
           rand() < P.reproduceChance[type] * (0.6 + 0.4 * (e.geneFert[i] || 1)) * th;
         if (canRepro && type === S.HERBIVORE && vegOK && fertArr[idx] < P.herbReproFert) canRepro = false;
         // 季節繁殖: 多くの草食は暖かい季節に子を産み、寒い冬には繁殖を控える（現実の繁殖期）。
-        if (canRepro && type === S.HERBIVORE && effWarmth < -0.04 && rand() < P.winterBreedSuppress) canRepro = false;
+        if (canRepro && type === S.HERBIVORE && ew < -0.04 && rand() < P.winterBreedSuppress) canRepro = false;
         if (canRepro) {
           const mate = this._nearest(ex[i], ey[i], type, P.mateRadius, i);
           if (mate !== -1 && energy[mate] > P.mateMinEnergy) {
