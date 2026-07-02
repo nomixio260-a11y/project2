@@ -437,6 +437,32 @@ html, body {
   z-index: 11; pointer-events: none;
 }
 
+/* ===== ホバー説明の吹き出し（カーソル直下の国・人物・地形を一目で） ===== */
+.hovertip {
+  position: fixed; left: 0; top: 0;
+  padding: 6px 10px; max-width: 240px;
+  background: rgba(16, 22, 38, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  z-index: 16; pointer-events: none;
+  opacity: 0; visibility: hidden;
+  transition: opacity 0.08s ease;
+  backdrop-filter: blur(3px);
+}
+.hovertip.show { opacity: 1; visibility: visible; }
+.hovertip .ht-title {
+  font-size: 12.5px; font-weight: 700; color: #eaf0ff;
+  display: flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.hovertip .ht-sub {
+  font-size: 10.5px; color: #9fb0d4; margin-top: 1px; white-space: nowrap;
+}
+.hovertip .ht-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  display: inline-block; border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
 /* ===== インスペクタ（調べる） ===== */
 .inspector {
   position: fixed;
