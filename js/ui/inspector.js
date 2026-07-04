@@ -217,6 +217,9 @@
         html +=
           row("気質", persona(p) + (p.aspire != null && civ.aspireName ? "（志:" + esc(civ.aspireName(p.aspire)) + "）" : "")) +
           (p.memDanger ? row("警戒", "危険な土地を避けている") : "") +
+          ((p.pack || 0) > 0.05 || (p.memFoods && p.memFoods.length)
+            ? row("知恵", (p.memFoods && p.memFoods.length ? "🧠実りの地を" + p.memFoods.length + "箇所記憶" : "") +
+                ((p.pack || 0) > 0.05 ? ((p.memFoods && p.memFoods.length) ? " · " : "") + "🎒蓄え" + Math.round((p.pack || 0) * 100) + "%" : "")) : "") +
           bar("練度", Math.round(Math.max(0, Math.min(1, p.skill || 0)) * 100), false) +
           (p.mind !== undefined ? bar("叡智", Math.round(Math.max(0, Math.min(1, p.mind)) * 100), false) : "") +
           bar("機嫌", Math.round(Math.max(0, Math.min(1, p.mood == null ? 0.6 : p.mood)) * 100), false);

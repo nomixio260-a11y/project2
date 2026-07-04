@@ -1542,3 +1542,53 @@ test("CivSystem: 移住の因果 — 荒れた国の判定と、不遇からの�
   }
   assert.ok(everLeft.size > 0, "不遇な民は荒れた国を去る（統治→人口の因果）: " + everLeft.size);
 });
+
+test("CivSystem: 高度な知能 — 叡智で増える空間記憶と、余剰を蓄え飢えを凌ぐ備え", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30, seed: 8 });
+  const w = new Game.World(30, 30); w.terrain.fill(Game.TERRAIN.GRASS);
+  if (w.fertility) w.fertility.fill(1);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  Game.state.clock = { year: 1, season: null };
+  const A = civ.foundAt(15, 15);
+  const k = civ.kingdoms[A];
+
+  // 記憶の枠: 凡庸(mind 0)は1箇所、博識(mind>=0.65)は3箇所。古い記憶から忘れる。
+  const plain = { x: 15, y: 15, mind: 0, memFoods: null };
+  civ._rememberFood(plain, 3, 3);
+  civ._rememberFood(plain, 20, 20); // 2箇所目 → 枠1なので古い方を忘れる
+  assert.equal(plain.memFoods.length, 1, "凡庸は1箇所しか覚えない");
+  assert.equal(plain.memFoods[0].x, 20, "古い記憶から忘れる");
+
+  const wise = { x: 15, y: 15, mind: 0.8, memFoods: null };
+  civ._rememberFood(wise, 3, 3);
+  civ._rememberFood(wise, 20, 20);
+  civ._rememberFood(wise, 8, 25);
+  assert.equal(wise.memFoods.length, 3, "博識は3箇所まで覚える");
+  // 近所は同じ場所として上書き（重複しない）。
+  civ._rememberFood(wise, 4, 4);
+  assert.equal(wise.memFoods.length, 3, "近い場所は上書きで増えない");
+
+  // 想起: 最も近い、今も食べられる場所。枯れた場所は記憶から消える。
+  wise.x = 21; wise.y = 21;
+  const rec = civ._recallFood(wise, w);
+  assert.ok(rec && rec.x === 20 && rec.y === 20, "最寄りの記憶を思い出す");
+  w.setTerrain(20, 20, Game.TERRAIN.MOUNTAIN); // その場所が枯れた
+  const rec2 = civ._recallFood(wise, w);
+  assert.ok(rec2 && !(rec2.x === 20 && rec2.y === 20), "食べられなくなった場所は思い出さない");
+  assert.equal(wise.memFoods.length, 2, "枯れた場所は記憶から消える");
+
+  // 蓄え: 満腹の余剰が蓄えに回り、飢えれば蓄えを食べて凌ぐ。
+  const h = { x: 15.2, y: 15.2, hx: 0, hy: 0, kid: A, clan: 1, age: 1000, food: 0.99, pack: 0,
+    role: 1, state: 0, gx: 15, gy: 15, repro: 999, social: 0, alive: true, mood: 0.8,
+    wit: 1, brave: 1, vigor: 1, creat: 1, dili: 1, synSafe: 1, synFood: 1, synSoc: 1,
+    skill: 0.5, mind: 0.5, aspire: 0, lx: 0.5, ly: 0.5, culture: 0.5, prestige: 0 };
+  civ.people.push(h); k.humanCount++; k.roleCount[1]++;
+  for (let t = 0; t < 300 && h.pack < 0.05; t++) { h.food = 0.99; civ.tick(w); }
+  assert.ok(h.pack > 0.05, "満腹の余剰が蓄えに回るはず: " + h.pack);
+  // 飢えると蓄えから食べる。
+  h.food = 0.1; const packBefore = h.pack;
+  civ.tick(w);
+  assert.ok(h.pack < packBefore, "飢えれば蓄えを食べるはず");
+  assert.ok(h.food > 0.1, "蓄えで空腹が和らぐはず: " + h.food);
+});
