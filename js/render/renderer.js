@@ -882,13 +882,15 @@
     const t = this._t;
     const range = camera.visibleTileRange();
     const size = Math.max(3, scale * 0.5);
-    const self = this;
     const world = this.world, isWater = Game.tile.isWater;
-    function wagon(ax, ay, bx, by, frac, col) {
+    // cargo: 積荷の色（交易される財を表す）。trade: 交易路の隊商か（街道の荷車と区別）。
+    function wagon(ax, ay, bx, by, frac, cargo, trade) {
       const x = ax + (bx - ax) * frac, y = ay + (by - ay) * frac;
       if (x < range.x0 - 1 || x > range.x1 + 1 || y < range.y0 - 1 || y > range.y1 + 1) return;
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
+      const dir = bx - ax; const faceL = dir < 0; const fs = faceL ? -1 : 1; // 進行方向
+      cargo = cargo || "#c9a86a";
       // 海上の区間では帆船で、陸上では荷馬車で描く（海路・陸路が見て分かる）。
       const onSea = world && isWater(world.terrain[(y | 0) * world.width + (x | 0)]);
       if (onSea) {
@@ -896,32 +898,66 @@
         ctx.fillRect(sx - size * 0.5, sy + size * 0.34, size, size * 0.16);  // 影
         ctx.fillStyle = "#5a3d24";                                            // 船体
         ctx.fillRect(sx - size * 0.5, sy + size * 0.05, size, size * 0.32);
+        ctx.fillStyle = cargo; ctx.fillRect(sx - size * 0.3, sy - size * 0.08, size * 0.6, size * 0.16); // 甲板の積荷
         ctx.fillStyle = "#3a2716"; ctx.fillRect(sx - size * 0.06, sy - size * 0.5, size * 0.12, size * 0.6); // マスト
-        ctx.fillStyle = col === "#9a7a3a" ? "#efe4c2" : "#e9dcc0";            // 帆
+        ctx.fillStyle = trade ? "#efe4c2" : "#e9dcc0";                        // 帆
         ctx.fillRect(sx - size * 0.34, sy - size * 0.42, size * 0.68, size * 0.4);
         return;
       }
       ctx.fillStyle = "rgba(0,0,0,0.3)";
       ctx.fillRect(sx - size * 0.5, sy + size * 0.32, size, size * 0.18); // 影
-      ctx.fillStyle = col || "#7a5230";
-      ctx.fillRect(sx - size * 0.5, sy - size * 0.3, size, size * 0.6);   // 荷台
-      ctx.fillStyle = "#d8c49a";
-      ctx.fillRect(sx - size * 0.42, sy - size * 0.5, size * 0.84, size * 0.28); // 幌
+      // 荷を牽く役畜（進行方向の前に配置。交易が「運ばれている」ことが分かる）。
+      const ox = sx + fs * size * 0.62;
+      ctx.fillStyle = "#5a4028";
+      ctx.fillRect(ox - size * 0.16, sy - size * 0.14, size * 0.32, size * 0.34); // 胴
+      ctx.fillRect(ox + fs * size * 0.16, sy - size * 0.2, size * 0.16, size * 0.2); // 頭
+      ctx.fillStyle = "#15100a";
+      ctx.fillRect(ox - size * 0.12, sy + size * 0.2, size * 0.08, size * 0.16);
+      ctx.fillRect(ox + size * 0.04, sy + size * 0.2, size * 0.08, size * 0.16); // 脚
+      // 荷台（木枠）と積荷（財の色）。
+      ctx.fillStyle = "#6b4a2a";
+      ctx.fillRect(sx - size * 0.5, sy - size * 0.28, size * 0.9, size * 0.58);   // 荷台の枠
+      ctx.fillStyle = cargo;
+      ctx.fillRect(sx - size * 0.42, sy - size * 0.2, size * 0.74, size * 0.42);  // 積荷
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      ctx.fillRect(sx - size * 0.42, sy - size * 0.2, size * 0.74, size * 0.1);   // 積荷のハイライト
       ctx.fillStyle = "#15100a"; // 車輪
       ctx.fillRect(sx - size * 0.4, sy + size * 0.28, size * 0.2, size * 0.2);
-      ctx.fillRect(sx + size * 0.2, sy + size * 0.28, size * 0.2, size * 0.2);
+      ctx.fillRect(sx + size * 0.12, sy + size * 0.28, size * 0.2, size * 0.2);
+    }
+    // 交易される財の色パレット（二国が豊かに持つ財から積荷を決め、何が運ばれているか見せる）。
+    function cargoPool(ka, kb) {
+      const pool = [];
+      for (let s = 0; s < 2; s++) {
+        const kk = s === 0 ? ka : kb; if (!kk) continue;
+        const r = kk.res || {};
+        if ((kk.food || 0) > 20) pool.push("#e0c85a");   // 穀物（金色）
+        if ((kk.tools || 0) > 8) pool.push("#b8c0c8");   // 鉄・道具（鋼色）
+        if ((r.spice || 0) > 0) pool.push("#d8622a");    // 香辛料（橙）
+        if ((r.gems || 0) > 0) pool.push("#46d6c8");     // 宝石（碧）
+        if ((r.gold || 0) > 0) pool.push("#f3c433");     // 金（黄金）
+        if ((r.salt || 0) > 0) pool.push("#eef2f6");     // 塩（白）
+        if ((r.timber || 0) > 0) pool.push("#8a5a2e");   // 木材（茶）
+        if ((r.horses || 0) > 0) pool.push("#9a6a3a");   // 馬・家畜（黄褐）
+        if ((r.fish || 0) > 0) pool.push("#7ea8c0");     // 魚（水色）
+        if ((kk.wealth || 0) > 40) pool.push("#6a5aa8"); // 奢侈品・織物（紫）
+      }
+      if (!pool.length) pool.push("#c9a86a"); // 一般の荷
+      return pool;
     }
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive || !k.cities || !k.cities.length) continue;
       const cap = k.cities[0];
-      // 街道: 首都⇄各都市をゆっくり往復。
+      // 街道: 首都⇄各都市をゆっくり往復（自国の産物を運ぶ）。
+      const localPool = cargoPool(k, null);
       for (let c = 1; c < k.cities.length; c++) {
         const city = k.cities[c];
         const frac = Math.sin(t * 0.35 + id * 1.3 + c * 2.1) * 0.5 + 0.5;
-        wagon(cap.x, cap.y, city.x, city.y, frac);
+        wagon(cap.x, cap.y, city.x, city.y, frac, localPool[(id + c) % localPool.length], false);
       }
-      // 交易路: 実際に交易のある首都間を金色寄りの荷馬車が往来（活発な路ほど多くの隊商）。
+      // 交易路: 実際に交易のある首都間を隊商が往来（活発な路ほど多くの隊商）。積荷は両国の
+      //   産物を表す色で、何が運ばれているか（穀物・鉄・香辛料・宝石・奢侈品…）が見て分かる。
       if (k.partners) {
         for (const bStr in k.partners) {
           const b = +bStr;
@@ -931,11 +967,13 @@
           const vol = k.partners[b] || 0;
           if (vol < 0.5) continue;
           const cap2 = kb.cities[0];
+          const pool = cargoPool(k, kb);
           // 交易量に応じて1〜5の隊商／船を時間差で走らせる（活発な路ほど賑わう）。
           const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
           for (let wagi = 0; wagi < wagons; wagi++) {
             const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
-            wagon(cap.x, cap.y, cap2.x, cap2.y, frac, "#9a7a3a");
+            // 隊商ごとに違う財を積む（路に多彩な物流が行き交って見える）。
+            wagon(cap.x, cap.y, cap2.x, cap2.y, frac, pool[(id + b + wagi) % pool.length], true);
           }
         }
       }
@@ -1264,7 +1302,9 @@
     if (scale < 1.4) return;
     const ctx = this.ctx;
     const ks = civ.kingdoms;
+    const t = this._t;
     ctx.save();
+    ctx.lineCap = "round";
     ctx.setLineDash([Math.max(3, scale), Math.max(2, scale * 0.7)]);
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
@@ -1278,10 +1318,12 @@
         const vol = k.partners[b] || 0;
         if (vol < 0.5) continue;
         const c1 = kb.cities[0];
-        // 交易量で線の濃さ・太さを変える（活発な通商路ほど太く明るい）。
-        const a = Math.min(0.7, 0.2 + vol * 0.04);
+        // 交易量で線の濃さ・太さを変える（活発な通商路ほど太く明るい）。ゆるやかな明滅で活気を添える。
+        const a = Math.min(0.7, 0.2 + vol * 0.04) * (0.82 + 0.18 * Math.sin(t * 2 + id + b));
         ctx.strokeStyle = "rgba(240,200,90," + a.toFixed(2) + ")";
         ctx.lineWidth = Math.max(1, scale * (0.08 + Math.min(0.16, vol * 0.012)));
+        // 破線を c0→c1 の向きへ流す（財が実際に流れているように見える。活発な路ほど速い）。
+        ctx.lineDashOffset = -t * (0.7 + Math.min(3, vol * 0.09)) * scale;
         ctx.beginPath();
         ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
         ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));
@@ -1289,6 +1331,7 @@
       }
     }
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
     ctx.restore();
   };
 
