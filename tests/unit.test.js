@@ -558,6 +558,38 @@ test("CivSystem: 軍事力・同盟参戦・講和", () => {
   assert.ok(!civ._atWar(A, B), "講和できていない");
 });
 
+test("CivSystem: 補給線 — 遠征軍は自国の都市網から離れるほど戦力が落ち、街道で補給が伸びる", () => {
+  const Game = loadCore({ mapWidth: 80, mapHeight: 40 });
+  const w = new Game.World(80, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(8, 20);
+  const k = civ.kingdoms[A];
+  const soldier = (x, y) => ({ x: x + 0.5, y: y + 0.5, kid: A, role: Game.ROLE.SOLDIER });
+  const tiAt = (x, y) => y * w.width + x;
+
+  // 近場（都市のそば）: 補給は満ちている（=1）。
+  const near = civ._supply(soldier(10, 20), k, tiAt(10, 20));
+  assert.equal(near, 1, "近場で補給が満ちていない: " + near);
+
+  // 遠征: 都市から離れるほど補給（＝戦力）は単調に落ちる。
+  const mid = civ._supply(soldier(40, 20), k, tiAt(40, 20));
+  const far = civ._supply(soldier(70, 20), k, tiAt(70, 20));
+  assert.ok(mid < near, "中距離で補給が落ちていない: " + mid);
+  assert.ok(far < mid, "遠距離ほど補給が落ちていない: far=" + far + " mid=" + mid);
+  assert.ok(far >= 0.5 - 1e-9, "補給が最低値(0.5)を下回った: " + far);
+
+  // 街道の上なら補給線が伸びる（同じ地点でも街道ありの方が補給が良い）。
+  const offRoad = civ._supply(soldier(45, 20), k, tiAt(45, 20));
+  w.road[tiAt(45, 20)] = 1;
+  const onRoad = civ._supply(soldier(45, 20), k, tiAt(45, 20));
+  assert.ok(onRoad > offRoad, "街道で補給線が伸びていない: on=" + onRoad + " off=" + offRoad);
+
+  // 都市を失った（滅びかけの）勢力は補給が最低限に張り付く。
+  k.cities = [];
+  assert.ok(civ._supply(soldier(10, 20), k, tiAt(10, 20)) <= 0.5 + 1e-9, "都市無しで補給が過大");
+});
+
 test("CivSystem: 指導者の性格・富・交易・反乱", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
   const w = new Game.World(60, 60);
