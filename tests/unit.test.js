@@ -611,6 +611,47 @@ test("CivSystem: 補給線 — 遠征軍は自国の都市網から離れるほ�
   assert.ok(civ._supply(soldier(10, 20), k, tiAt(10, 20)) <= 0.5 + 1e-9, "都市無しで補給が過大");
 });
 
+test("CivSystem: 宝物 — 伝説の遺物が国力を底上げし、征服で戦利品として受け継がれる", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  const A = civ.foundAt(8, 20);
+  const B = civ.foundAt(30, 20);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+
+  // _relicBonus: 種別ごとに数える（0=武具 1=名工の道具 2=宝器）。
+  ka.relics = [{ name: "鋼の鎧", kind: 0 }, { name: "合わせ鋼", kind: 1 }, { name: "陣形の編み出し", kind: 0 }];
+  assert.equal(civ._relicBonus(ka, 0), 2, "武具の数え違い");
+  assert.equal(civ._relicBonus(ka, 1), 1, "道具の数え違い");
+  assert.equal(civ._relicBonus(ka, 2), 0, "宝器の数え違い");
+
+  // 武具の宝物は軍事力を底上げする（同条件で宝物ありが強い）。
+  ka.roleCount[Game.ROLE.SOLDIER] = 10; kb.roleCount[Game.ROLE.SOLDIER] = 10;
+  const milWith = civ._military(ka), milWithout = civ._military(kb);
+  assert.ok(milWith > milWithout, "武具の宝物が軍事力を上げない: " + milWith + " vs " + milWithout);
+
+  // _forgeRelic: 追加され、同名は重複せず、上限を超えない。
+  const smith = { name: "名工", prestige: 0 };
+  civ._forgeRelic(kb, smith, 1, "焼入れの妙");
+  assert.equal(civ._relicBonus(kb, 1), 1, "遺物が追加されない");
+  civ._forgeRelic(kb, smith, 1, "焼入れの妙");
+  assert.equal(kb.relics.length, 1, "同名の遺物が重複した");
+  assert.ok(smith.prestige > 0, "名器を遺した者の名声が上がらない");
+  const cap = Game.CivSystem ? 6 : 6; // relicMax
+  for (let i = 0; i < 12; i++) civ._forgeRelic(kb, smith, 0, "武具" + i);
+  assert.ok(kb.relics.length <= cap, "宝物が上限(" + cap + ")を超えた: " + kb.relics.length);
+
+  // 征服の戦利品: _fuse で敗者の宝物が勝者へ渡る（rand を固定して必ず略奪させる）。
+  civ.rand = function () { return 0; }; // 0 >= relicPlunder(0.5) は偽 → 略奪する
+  ka.relics = [];
+  kb.relics = [{ name: "叙事詩", kind: 2, maker: "詩人", origin: kb.name }];
+  civ._fuse(ka, kb);
+  assert.ok(ka.relics.length >= 1, "戦利品が勝者へ渡らない");
+  assert.equal(kb.relics.length, 0, "敗者から宝物が抜けていない");
+  assert.ok(ka.relics.some(function (r) { return r.name === "叙事詩"; }), "略奪した宝物名が見つからない");
+});
+
 test("CivSystem: 指導者の性格・富・交易・反乱", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
   const w = new Game.World(60, 60);
