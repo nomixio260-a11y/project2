@@ -1670,3 +1670,33 @@ test("CivSystem: 技術ツリー — 前提技術と、国の性格による発�
   const scholar = { govMod: { war: 1, trade: 1, tech: 1.5, unrest: 1, expand: 1 }, ethos: neutralEthos };
   assert.ok(TT.threshold(scholar, printing) < printing.at, "学究国は印刷が早い");
 });
+
+test("CivSystem: 新しい建物 — 城壁(防備)と水道(衛生・給水)の集計と効果", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30, seed: 6 });
+  const w = new Game.World(30, 30); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(15, 15);
+  const k = civ.kingdoms[A];
+  const B = Game.BUILDING || { AQUEDUCT: 15, WALLS: 16 };
+
+  // 集計: 城壁(16)・水道(15)が実効重みで数えられる。
+  k.cities[0].buildings.push({ x: 16, y: 15, t: 16, lvl: 1, cond: 1 }, { x: 14, y: 15, t: 15, lvl: 1, cond: 1 });
+  civ._recountFacilities(k);
+  assert.ok(Math.abs(k.facilities.walls - 1) < 1e-6, "城壁が集計される: " + k.facilities.walls);
+  assert.ok(Math.abs(k.facilities.aqueduct - 1) < 1e-6, "水道が集計される: " + k.facilities.aqueduct);
+
+  // 水道は人口扶養力(capacity)を押し上げる（清潔な水）。基準(baseCap)より上で効くよう領土を与える。
+  k.tileCount = 120; // 120/6 = 20 > baseCap
+  k.facilities.aqueduct = 2;
+  const capWith = civ._capacity(k);
+  k.facilities.aqueduct = 0;
+  const capWithout = civ._capacity(k);
+  assert.ok(capWith > capWithout, "水道は扶養力を高める: " + capWith + " > " + capWithout);
+
+  // 水道は衛生を高め、基礎死亡率を下げる。
+  const person = { age: 1000, food: 1, vigor: 1 };
+  const mNoAqua = civ._baseMortality(person, { facilities: { temple: 0, aqueduct: 0 } });
+  const mAqua = civ._baseMortality(person, { facilities: { temple: 0, aqueduct: 4 } });
+  assert.ok(mAqua < mNoAqua, "水道の衛生で死亡率が下がる: " + mAqua + " < " + mNoAqua);
+});

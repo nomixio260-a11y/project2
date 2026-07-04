@@ -22,26 +22,27 @@
   const ROLE_COUNT = 7;
   // 建物タイプ（描画 sprites.building と対応）。各種別に固有の機能と見た目を持つ。
   // 0=小屋,1=家,2=邸宅（住居） 3=砦 4=神殿 5=農場 6=鍛冶場 7=市場 8=兵舎 9=穀倉
-  // 10=鉱山 11=大記念碑 12=学院（技術） 13=港（漁・海上交易） 14=酒場（娯楽・士気）。
+  // 10=鉱山 11=大記念碑 12=学院（技術） 13=港（漁・海上交易） 14=酒場（娯楽・士気）
+  // 15=水道（衛生・給水） 16=城壁（防備）。
   const BUILDING = {
     HUT: 0, HOUSE: 1, MANOR: 2, KEEP: 3, TEMPLE: 4, FARM: 5, SMITHY: 6, MARKET: 7,
     BARRACKS: 8, GRANARY: 9, MINE: 10, WONDER: 11, ACADEMY: 12, HARBOR: 13, TAVERN: 14,
+    AQUEDUCT: 15, WALLS: 16,
   };
-  const MAX_BUILDINGS = 26; // 1都市の建物上限
+  const MAX_BUILDINGS = 28; // 1都市の建物上限
   // 建物の占有半径（タイル）。描画の見かけの大きさ(BUILD_SIZE)に対応し、当たり判定（重なり
-  //   防止）と現実的な敷地間隔に使う。大建造物（記念碑・砦・神殿・学院）ほど広い敷地が要る。
-  //   index は BUILDING enum と一致: HUT,HOUSE,MANOR,KEEP,TEMPLE,FARM,SMITHY,MARKET,
-  //   BARRACKS,GRANARY,MINE,WONDER,ACADEMY,HARBOR,TAVERN。
-  const BUILD_FOOT = [0.62, 0.72, 0.9, 1.05, 0.95, 0.7, 0.74, 0.66, 0.86, 0.74, 0.66, 1.4, 1.0, 0.82, 0.72];
+  //   防止）と現実的な敷地間隔に使う。大建造物（記念碑・砦・神殿・学院・水道）ほど広い敷地が要る。
+  //   index は BUILDING enum と一致。末尾: AQUEDUCT, WALLS。
+  const BUILD_FOOT = [0.62, 0.72, 0.9, 1.05, 0.95, 0.7, 0.74, 0.66, 0.86, 0.74, 0.66, 1.4, 1.0, 0.82, 0.72, 1.0, 0.9];
   function footR(t) { return BUILD_FOOT[t] || 0.75; }
   // 住居の収容人数（現実的な「家に入れる人の上限」）。住居のみが夜の宿になる。
   //   index は BUILDING enum: HUT=3, HOUSE=5, MANOR=9, それ以外は住居でない(0)。
-  const DWELL_CAP = [3, 5, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const DWELL_CAP = [3, 5, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   // 生産施設（住居・砦以外の機能建築）。役割の職場・国の機能になる。
-  const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary", "mine", "academy", "harbor", "tavern", "wonder"];
+  const FACILITY_KEYS = ["temple", "farm", "smithy", "market", "barracks", "granary", "mine", "academy", "harbor", "tavern", "wonder", "aqueduct", "walls"];
   // 機能建築の既定カウント（全 0）。
   function newFacilities() {
-    return { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, mine: 0, academy: 0, harbor: 0, tavern: 0, wonder: 0 };
+    return { temple: 0, farm: 0, smithy: 0, market: 0, barracks: 0, granary: 0, mine: 0, academy: 0, harbor: 0, tavern: 0, wonder: 0, aqueduct: 0, walls: 0 };
   }
 
   // 建物を生成する。すべての建物は段階(lvl 1..)と状態(cond 0..1)を持つ。
@@ -314,6 +315,12 @@
     steerEvery: 3,       // 操舵(経路再計算)の間隔。間は前回の速度で前進（移動は毎ティック滑らか）
     homeDefense: 0.5,    // 自国領で戦う守備兵が受ける被害の軽減
     fortDefense: 0.5,    // 砦(KEEP)のある都市タイルの攻略しにくさ（防備）
+    // 新しい建物: 水道（衛生・給水）と城壁（防備）
+    aqueductCap: 7,      // 水道1棟（実効重み）が押し上げる人口扶養力（清潔な水）
+    aqueductSanit: 0.7,  // 水道の疫病抵抗への寄与（発生を抑える）
+    aqueductHealth: 0.05,// 水道1棟あたりの基礎死亡率の低減（衛生・上限あり）
+    wallDefense: 0.2,    // 城壁1棟（実効重み）あたりの防御（攻囲で薄れる）
+    wallDefenseCap: 0.62,// 城壁による防御軽減の上限
     // 建物の成長・損耗・維持（建物が育ち、傷み、直る）
     buildLvlMax: 3,        // 建物の最大段階（普請で育つ）
     buildLvlBonus: 0.5,    // 1段ごとの機能（生産・防備など）の増分
@@ -512,14 +519,20 @@
   }
   // 国の分野ごとの得手（0を中庸に、±で早い/遅い）。政体・気質・立地から導く。
   function techAffinity(k, field) {
-    const gm = k.govMod || null, et = k.ethos || null;
+    const gm = k.govMod, et = k.ethos;
+    // 政体・気質は項目を欠くことがあるため、無い項目は中庸(1)とみなす。
+    const gw = gm && gm.war != null ? gm.war : 1, ew = et && et.war != null ? et.war : 1;
+    const gt = gm && gm.trade != null ? gm.trade : 1, ett = et && et.trade != null ? et.trade : 1;
+    const gk = gm && gm.tech != null ? gm.tech : 1, ek = et && et.tech != null ? et.tech : 1;
+    const gu = gm && gm.unrest != null ? gm.unrest : 1;
+    const ge = gm && gm.expand != null ? gm.expand : 1;
     let a = 0;
-    if (field === "military") a = ((gm ? gm.war : 1) - 1) * 0.6 + ((et ? et.war : 1) - 1) * 0.4;
-    else if (field === "trade") a = ((gm ? gm.trade : 1) - 1) * 0.6 + ((et ? et.trade : 1) - 1) * 0.4;
-    else if (field === "knowledge") a = ((gm ? gm.tech : 1) - 1) * 0.6 + ((et ? et.tech : 1) - 1) * 0.4;
-    else if (field === "order") a = (1 - (gm ? gm.unrest : 1)) * 0.5;   // 治まりやすい国は法へ早い
+    if (field === "military") a = (gw - 1) * 0.6 + (ew - 1) * 0.4;
+    else if (field === "trade") a = (gt - 1) * 0.6 + (ett - 1) * 0.4;
+    else if (field === "knowledge") a = (gk - 1) * 0.6 + (ek - 1) * 0.4;
+    else if (field === "order") a = (1 - gu) * 0.5;   // 治まりやすい国は法へ早い
     else if (field === "sea") a = k._coastalNation ? 0.6 : -0.25;       // 海に開けた国は航海へ早い
-    else if (field === "food") a = ((gm ? gm.expand : 1) - 1) * 0.4;    // 拡張的な国は農へ
+    else if (field === "food") a = (ge - 1) * 0.4;                       // 拡張的な国は農へ
     return a;
   }
   // その国におけるこの技術の実効の敷居（得手なら早まり、不得手なら遅れる）。
@@ -1060,7 +1073,7 @@
   CivSystem.prototype._recountFacilities = function (k) {
     const f = k.facilities || (k.facilities = newFacilities());
     f.temple = f.farm = f.smithy = f.market = f.barracks = f.granary = 0;
-    f.mine = f.academy = f.harbor = f.tavern = f.wonder = 0;
+    f.mine = f.academy = f.harbor = f.tavern = f.wonder = f.aqueduct = f.walls = 0;
     // 大建造物の固有恩恵を種類ごとに集計（実効重みで。種類が無い旧ワンダーは無印）。
     const wf = k.wonderField || (k.wonderField = { tech: 0, faith: 0, war: 0, trade: 0 });
     wf.tech = wf.faith = wf.war = wf.trade = 0;
@@ -1081,6 +1094,8 @@
           case BUILDING.ACADEMY: f.academy += w; break;
           case BUILDING.HARBOR: f.harbor += w; break;
           case BUILDING.TAVERN: f.tavern += w; break;
+          case BUILDING.AQUEDUCT: f.aqueduct += w; break;
+          case BUILDING.WALLS: f.walls += w; break;
           case BUILDING.WONDER: f.wonder += w; { const wk = bs[i].kind != null ? WONDER_KINDS[bs[i].kind] : null; if (wk) wf[wk.field] += w; } break;
         }
       }
@@ -1098,7 +1113,9 @@
     else m = CP.mortAdult + CP.mortElder * ((h.age - CP.elderAge) / (CP.maxAge - CP.elderAge)); // 老いて上昇
     m /= vg;                                          // 頑健な者は生き延びる
     if (h.food < 0.35) m *= CP.mortStarveMul;         // 栄養不良で死にやすい
-    const san = 1 - Math.min(0.45, (k && k.facilities ? k.facilities.temple : 0) * CP.mortTempleSan); // 衛生・医療
+    // 衛生・医療: 神殿の癒やしと上水道（清潔な水）が普及した社会ほど死ににくい（上限あり）。
+    const fac = k && k.facilities;
+    const san = 1 - Math.min(0.6, (fac ? (fac.temple || 0) : 0) * CP.mortTempleSan + (fac ? (fac.aqueduct || 0) : 0) * CP.aqueductHealth);
     return m * san;
   };
 
@@ -1265,7 +1282,8 @@
     // 漁場と農耕は食料を増やし、扶養できる人口を押し上げる。
     const fishBonus = k.res ? k.res.fish * 4 : 0;
     const agriBonus = hasTech(k, "agri") ? 8 : 0;
-    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus + agriBonus));
+    const waterBonus = (k.facilities ? k.facilities.aqueduct : 0) * CP.aqueductCap; // 上水道＝清潔な水が扶養力を押し上げる
+    return Math.min(CP.perKingdomCap, Math.max(CP.baseCap, ((k.tileCount / CP.tilesPerHuman) | 0) + fishBonus + agriBonus + waterBonus));
   };
 
   // 国の農地の平均的な肥沃度（0..1）。各都市の周辺を数点サンプリングして平均する。
@@ -2568,7 +2586,7 @@
         if (ka.plague === 0) this._logEvent("✚ " + ka.name + " の疫病が収束した");
       } else {
         const crowd = ka.humanCount / Math.max(1, cap);
-        const resist = 1 + Math.min(1.5, ka.tech * 0.004) + fac.temple * 0.4; // 技術・神殿で抵抗
+        const resist = 1 + Math.min(1.5, ka.tech * 0.004) + fac.temple * 0.4 + fac.aqueduct * CP.aqueductSanit; // 技術・神殿・上下水道で抵抗
         if (crowd > 0.6 && this.rand() < CP.plagueChance * crowd / resist) {
           ka.plague = CP.plagueDuration;
           this._plagues = (this._plagues || 0) + 1;
@@ -3902,12 +3920,17 @@
     else if (!has[BUILDING.GRANARY] && n >= 4) want = BUILDING.GRANARY;    // 倉（食料安全）
     else if (!has[BUILDING.MARKET] && n >= 4) want = BUILDING.MARKET;      // 市（富）
     else if ((this._count(k.wars) > 0 || city.capital) && !has[BUILDING.BARRACKS] && n >= 5) want = BUILDING.BARRACKS; // 兵舎
+    // 城壁: 兵舎を備えた都市で、戦時か首都なら築く（青銅器＝石積みの技術が要る。攻囲に備える）。
+    else if (!has[BUILDING.WALLS] && has[BUILDING.BARRACKS] && (this._count(k.wars) > 0 || city.capital) && n >= 6 && hasTech(k, "bronze")) want = BUILDING.WALLS;
     else if (!has[BUILDING.TAVERN] && n >= 6) want = BUILDING.TAVERN;      // 酒場（娯楽・士気）
     else if (!has[BUILDING.TEMPLE] && n >= 7) want = BUILDING.TEMPLE;      // 神殿（信仰・成熟した都市）
-    else if (!has[BUILDING.ACADEMY] && n >= 9 && k.tech >= TECH_PER_ERA) want = BUILDING.ACADEMY; // 学院（技術・進んだ都市）
+    else if (!has[BUILDING.ACADEMY] && n >= 9 && hasTech(k, "writing")) want = BUILDING.ACADEMY; // 学院（文字を持つ進んだ都市）
+    // 水道: 古典期以降（法典＝土木を組織する社会）の大都市が、清潔な水を引いて衛生と扶養力を高める。
+    else if (!has[BUILDING.AQUEDUCT] && n >= 10 && hasTech(k, "law")) want = BUILDING.AQUEDUCT;
     else if (dwell < Math.max(3, n * 0.5)) want = tier;                   // 人口に見合う住居
     else if ((has[BUILDING.SMITHY] || 0) < 2 && n >= 12) want = BUILDING.SMITHY;    // 大都市は2軒目
     else if ((has[BUILDING.MARKET] || 0) < 2 && n >= 14) want = BUILDING.MARKET;
+    else if (has[BUILDING.WALLS] && (has[BUILDING.WALLS] || 0) < 3 && this._count(k.wars) > 0 && n >= 10 && hasTech(k, "bronze")) want = BUILDING.WALLS; // 増強
     else want = tier;                                                      // さらに住居を増やす
 
     const spot = this._buildSpot(world, k, city, want);
@@ -4417,11 +4440,21 @@
               }
             }
           }
-          // 防備: 砦(KEEP)を備えた都市タイルは攻めにくいが、攻囲が進めば城壁の守りは薄れる。
+          // 防備: 砦(KEEP)と城壁(WALLS)を備えた都市タイルは攻めにくいが、攻囲が進めば守りは薄れる。
           for (let c = 0; c < other.cities.length; c++) {
             const cc = other.cities[c];
             if (cc.x === tx && cc.y === ty) {
-              if (cc.buildings) { for (let bi = 0; bi < cc.buildings.length; bi++) if (cc.buildings[bi].t === BUILDING.KEEP) { defMul *= (1 - CP.fortDefense * (1 - (cc.siege || 0))); break; } }
+              const relief = 1 - (cc.siege || 0); // 攻囲が進むほど守りは薄れる
+              if (cc.buildings) {
+                let hasKeep = false, wallW = 0;
+                for (let bi = 0; bi < cc.buildings.length; bi++) {
+                  const bt = cc.buildings[bi].t;
+                  if (bt === BUILDING.KEEP) hasKeep = true;
+                  else if (bt === BUILDING.WALLS) wallW += buildWeight(cc.buildings[bi]);
+                }
+                if (hasKeep) defMul *= (1 - CP.fortDefense * relief);
+                if (wallW > 0) defMul *= (1 - Math.min(CP.wallDefenseCap, wallW * CP.wallDefense) * relief);
+              }
               break;
             }
           }
