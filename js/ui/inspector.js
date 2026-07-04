@@ -316,6 +316,7 @@
       (info && info.techCount ? row("技術", info.techCount + "件 " + (info.latestTechs.length ? "（" + info.latestTechs.join("・") + "）" : "")) : "") +
       (k.inventions && k.inventions.length ? row("発明", "💡 " + esc(k.inventions.slice(-3).join("・"))) : "") +
       (k.artworks && k.artworks.length ? row("作品", "🎨 " + esc(k.artworks.slice(-3).join("・"))) : "") +
+      (k.relics && k.relics.length ? row("宝物", k.relics.slice(-4).map(function (r) { return ["⚔", "🔨", "👑"][r.kind] + "「" + esc(r.name) + "」"; }).join(" ")) : "") +
       (function () {
         // 建立した大建造物（種類つき）を列挙する。
         const kinds = Game.WONDER_KINDS;

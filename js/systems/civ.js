@@ -192,6 +192,17 @@
     artChance: 0.02,      // 閃きのうち不朽の傑作（作品）となる確率
     artFame: 2.4,         // 傑作で創造者が得る名声
     artCalm: 1.1,         // 傑作が国の不満を和らげる量（文化の結束）
+    // 宝物(relic): 名工・巨匠が稀に生む「名を持つ持続的な遺物」。作った者の死後も国に残り、
+    //   種別に応じて軍事・工芸・威信を底上げする。征服で戦利品として勝者に受け継がれる。
+    relicForge: 0.3,      // 傑作/画期的発明が「伝説の遺物」まで昇華する確率（工芸・創造で上振れ）
+    relicMax: 6,          // 1国が保持できる宝物の上限（効果と記憶を有界に）
+    relicMilEach: 0.05,   // 武具の宝物1つが軍事力へ与える倍率（累積・上限つき）
+    relicMilCap: 0.28,    // 武具宝物による軍事力上昇の上限
+    relicCraftEach: 0.05, // 名工の道具1つが工芸(craft)へ与える上乗せ（累積・上限つき）
+    relicCraftCap: 0.24,  // 道具宝物による工芸上昇の上限
+    relicRenownEach: 0.4, // 宝器1つが評価ごとに威信へ与える量
+    relicCalmEach: 0.25,  // 宝器1つが評価ごとに不満を和らげる量
+    relicPlunder: 0.5,    // 征服時、敗者の宝物1つが勝者に受け継がれる確率
     // 産業(industry): 工房・市・港・鉱山・学院・商人・職人・技術が織りなす「ものを作り
     //   売る力」。0..1 で緩やかに育ち、富・武具・技術・交易を底上げする（経済の厚み）。
     industryWealthW: 0.6,  // 産業→富（最大 +60%）
@@ -1818,7 +1829,9 @@
     // 軍事革新（兵器・戦術の工夫）で戦力が増す。
     const innovMil = 1 + ((k.innov && k.innov[4]) || 0) * CP.innovWarW;
     const wonderWar = 1 + (k.wonderField ? k.wonderField.war : 0) * CP.wonderWarW; // 巨像が軍を鼓舞
-    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar;
+    // 伝説の武具（宝物）: 名匠が鍛えた・戦で受け継いだ名器が軍を奮い立たせる（累積・上限つき）。
+    const relicWar = 1 + Math.min(CP.relicMilCap, this._relicBonus(k, 0) * CP.relicMilEach);
+    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar * relicWar;
     k._milTick = this._tickN; k._milCache = mil;
     return mil;
   };
@@ -2108,6 +2121,21 @@
         loser.humanCount > winner.humanCount * 0.6 && this.rand() < 0.3) {
       winner.religion = loser.religion;
       this._logEvent("☽ " + winner.name + " は征服した " + loser.name + " の " + loser.religion + " に染まった");
+    }
+    // 戦利品: 敗者の宝物が勝者へ受け継がれる（伝説の名器が国から国へ渡る＝アイテムの来歴）。
+    if (loser.relics && loser.relics.length) {
+      const wr = winner.relics || (winner.relics = []);
+      for (let i = loser.relics.length - 1; i >= 0; i--) {
+        if (this.rand() >= CP.relicPlunder) continue;
+        const r = loser.relics.splice(i, 1)[0];
+        // 既に同名を持っていなければ加える（重複回避・上限で最古が散逸）。
+        let dup = false;
+        for (let j = 0; j < wr.length; j++) if (wr[j].name === r.name && wr[j].kind === r.kind) { dup = true; break; }
+        if (dup) continue;
+        wr.push(r);
+        if (wr.length > CP.relicMax) wr.shift();
+        this._logEvent(RELIC_EMOJI[r.kind] + " " + winner.name + " が " + loser.name + " の" + RELIC_KINDS[r.kind] + "「" + r.name + "」を戦利品として得た");
+      }
     }
   };
 
@@ -2482,7 +2510,9 @@
       // 武具の備蓄: 金属（鉱石）と工芸力で鍛造する。鍛造の量は燃料(炭=森林)が支える――
       //   炉に火を入れられねば多くは打てない。富からの調達(輸入)は燃料に依らない。治安で増減。
       const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
-      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order * (1 + ka.industry * CP.industryToolW);
+      // 名工の道具（宝物）: 受け継がれた名工の道具・技法が工房の生産を底上げする（保持する限り）。
+      const relicCraft = Math.min(CP.relicCraftCap, this._relicBonus(ka, 1) * CP.relicCraftEach);
+      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order * (1 + ka.industry * CP.industryToolW) * (1 + relicCraft);
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
       // 製鉄の炭焼き: 鉄・鋼を盛んに鍛える国は、森を炭に費やして後退させる（史実の森林伐採）。
       //   植生システムが時とともに森を再生し、過伐採と再生の均衡が生まれる。
@@ -2540,6 +2570,9 @@
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
       dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0) + ka.faith * CP.faithCalm; // 信仰・食料・酒場・漁場・記念碑・法典で安定
       dU -= innov[5] * CP.innovArtW + (ka.renown || 0) * CP.renownCalm; // 文化革新・文化的威信が国民の誇りと結束を生む
+      // 宝器（宝物）: 国の象徴として威信を高め、民の誇りとなって不満を和らげる（保持する限り持続）。
+      const regalia = this._relicBonus(ka, 2);
+      if (regalia) { dU -= regalia * CP.relicCalmEach; ka.renown = (ka.renown || 0) + regalia * CP.relicRenownEach; }
 
       // 食料経済: 農民・農場・漁場・採集で生産し、人口が消費する。穀倉が備蓄上限を上げる。
       // 因果の要: 生産は「土地の肥沃度（=植生。干ばつ・火災・噴火で低下）」と「季節
@@ -3320,6 +3353,30 @@
   //   だが、稀に画期的な発明や不朽の傑作が現れ、その名は歴史に刻まれる。これにより文明は
   //   建物の数ではなく「人」によって自律的に進化し、創造性は名声と配偶者選択を通じて淘汰
   //   を受ける（創造が報われる地ほど集団が創造的に育つ）。
+  // 宝物（伝説の遺物）の種別ラベルと絵文字。0=武具 1=名工の道具 2=宝器。
+  const RELIC_KINDS = ["武具", "名工の道具", "宝器"];
+  const RELIC_EMOJI = ["⚔", "🔨", "👑"];
+
+  // 国 k が保持する、種別 kind の宝物の個数を返す（効果の集計に使う）。
+  CivSystem.prototype._relicBonus = function (k, kind) {
+    const relics = k.relics;
+    if (!relics || !relics.length) return 0;
+    let n = 0;
+    for (let i = 0; i < relics.length; i++) if (relics[i].kind === kind) n++;
+    return n;
+  };
+
+  // 名工/巨匠 h が国 k のために伝説の遺物を生む。作った者の死後も国に残る（heirloom）。
+  //   同名の重複は避け、上限を超えたら最古の遺物が散逸する（有界）。
+  CivSystem.prototype._forgeRelic = function (k, h, kind, name) {
+    const relics = k.relics || (k.relics = []);
+    for (let i = 0; i < relics.length; i++) if (relics[i].name === name && relics[i].kind === kind) return;
+    relics.push({ name: name, kind: kind, maker: h.name, origin: k.name, born: this._tickN || 0 });
+    if (relics.length > CP.relicMax) relics.shift(); // 最古の遺物は失われ/散逸する
+    h.prestige = (h.prestige || 0) + CP.breakthroughFame * 0.5; // 名器を遺した者は名を高める
+    this._logEvent(RELIC_EMOJI[kind] + " " + h.name + "（" + k.name + "）が伝説の" + RELIC_KINDS[kind] + "「" + name + "」を生み出した");
+  };
+
   CivSystem.prototype._invent = function (h, k, company) {
     if (h.age < CP.adultAge) return;            // 創造は成熟した心から
     const creat = h.creat || 1;
@@ -3363,6 +3420,10 @@
       (k.inventions || (k.inventions = [])).push(name);
       if (k.inventions.length > 12) k.inventions.shift();
       this._logEvent("💡 " + h.name + "（" + k.name + "）が「" + name + "」を生み出した");
+      // 名工/軍師の傑出は稀に「伝説の遺物」まで昇華する（鍛冶=名工の道具 / 軍事=武具）。
+      if ((dom === 1 || dom === 4) && this.rand() < CP.relicForge * Math.min(1.6, power)) {
+        this._forgeRelic(k, h, dom === 4 ? 0 : 1, name);
+      }
     } else if (h.aspire === 5 && this.rand() < CP.artChance * Math.min(2.5, power)) {
       // 不朽の傑作: 文化の強みと国の文化的威信(renown)を高め、不満を和らげ、名を遺す。
       h.prestige += CP.artFame;
@@ -3375,6 +3436,8 @@
       (k.artworks || (k.artworks = [])).push(name);
       if (k.artworks.length > 12) k.artworks.shift();
       this._logEvent("🎨 " + h.name + "（" + k.name + "）が傑作「" + name + "」を遺した");
+      // 不朽の傑作は稀に国の象徴たる「宝器」となり、保持する限り威信と結束を生み続ける。
+      if (this.rand() < CP.relicForge * Math.min(1.6, power)) this._forgeRelic(k, h, 2, name);
     }
   };
 
