@@ -379,14 +379,29 @@ test("セーブ/ロード: 世界状態を保存して復元できる", async ()
     for (let tk = 0; tk < 200; tk++) for (const sy of Game.state.engine.systems) if (sy.tick) sy.tick(Game.state.world);
     let osum = 0; for (let i = 0; i < w.owner.length; i++) osum += w.owner[i];
     const before = { kingdoms: civ.kingdoms.length, pop: civ.stats().population, live: Game.state.entities.live, seed: cfg.seed, osum: osum };
-    const json = JSON.stringify(Game.persistence.serialize());
+    // 循環参照になりうる人物間の直接参照を意図的に張る（母 _mom / 親友 bonds / 将 _genRef）。
+    //   これらが pid に変換されずに残ると JSON 化が「循環参照」で失敗し、保存が壊れる（回帰防止）。
+    if (civ.people.length >= 2) {
+      const p1 = civ.people[0], p2 = civ.people[1];
+      p1._mom = p2;                          // 母への直接参照
+      p1.bonds = [{ ref: p2, aff: 0.5 }];    // 親友（{ref,aff} 構造）
+      for (let ki = 1; ki < civ.kingdoms.length; ki++) if (civ.kingdoms[ki]) { civ.kingdoms[ki]._genRef = p1; break; } // 将
+    }
+    const json = JSON.stringify(Game.persistence.serialize()); // ここで循環参照だと throw する
     Game.regenerate();
     Game.persistence.deserialize(JSON.parse(json));
+    let refOk = true;
+    if (civ.people.length >= 2) {
+      const p1 = civ.people[0];
+      if (!(p1._mom && p1._mom.pid) || p1._momPid !== undefined) refOk = false;                 // 母参照が pid から復元される
+      if (!(p1.bonds && p1.bonds[0] && p1.bonds[0].ref && typeof p1.bonds[0].ref === "object")) refOk = false; // 親友が {ref,aff} で復元される
+      if (p1.bonds && p1.bonds[0] && Math.abs((p1.bonds[0].aff || 0) - 0.5) > 1e-6) refOk = false;            // affinity が保たれる
+    }
     const w2 = Game.state.world; let osum2 = 0; for (let i = 0; i < w2.owner.length; i++) osum2 += w2.owner[i];
     let partnerOk = true;
     for (const p of civ.people) { if (p._partnerPid !== undefined) partnerOk = false; if (p.partner && (typeof p.partner !== "object" || !p.partner.pid)) partnerOk = false; }
     const after = { kingdoms: civ.kingdoms.length, pop: civ.stats().population, live: Game.state.entities.live, seed: cfg.seed, osum: osum2 };
-    return { before, after, jsonLen: json.length, partnerOk };
+    return { before, after, jsonLen: json.length, partnerOk, refOk };
   });
   assert.ok(res.before.kingdoms >= 2, "建国できていない: " + res.before.kingdoms);
   assert.equal(res.after.kingdoms, res.before.kingdoms, "復元後の国数が一致");
@@ -395,6 +410,7 @@ test("セーブ/ロード: 世界状態を保存して復元できる", async ()
   assert.equal(res.after.seed, res.before.seed, "seedが一致");
   assert.equal(res.after.osum, res.before.osum, "領有が一致");
   assert.ok(res.partnerOk, "参照(partner)が復元されていない");
+  assert.ok(res.refOk, "人物間参照(母_mom/親友bonds)が正しく復元されていない");
   assert.ok(res.jsonLen > 100, "スナップショットが空");
   assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
   await page.close();

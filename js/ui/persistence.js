@@ -26,7 +26,7 @@
   // 人物の描画用・一時フィールド（保存不要）。
   const PERSON_DROP = { _px: 1, _py: 1, _mv: 1, look: 1, _enemy: 1 };
   // 王国の一時集計・参照（保存不要。復元時に再構築/再計算）。
-  const K_DROP = { rulerRef: 1, _topRef: 1, prices: 1, _moodS: 1, _moodN: 1, _cultS: 1,
+  const K_DROP = { rulerRef: 1, _topRef: 1, _genRef: 1, _genReftmp: 1, prices: 1, _moodS: 1, _moodN: 1, _cultS: 1,
     _lxS: 1, _lyS: 1, _fireLoss: 1, _raceCnt: 1, _topP: 1, _famineDeaths: 1 };
 
   function serialize() {
@@ -51,8 +51,14 @@
       const o = {};
       for (const k in p) {
         if (PERSON_DROP[k]) continue;
+        // 人物への直接参照は pid に置き換える（生オブジェクトを入れると循環参照で JSON 化が失敗する）。
         if (k === "partner") { o._partnerPid = p.partner ? (p.partner.pid || 0) : 0; continue; }
-        if (k === "bonds") { o._bondsPids = p.bonds ? p.bonds.map(function (b) { return b.pid || 0; }) : null; continue; }
+        if (k === "_mom") { o._momPid = p._mom ? (p._mom.pid || 0) : 0; continue; }
+        // 親友は {ref,aff} の配列。pid と affinity の対 [pid,aff] にして保存する。
+        if (k === "bonds") {
+          o._bondsData = p.bonds ? p.bonds.map(function (b) { return [b.ref ? (b.ref.pid || 0) : 0, b.aff]; }).filter(function (x) { return x[0]; }) : null;
+          continue;
+        }
         o[k] = p[k];
       }
       return o;
@@ -132,7 +138,10 @@
     for (let i = 0; i < civ.people.length; i++) {
       const p = civ.people[i];
       p.partner = p._partnerPid ? (pmap[p._partnerPid] || null) : null; delete p._partnerPid;
-      p.bonds = p._bondsPids ? p._bondsPids.map(function (id) { return pmap[id]; }).filter(Boolean) : null; delete p._bondsPids;
+      p._mom = p._momPid ? (pmap[p._momPid] || null) : null; delete p._momPid;
+      // 親友は {ref,aff} 構造で復元する（そのまま人物配列にすると _socialize が .ref/.aff を読めず壊れる）。
+      p.bonds = p._bondsData ? p._bondsData.map(function (bp) { const ref = pmap[bp[0]]; return ref ? { ref: ref, aff: bp[1] } : null; }).filter(Boolean) : null;
+      delete p._bondsData;
     }
     for (let id = 1; id < civ.kingdoms.length; id++) {
       const k = civ.kingdoms[id]; if (!k) continue;
