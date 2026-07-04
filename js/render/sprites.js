@@ -354,6 +354,35 @@
     O: [54, 38, 26], R: [150, 80, 46], W: [196, 168, 120], F: [240, 200, 110], D: [86, 56, 32], S: [120, 90, 50],
   };
 
+  // 水道（石造アーチの上に水路。清潔な水を都市へ運ぶ）。
+  const AQUEDUCT = [
+    "wwwwwwww",
+    "SSSSSSSS",
+    "SLLSLLSL",
+    "SAASAASA",
+    "SAASAASA",
+    "SSSSSSSS",
+    "SAASAASA",
+    "SSSSSSSS",
+  ];
+  const AQUEDUCT_PAL = {
+    S: [172, 164, 150], L: [198, 192, 180], A: [66, 60, 52], w: [92, 158, 208],
+  };
+  // 城壁（銃眼つきの石垣と門。都市を攻囲から守る）。
+  const WALLS = [
+    "S.S.S.S.",
+    "SSSSSSSS",
+    "SLSSLSSL",
+    "SSGGGGSS",
+    "SSGDDGSS",
+    "SSGDDGSS",
+    "SSGDDGSS",
+    "SSSSSSSS",
+  ];
+  const WALLS_PAL = {
+    S: [150, 145, 132], L: [178, 172, 158], G: [104, 82, 54], D: [40, 36, 30],
+  };
+
   const _b = {};
   function bget(key, grid, pal) { return _b[key] || (_b[key] = build(grid, pal)); }
   Game.sprites.house = function () { return bget("house", HOUSE, HOUSE_PAL); };
@@ -371,6 +400,8 @@
   Game.sprites.academy = function () { return bget("academy", ACADEMY, ACADEMY_PAL); };
   Game.sprites.harbor = function () { return bget("harbor", HARBOR, HARBOR_PAL); };
   Game.sprites.tavern = function () { return bget("tavern", TAVERN, TAVERN_PAL); };
+  Game.sprites.aqueduct = function () { return bget("aqueduct", AQUEDUCT, AQUEDUCT_PAL); };
+  Game.sprites.walls = function () { return bget("walls", WALLS, WALLS_PAL); };
 
   // 建物タイプID → スプライト（civ の Game.BUILDING と対応）。
   // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉,
@@ -391,6 +422,8 @@
       case 12: return Game.sprites.academy();
       case 13: return Game.sprites.harbor();
       case 14: return Game.sprites.tavern();
+      case 15: return Game.sprites.aqueduct();
+      case 16: return Game.sprites.walls();
       default: return Game.sprites.house(); // 1
     }
   };

@@ -290,6 +290,14 @@
       })() +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
       ((k.industry || 0) >= 0.08 ? row("産業", "🏭 " + (k.industry >= 0.6 ? "高" : k.industry >= 0.3 ? "中" : "低") + "（" + Math.round(k.industry * 100) + "）") : "") +
+      (function () {
+        // 都市の整備: 城壁（防備）・水道（衛生）を備えていれば示す。
+        const f = k.facilities; if (!f) return "";
+        const parts = [];
+        if ((f.walls || 0) > 0.1) parts.push("🏰城壁×" + Math.round(f.walls));
+        if ((f.aqueduct || 0) > 0.1) parts.push("💧水道×" + Math.round(f.aqueduct));
+        return parts.length ? row("都市整備", parts.join(" · ")) : "";
+      })() +
       bar("不満", Math.round(k.unrest), true) +
       (info && info.morale != null ? bar("民心", info.morale, false) : "") +
       row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "") +
