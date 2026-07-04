@@ -465,6 +465,36 @@ test("CivSystem: 交易で双方が富み、余剰国から飢饉国へ食料が
   assert.ok(kb.wealth < wkb0 && ka.wealth > wka0, "食料の対価（富）が動かない");
 });
 
+test("CivSystem: 地力 — 過耕作で土が痩せ収量が落ち、休閑・農法で回復する", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
+  const CS = Game.CivSystem;
+
+  // 持続可能な耕作強度（sustain 以下）では地力は 1 に保たれる（均衡は不変）。
+  let s = 1;
+  for (let i = 0; i < 30; i++) s = CS.soilStep(s, 0.05, 0.13, 1.0); // intensity < sustain
+  assert.ok(s > 0.999, "持続可能な耕作で地力が痩せた: " + s);
+
+  // 過耕作（強度 > sustain）が続くと地力は目に見えて痩せる（1未満へ低下）。
+  let d = 1;
+  for (let i = 0; i < 40; i++) d = CS.soilStep(d, 0.5, 0.13, 1.0); // intensity >> sustain
+  assert.ok(d < 0.85, "過耕作で地力が痩せない: " + d);
+
+  // 休閑（耕作を弱める）で地力は回復へ向かう（痩せた土が時とともに癒える）。
+  let r = d;
+  for (let i = 0; i < 40; i++) r = CS.soilStep(r, 0.02, 0.13, 1.0);
+  assert.ok(r > d + 0.05, "休閑で地力が回復しない: " + r + " ← " + d);
+
+  // 収量係数: 地力1で満収量(1)、痩せた土は下限(soilFloor)へ落ちるが 0 にはならない。
+  assert.ok(Math.abs(CS.soilYield(1) - 1) < 1e-9, "満地力で満収量にならない");
+  assert.ok(CS.soilYield(0) > 0 && CS.soilYield(0) < 1, "枯れ地の収量係数が下限外");
+  assert.ok(CS.soilYield(1) > CS.soilYield(0.3), "地力が高いほど収量が高くない");
+
+  // 農法（高い持続可能強度）は同じ強度でも土を痩せさせない（農耕技術・輪作の効果）。
+  let good = 1, poor = 1;
+  for (let i = 0; i < 30; i++) { good = CS.soilStep(good, 0.18, 0.25, 1.0); poor = CS.soilStep(poor, 0.18, 0.13, 1.0); }
+  assert.ok(good > poor, "農法で土が持ちこたえない: good=" + good + " poor=" + poor);
+});
+
 test("CivSystem: 放浪者(人間)が集まって自ら国を興す", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   const w = new Game.World(40, 40);

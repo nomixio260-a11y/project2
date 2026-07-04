@@ -264,6 +264,17 @@
     foodStoreBase: 36,    // 基本の備蓄上限（小さめ＝戦争・凶作が早く響く）
     foodStoreGranary: 48, // 穀倉1棟あたりの備蓄上限増
     famineDeathFood: 3,   // 食料不足この量ごとに1人が餓死
+    // 地力（土壌の養分）: 過耕作は地力を痩せさせ収量を落とす。休閑・好条件・農法（農耕技術・
+    //   輪作）が地力を回復させる。持続可能な密度では地力は保たれ（＝均衡は不変）、狭い領土に
+    //   農を詰め込む過耕作でのみ痩せる。史実の連作障害・地力低下・輪作の知恵を表す。
+    arablePerCity: 90,    // 1都市が抱えられる農地の広さ（近傍で実際に耕せる範囲。強度の分母）
+    soilSustain: 0.13,    // これ以下の耕作強度（＝農の生産圧÷農地）なら地力は保たれる（持続可能）
+    soilAgriTech: 0.45,   // 農耕技術(agri)が持続可能な耕作強度を引き上げる割合
+    soilRotationW: 0.6,   // 農業革新(輪作)が持続可能な耕作強度を引き上げる係数（×innov[3]）
+    soilDrain: 0.22,      // 持続可能強度を超えた分1あたり、評価ごとに地力が痩せる速さ
+    soilOverMax: 0.35,    // 過耕作の痩せに用いる超過分の上限（暴走を防ぐ）
+    soilRecover: 0.05,    // 休閑・好地での地力回復の速さ／評価（1へ向かう）
+    soilFloor: 0.6,       // 地力が尽きても保たれる最低収量係数（完全な不毛は避ける）
     // 火災の被害（延焼が集落に達したとき。建物・農地・住民へ波及する）
     fireHarm: 0.5,        // 燃えるタイルにいる人が1ティックに失う体力(食料)
     fireDeath: 0.06,      // 燃えるタイルにいる人が焼死する確率／ティック
@@ -672,6 +683,17 @@
   }
   function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
+  // 地力(土壌の養分)の1評価ぶんの更新（純粋関数）。耕作強度 intensity が持続可能強度 sustain を
+  //   超えた分だけ痩せ、休閑（強度が低い）と好地(fert)で 1 へ回復する。sustain 以下なら 1 に張り付く。
+  function soilStep(soil, intensity, sustain, fert) {
+    const s = soil == null ? 1 : soil;
+    const over = Math.min(CP.soilOverMax, Math.max(0, intensity - sustain));
+    const recover = CP.soilRecover * (1 - s) * (0.5 + 0.5 * (fert / 1.1));
+    return clamp01(s + recover - CP.soilDrain * over);
+  }
+  // 地力から収量係数（soilFloor..1）を返す。痩せた土は収量を落とすが完全な不毛は避ける。
+  function soilYield(soil) { return CP.soilFloor + (1 - CP.soilFloor) * (soil == null ? 1 : soil); }
+
   // ===== 社会・人間関係（会話で結びつき、影響し合い、社会を形づくる）=====
   // 人名: 音節を組み合わせて固有名を作る（年代記・インスペクタで個人を指す）。
   const PERSON_A = ["Al", "Bre", "Cas", "Dor", "El", "Fen", "Gar", "Hel", "Ir", "Jor", "Ka", "Lo", "Mar", "Ned", "Or", "Pol", "Rin", "Sel", "Tor", "Ul", "Ven", "Wyn", "Yas", "Zel", "Ash", "Bryn", "Cor", "Dag"];
@@ -1017,6 +1039,7 @@
       ethos: NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0], // 国是（持続的な国の気質）
       wealth: 0,     // 富（交易・領土から蓄積）
       food: 30,      // 食料備蓄（生産-消費。0で飢饉）
+      soil: 1,       // 地力(0..1)。過耕作で痩せ、休閑・農法で回復。収量に効く
       famine: false, // 飢饉中か（繁殖停止・餓死）
       unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
       plague: 0,     // 疫病の残り評価回数（>0 で流行中）
@@ -2591,8 +2614,20 @@
       //   ただし「豊穣の時代／旱魃の時代」という起伏を作る）。植生のある環境でのみ反映。
       const clk = Game.state.clock;
       const climF = Game.state.vegetation && clk ? (1 + 0.3 * (clk.wetness || 0) + 0.1 * (clk.warmth || 0)) : 1;
+      // 地力（土壌の養分）: 農の生産圧を領土（＝作れる農地）で割った耕作強度が、農法で決まる
+      //   持続可能な強度を超えると土が痩せる（過耕作・連作障害）。休閑（強度が低い）と好地・
+      //   農法（農耕技術・輪作）が地力を回復させる。持続可能な密度なら地力は 1 近傍に保たれ、
+      //   経済の均衡は不変――狭い領土に農を詰め込む過耕作でだけ収量が落ちる。
+      // 農地は集落の周りに限られる（領土全部を耕せるわけではない）。都市数×近傍農地を、
+      //   実際に領有する土地で頭打ちにしたものを分母とする＝農を都市に詰め込むほど地力に響く。
+      const farmLoad = ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg;
+      const arable = Math.max(1, Math.min(ka.tileCount, ka.cities.length * CP.arablePerCity));
+      const intensity = farmLoad / arable;
+      const sustain = CP.soilSustain * (1 + (hasTech(ka, "agri") ? CP.soilAgriTech : 0) + innov[3] * CP.soilRotationW);
+      ka.soil = soilStep(ka.soil, intensity, sustain, fert);
+      const soilF = soilYield(ka.soil); // 痩せた土は収量を落とす（下限つき）
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
-        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order * (1 + innov[3] * CP.innovFoodW); // 農業革新で増産
+        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order * soilF * (1 + innov[3] * CP.innovFoodW); // 農業革新で増産・地力で増減
       const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary + (res.salt || 0) * CP.saltStore; // 塩で保存（備蓄増）
@@ -2849,7 +2884,7 @@
       langY: clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05),
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
       ethos: parent.ethos || NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0], // 国是は母国から継ぐ
-      wealth: 0, food: 20, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 }, alive: true,
+      wealth: 0, food: 20, soil: parent.soil == null ? 1 : parent.soil, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 }, alive: true,
     };
     this.kingdoms.push(nk);
     // 宗派分裂（独立に伴う異端の発生）: 独立国はしばしば母国の信仰から分かれ、
@@ -4647,6 +4682,10 @@
       this._logEvent("🏘 " + ka.name + " が新たな開拓地を築いた");
     }
   };
+
+  // 地力の純粋関数を検証・調整用に公開。
+  CivSystem.soilStep = soilStep;
+  CivSystem.soilYield = soilYield;
 
   Game.CivSystem = CivSystem;
   Game.ROLE = ROLE;
