@@ -121,6 +121,8 @@
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
+    familyR: 4,          // 幼い子が親から離れずに過ごす半径（家族の群れ）
+    familyChaseMax: 14,  // 親がこの距離内にいるときだけ付き従う（遠征した親は追わず里で待つ）
     // 余暇・文化（基本的な欲求が満たされた人々の多彩な日常）。安全と空腹が満たされた
     //   日中、人は思い思いに過ごす――子は遊び、大人は祭り・礼拝・市・物見へ。性格・信仰・
     //   近隣の施設で行動が分かれ、集いが社交と文化の交わりを生む（日常に個性と彩りが出る）。
@@ -1222,6 +1224,7 @@
       h.prestige = pa ? Math.min(4, ((pa.prestige || 0) + (pb ? (pb.prestige || 0) : 0)) * 0.12) : 0;
       h.partner = null;     // 伴侶（繁殖で結ばれ、死別で深く悲しむ）
       h.bonds = null;       // 親友（会話を重ねて結ばれる。最大 MAX_BONDS）
+      h._mom = pa || null;  // 主たる親への直接参照（幼い子は成人まで付き従う＝家族の群れ）
       // 文化的気質（会話で伝播し、地域・国ごとの文化を創発させる）。
       h.culture = pa
         ? clamp01(((pa.culture == null ? 0.5 : pa.culture) + (pb ? (pb.culture == null ? 0.5 : pb.culture) : (pa.culture == null ? 0.5 : pa.culture))) / 2 + (this.rand() - 0.5) * 0.08)
@@ -3648,6 +3651,17 @@
     // 1.6) 余暇・文化: 安全と空腹が満たされた日中、人は生業の合間に思い思いに過ごす。
     //   子は遊び、大人は性格・信仰に応じて祭り・礼拝・市・物見へ。日常に彩りと個性が出る。
     if (this._leisure(h, k, world, hcx, hcy)) return;
+    // 1.7) 家族: 幼い子は親のそばで育つ。母が生きていれば付き従い（離れれば駆け寄り、近ければ
+    //   周りで過ごす）、世界に家族の群れが生まれる。成人すれば・親を亡くせば独り立ちする。
+    if (h._mom && (h.age >= CP.adultAge || !h._mom.alive || h._mom.kid !== h.kid)) h._mom = null;
+    if (h._mom && h.age < CP.adultAge) {
+      const mom = h._mom, dx = mom.x - h.x, dy = mom.y - h.y, d2 = dx * dx + dy * dy;
+      if (d2 < CP.familyChaseMax * CP.familyChaseMax) { // 親が近くにいるときだけ付き従う（遠征等は追わない）
+        if (d2 > CP.familyR * CP.familyR) { h.gx = mom.x | 0; h.gy = mom.y | 0; h.state = 2; return; } // 親のもとへ駆け寄る
+        this._ringGoal(h, world, mom.x | 0, mom.y | 0, 0, CP.familyR); h.state = 2; return; // 親の周りで過ごす
+      }
+      // 親が遠くへ行った → 里で待つ（下の通常処理＝家の周りで暮らす）。
+    }
     // 2) 孤独 → 同胞のもとへ集まる。
     if (h.social > 1) {
       const soc = this._scan(h.x, h.y, CP.socialRadius, function (o) { return o.kid === h.kid ? 1 : 0; });
