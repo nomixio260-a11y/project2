@@ -969,7 +969,11 @@ test("CivSystem: 鉄の製錬には燃料(森)が要る（冶金の連鎖）", (
   Game.state = Game.state || {}; Game.state.civ = civ;
   const A = civ.foundAt(4, 10), B = civ.foundAt(44, 10);
   const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
-  ka.tech = kb.tech = 260; // 鉄器時代相当（青銅・鉄は評価で自動獲得）
+  ka.tech = kb.tech = 260; // 鉄器時代相当
+  // 冶金の連鎖（燃料依存）を検証するため、両国に青銅・鉄の技術を直接与える
+  //   （発見の時期は国の性格で分岐するため、ここでは技術ツリーではなく燃料の因果を試す）。
+  ka.techBits.bronze = ka.techBits.iron = true;
+  kb.techBits.bronze = kb.techBits.iron = true;
 
   for (let t = 0; t < 400; t++) civ.tick(w);
 
@@ -1634,4 +1638,35 @@ test("worldgen: 川辺は氾濫原で潤い、水辺に町が興りやすい（�
   let same = true;
   for (let i = 0; i < W * H && same; i++) if (Math.abs(w.moisture[i] - w2.moisture[i]) > 1e-9) same = false;
   assert.ok(same, "氾濫原はシードで再現的（決定的）");
+});
+
+test("CivSystem: 技術ツリー — 前提技術と、国の性格による発見順の分岐", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20, seed: 5 });
+  const TT = Game.TECH_TREE;
+  assert.ok(TT && TT.list.length >= 10, "技術ツリーが公開されている");
+
+  // 前提技術: 鉄器は青銅器を要し、火薬は鉄器を要し、印刷・法典・鋳貨は文字を要する。
+  const iron = TT.byId.iron, gun = TT.byId.gunpowder, coin = TT.byId.coin, printing = TT.byId.printing;
+  assert.ok(iron.req.indexOf("bronze") >= 0, "鉄器は青銅器が前提");
+  assert.ok(gun.req.indexOf("iron") >= 0, "火薬は鉄器が前提");
+  assert.ok(printing.req.indexOf("writing") >= 0, "印刷は文字が前提");
+  assert.ok(coin.req.indexOf("writing") >= 0 && coin.req.indexOf("wheel") >= 0, "鋳貨は文字と車輪が前提");
+
+  // reqMet(k, T): 青銅器の無い国は鉄器を満たさない。
+  const bare = { techBits: {} };
+  assert.ok(!TT.reqMet(bare, iron), "青銅器なしでは鉄器の前提を満たさない");
+  const withBronze = { techBits: { bronze: true } };
+  assert.ok(TT.reqMet(withBronze, iron), "青銅器があれば鉄器の前提を満たす");
+  assert.ok(!TT.reqMet(withBronze, gun), "鉄器なしでは火薬の前提を満たさない");
+
+  // 性格による分岐（threshold(k, T)）: 好戦的な国は鉄器の敷居が低く（早い）、平和な国は高い。
+  const neutralEthos = { name: "", war: 1, trade: 1, tech: 1 };
+  const warlike = { govMod: { war: 1.5, trade: 1, tech: 1, unrest: 1, expand: 1 }, ethos: neutralEthos };
+  const peaceful = { govMod: { war: 0.6, trade: 1, tech: 1, unrest: 1, expand: 1 }, ethos: neutralEthos };
+  assert.ok(TT.threshold(warlike, iron) < iron.at, "好戦国は鉄器を早く（敷居が低い）");
+  assert.ok(TT.threshold(peaceful, iron) > iron.at, "平和国は鉄器が遅い（敷居が高い）");
+  assert.ok(TT.threshold(warlike, iron) < TT.threshold(peaceful, iron), "好戦国 < 平和国（鉄器の敷居）");
+  // 知の国は文字・印刷が早い。
+  const scholar = { govMod: { war: 1, trade: 1, tech: 1.5, unrest: 1, expand: 1 }, ethos: neutralEthos };
+  assert.ok(TT.threshold(scholar, printing) < printing.at, "学究国は印刷が早い");
 });

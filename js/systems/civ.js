@@ -486,19 +486,49 @@
   function ethosName(e) { return e ? e.name : "—"; }
 
   // 個別の技術発見。tech 値が閾値 at を超えると獲得し、具体的な恩恵を得る。
+  // 技術ツリー: 各技術は前提技術(req)と分野(field)を持つ。前提を満たし、かつ国の性格で
+  //   変わる「実効の敷居」を技術力が超えたとき発見される。分野は国の気質・政体・立地で得手
+  //   不得手が生まれ（軍・商・知・海・食・秩序）、文明ごとに技術の道筋が分岐する――好戦の国は
+  //   冶金を、商都は文字と貨幣を、海洋国は航海術を、いち早く極める。
   const TECHS = [
-    { id: "agri", name: "農耕", at: 20 },     // 食料・人口扶養力
-    { id: "writing", name: "文字", at: 48 },  // 技術の進歩を加速
-    { id: "wheel", name: "車輪", at: 80 },    // 交易・富
-    { id: "coin", name: "鋳貨", at: 100 },    // 貨幣経済（金鉱石を鋳造し交易を潤す）
-    { id: "bronze", name: "青銅器", at: 120 }, // 軍事
-    { id: "sail", name: "航海術", at: 150 },  // 海を越える植民
-    { id: "iron", name: "鉄器", at: 185 },    // 軍事
-    { id: "law", name: "法典", at: 215 },     // 社会の安定（不満減）
-    { id: "gunpowder", name: "火薬", at: 290 }, // 軍事（大）
-    { id: "printing", name: "印刷", at: 340 },  // 技術の進歩を大きく加速
+    { id: "agri", name: "農耕", at: 20, field: "food", req: [] },       // 食料・人口扶養力
+    { id: "writing", name: "文字", at: 48, field: "knowledge", req: [] }, // 技術の進歩を加速
+    { id: "bronze", name: "青銅器", at: 110, field: "military", req: [] }, // 軍事（冶金の基）
+    { id: "wheel", name: "車輪", at: 85, field: "trade", req: [] },     // 交易・富
+    { id: "sail", name: "航海術", at: 150, field: "sea", req: [] },     // 海を越える植民
+    { id: "coin", name: "鋳貨", at: 105, field: "trade", req: ["writing", "wheel"] }, // 貨幣経済
+    { id: "law", name: "法典", at: 200, field: "order", req: ["writing"] }, // 社会の安定（不満減）
+    { id: "iron", name: "鉄器", at: 190, field: "military", req: ["bronze"] }, // 軍事（青銅の先）
+    { id: "printing", name: "印刷", at: 330, field: "knowledge", req: ["writing"] }, // 技術を大きく加速
+    { id: "gunpowder", name: "火薬", at: 300, field: "military", req: ["iron"] }, // 軍事（大。鉄の先）
   ];
+  const TECH_BY_ID = {}; for (let i = 0; i < TECHS.length; i++) TECH_BY_ID[TECHS[i].id] = TECHS[i];
   function hasTech(k, id) { return !!(k.techBits && k.techBits[id]); }
+  // 前提技術をすべて満たしているか。
+  function techReqMet(k, T) {
+    const r = T.req;
+    for (let i = 0; i < r.length; i++) if (!hasTech(k, r[i])) return false;
+    return true;
+  }
+  // 国の分野ごとの得手（0を中庸に、±で早い/遅い）。政体・気質・立地から導く。
+  function techAffinity(k, field) {
+    const gm = k.govMod || null, et = k.ethos || null;
+    let a = 0;
+    if (field === "military") a = ((gm ? gm.war : 1) - 1) * 0.6 + ((et ? et.war : 1) - 1) * 0.4;
+    else if (field === "trade") a = ((gm ? gm.trade : 1) - 1) * 0.6 + ((et ? et.trade : 1) - 1) * 0.4;
+    else if (field === "knowledge") a = ((gm ? gm.tech : 1) - 1) * 0.6 + ((et ? et.tech : 1) - 1) * 0.4;
+    else if (field === "order") a = (1 - (gm ? gm.unrest : 1)) * 0.5;   // 治まりやすい国は法へ早い
+    else if (field === "sea") a = k._coastalNation ? 0.6 : -0.25;       // 海に開けた国は航海へ早い
+    else if (field === "food") a = ((gm ? gm.expand : 1) - 1) * 0.4;    // 拡張的な国は農へ
+    return a;
+  }
+  // その国におけるこの技術の実効の敷居（得手なら早まり、不得手なら遅れる）。
+  function techThreshold(k, T) {
+    const a = techAffinity(k, T.field);
+    let f = 1 - a * 0.35;                 // 得手 → 敷居↓（早い） / 不得手 → 敷居↑（遅い）
+    if (f < 0.6) f = 0.6; else if (f > 1.5) f = 1.5;
+    return T.at * f;
+  }
 
   function eraOf(tech) {
     let i = (tech / TECH_PER_ERA) | 0;
@@ -1925,6 +1955,7 @@
       const T = TECHS[ti];
       if (T.id === "coin") continue;                 // 貨幣は商業を通じて別途伝播する（_culturalExchange）
       if (!donor.techBits[T.id] || recv.techBits[T.id]) continue;
+      if (!techReqMet(recv, T)) continue;            // 前提技術が無ければ借用しても使いこなせない
       const ahead = recv.tech < T.at;                // 自国の時代より早い借用か
       const chance = (ahead ? 0.05 : 0.13) * Math.min(2.5, openness);
       if (this.rand() < chance) {
@@ -1988,7 +2019,8 @@
       const donor = coinKa ? ka : kb;
       const o = recv === ka ? oab : oba;
       const bond = (recv.partners && recv.partners[donor.id]) ? 1.8 : 1; // 交易相手からはより伝わる
-      if (this.rand() < CP.coinAdoptChance * Math.min(2.5, o) * bond) {
+      // 前提（文字・車輪）を欠く国は貨幣を使いこなせない。
+      if (techReqMet(recv, TECH_BY_ID.coin) && this.rand() < CP.coinAdoptChance * Math.min(2.5, o) * bond) {
         recv.techBits.coin = true;
         if (recv.discovered && recv.discovered.indexOf("鋳貨") < 0) recv.discovered.push("鋳貨");
         this._logEvent("🪙 " + recv.name + " が " + donor.name + " に倣い貨幣（鋳貨）を使い始めた");
@@ -2022,7 +2054,7 @@
     if (loser.techBits) {
       for (let ti = 0; ti < TECHS.length; ti++) {
         const T = TECHS[ti];
-        if (loser.techBits[T.id] && !winner.techBits[T.id] && this.rand() < 0.5) {
+        if (loser.techBits[T.id] && !winner.techBits[T.id] && techReqMet(winner, T) && this.rand() < 0.5) {
           winner.techBits[T.id] = true;
           winner.discovered.push(T.name);
           if (winner.tech < T.at) winner.tech = T.at * 0.9;
@@ -2422,10 +2454,18 @@
         if (fl.length < 64) fl.push({ x: fi % Wd, y: (fi / Wd) | 0, age: 0 });
         ka._fuelTile = -1;
       }
-      // 個別技術の発見（tech が閾値を超えたら獲得し、年代記に記録）。
+      // 海に開けた国か（航海術の得手に効く）。都市の立地から判定（数都市なので毎評価でも軽い）。
+      ka._coastalNation = false;
+      for (let ci = 0; ci < ka.cities.length; ci++) {
+        if (this._coastal(this.world, ka.cities[ci].x, ka.cities[ci].y)) { ka._coastalNation = true; break; }
+      }
+      // 個別技術の発見: 前提技術を満たし、国の性格で変わる実効の敷居を技術力が超えたとき獲得。
+      //   分野ごとの得手不得手で発見の順序が国ごとに分岐する（技術ツリー）。
       for (let ti = 0; ti < TECHS.length; ti++) {
         const T = TECHS[ti];
-        if (ka.tech >= T.at && !ka.techBits[T.id]) {
+        if (ka.techBits[T.id]) continue;
+        if (!techReqMet(ka, T)) continue;                  // 前提技術が未達なら不可
+        if (ka.tech >= techThreshold(ka, T)) {
           ka.techBits[T.id] = true;
           ka.discovered.push(T.name);
           this._logEvent("🔬 " + ka.name + " が「" + T.name + "」を発見した");
@@ -4480,6 +4520,8 @@
   Game.ROLE_NAMES = ["開拓者", "農民", "建築家", "兵士", "鍛冶", "商人", "神官"];
   Game.WONDER_KINDS = WONDER_KINDS;
   Game.eraOf = eraOf; // 技術→時代名（ホバー説明・UI用）
+  // 技術ツリー（前提・分野・実効の敷居）。テスト・UI用に公開する。
+  Game.TECH_TREE = { list: TECHS, byId: TECH_BY_ID, reqMet: techReqMet, threshold: techThreshold, affinity: techAffinity };
   // 描画の年齢段階（子供/老人）と一致させるための閾値。
   Game.lifeStages = { adult: CP.adultAge, elder: CP.elderAge };
 })(window.Game);
