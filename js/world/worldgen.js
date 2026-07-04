@@ -215,6 +215,41 @@
           i = best;
         }
       }
+
+      // 氾濫原・湖畔: 淡水（川・湖）の岸辺の土地は、氾濫が運ぶ沃土と地下水で潤う
+      //   （ナイル・メソポタミアの現実）。海から離れた浅水＝淡水と判定し、周囲2タイルの
+      //   陸地の湿度を距離減衰で底上げする。この湿度は植生の moistureBase（気候の素地）に
+      //   引き継がれ、川沿い・湖畔は恒常的に肥沃な緑の回廊になる——食を求める民が自然と
+      //   水辺に集まり、大河文明が創発する。決定的（乱数不使用）。
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (world.terrain[y * W + x] !== T.SHALLOW_WATER) continue;
+          // 深海が3タイル以内にあれば海辺（汽水・磯）とみなし対象外。
+          let fresh = true;
+          for (let dy = -3; dy <= 3 && fresh; dy++) {
+            const ny = y + dy; if (ny < 0 || ny >= H) continue;
+            for (let dx = -3; dx <= 3; dx++) {
+              const nx = x + dx; if (nx < 0 || nx >= W) continue;
+              if (world.terrain[ny * W + nx] === T.DEEP_WATER) { fresh = false; break; }
+            }
+          }
+          if (!fresh) continue;
+          // 直近の岸辺（8近傍）だけを潤す。細い緑の回廊にとどめ、世界全体を湿らせない。
+          for (let dy = -1; dy <= 1; dy++) {
+            const ny = y + dy; if (ny < 0 || ny >= H) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = x + dx; if (nx < 0 || nx >= W) continue;
+              const ni = ny * W + nx;
+              const t = world.terrain[ni];
+              if (t === T.DEEP_WATER || t === T.SHALLOW_WATER) continue;
+              const boost = (dx === 0 || dy === 0) ? 0.35 : 0.22; // 上下左右は厚く、斜めは薄く
+              const m = world.moisture[ni] + boost;
+              world.moisture[ni] = m > 1 ? 1 : m;
+            }
+          }
+        }
+      }
     },
   };
 })(window.Game);

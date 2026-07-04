@@ -132,12 +132,19 @@
       if (!w || !civ || !ent) return;
       const W = w.width, H = w.height, area = W * H;
       const tile = Game.tile, S = Game.SPECIES;
-      // 文明（建国数は広さに比例、6〜18国）。
+      // 文明（建国数は広さに比例、6〜18国）。古代の都がそうであったように、水辺（川・海）の
+      //   近くを優先して興る（飲み水・漁・水運）。水辺が見つからなければ内陸にも妥協する。
       const nK = Math.max(6, Math.min(18, Math.round(area / 16000)));
+      function nearWater(x, y) {
+        return (x > 0 && tile.isWater(w.terrain[y * W + x - 1])) || (x < W - 1 && tile.isWater(w.terrain[y * W + x + 1])) ||
+          (y > 0 && tile.isWater(w.terrain[(y - 1) * W + x])) || (y < H - 1 && tile.isWater(w.terrain[(y + 1) * W + x]));
+      }
       let founded = 0;
       for (let a = 0; a < nK * 600 && founded < nK; a++) {
         const x = (Math.random() * W) | 0, y = (Math.random() * H) | 0;
-        if (tile.isLand(w.terrain[y * W + x]) && civ.foundAt(x, y) > 0) founded++;
+        if (!tile.isLand(w.terrain[y * W + x])) continue;
+        if (!nearWater(x, y) && Math.random() < 0.65) continue; // 内陸は多くを見送り水辺を探す
+        if (civ.foundAt(x, y) > 0) founded++;
       }
       // 野生（草食はほどほどに。多すぎないよう控えめに撒き、あとは生態系が自然に増やす）。
       const nH = Math.min(480, Math.round(area / 2600));
