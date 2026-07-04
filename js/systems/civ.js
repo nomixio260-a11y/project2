@@ -157,6 +157,14 @@
     mindElderW: 1.8,     // 古老の教えの重み（長く生きた者は多くを伝える）
     mindInventW: 0.9,    // 知識が発明力を高める強さ
     mindWisdomW: 0.6,    // 知識が判断の質（思慮深さ）を高める強さ
+    // 高度な知能: 記憶・備え・警告の伝達。賢く博識な者ほど多くの場所を覚え、先を読んで蓄え、
+    //   仲間に危険を知らせる――知能が実際の生存差になる（wit/mind への選択圧）。
+    memFoodSlots1: 0.3,  // 叡智がこの値以上で食料地の記憶が2枠に増える
+    memFoodSlots2: 0.65, // 叡智がこの値以上で3枠に増える
+    packCap: 0.5,        // 携行できる蓄え（干し肉・木の実）の上限
+    packEatAt: 0.3,      // 空腹がここを下回ると蓄えを食べる（飢えをしのぐ）
+    packBite: 0.2,       // 一度に食べる蓄えの量
+    prepareW: 0.5,       // 秋の冬支度の強さ（高緯度ほど・賢く博識なほど早めに食を確保する）
     eminenceMul: 2.6,    // 年代記に名を刻むのは名声がこの倍率×閾値を超えた真の傑物のみ
     // 遺伝（組換え・突然変異）: 子は片親へ寄りつつ僅かに混ざり、変異が個性と進化を生む。
     mutAmt: 0.16,        // 微小な突然変異の幅
@@ -1463,7 +1471,8 @@
       const tx = h.x | 0, ty = h.y | 0;
       const ti = ty * world.width + tx;
       const terr = world.terrain[ti];
-      // 採食。
+      // 採食。満ちれば余りを蓄え（干し肉・木の実の携行＝食べきれない分を保存する知恵）、
+      //   豊かな場所は記憶に刻む（探しに来た時だけ＝state 1。空間記憶）。
       if (tile.isEdible(terr)) {
         let gain = CP.eatGain;
         if (world.fertility) {
@@ -1472,6 +1481,19 @@
           world.fertility[ti] = f > CP.harvest ? f - CP.harvest : 0;
         }
         h.food += gain;
+        if (h.food > 1) {
+          const spill = h.food - 1;
+          h.food = 1;
+          const pk = (h.pack || 0) + spill;
+          h.pack = pk > CP.packCap ? CP.packCap : pk; // 余剰は蓄えへ（上限あり）
+        }
+        if (h.state === 1 && gain > 0.03) this._rememberFood(h, tx, ty); // 実りの良い場所を覚える
+      }
+      // 蓄えを食べる: 飢えが迫れば携えた食料で凌ぐ（先読みの備えが命を救う）。
+      if (h.food < CP.packEatAt && (h.pack || 0) > 0) {
+        const bite = h.pack < CP.packBite ? h.pack : CP.packBite;
+        h.pack -= bite;
+        h.food += bite;
         if (h.food > 1) h.food = 1;
       }
       // 火災に巻かれる: 燃えるタイルにいる者は焼かれ、体力(食料)を失い恐慌する。
@@ -3140,8 +3162,19 @@
         h.mind += mgap * CP.mindTeach * (0.6 + 0.4 * (h.wit || 1)) * infl * mi * elderW;
         if (h.mind > 1) h.mind = 1;
       }
-      // 食料地の知らせを分かち合う（自分が知らず相手が知っていれば教わる。要・意思疎通）。
-      if (!h.memFood && other.memFood && mi > 0.55) h.memFood = { x: other.memFood.x, y: other.memFood.y };
+      // 食料地の知らせを分かち合う（相手の知る実りの地を教わる。要・意思疎通）。
+      if (other.memFoods && other.memFoods.length && mi > 0.55 &&
+          (!h.memFoods || h.memFoods.length < memCapOf(h))) {
+        const src = other.memFoods[other.memFoods.length - 1]; // 相手の最新の知見
+        this._rememberFood(h, src.x, src.y);
+      }
+      // 危険の警告: 猛獣や戦火に遭った者は仲間に知らせ、聞いた者もその地を避ける
+      //   （言葉による危険情報の伝達＝群れの生存知）。警告は恐れも伝える。
+      if (!h.memDanger && other.memDanger && mi > 0.55 &&
+          this._tickN - other.memDanger.t < CP.dangerTtl * 0.7) {
+        h.memDanger = { x: other.memDanger.x, y: other.memDanger.y, t: other.memDanger.t };
+        h.fear = Math.min(1, (h.fear || 0) + 0.12);
+      }
       // 文化の混交（相手の気質に少し近づく。名士の文化ほど・言葉が通じるほど伝播力が強い）。
       h.culture = clamp01((h.culture == null ? 0.5 : h.culture) + (((other.culture == null ? 0.5 : other.culture)) - (h.culture == null ? 0.5 : h.culture)) * 0.04 * infl * mi);
       // 友誼: 同氏族・近距離・気の合う（文化が近い）相手とは絆が深まる。
@@ -3262,6 +3295,39 @@
       if (k.artworks.length > 12) k.artworks.shift();
       this._logEvent("🎨 " + h.name + "（" + k.name + "）が傑作「" + name + "」を遺した");
     }
+  };
+
+  // ==== 高度な知能: 空間記憶（複数の食料地を覚える） ====
+  // 記憶の枠は叡智(mind)で増える（1〜3箇所）。賢者ほど土地を広く覚えて飢えに強い。
+  function memCapOf(h) {
+    const m = h.mind || 0;
+    return 1 + (m >= CP.memFoodSlots1 ? 1 : 0) + (m >= CP.memFoodSlots2 ? 1 : 0);
+  }
+  // 食料地を記憶に刻む（近い既知の場所は上書き・古い記憶は忘れる）。
+  CivSystem.prototype._rememberFood = function (h, x, y) {
+    let mem = h.memFoods;
+    if (!mem) mem = h.memFoods = [];
+    for (let i = 0; i < mem.length; i++) {
+      const dx = mem[i].x - x, dy = mem[i].y - y;
+      if (dx * dx + dy * dy < 9) { mem[i].x = x; mem[i].y = y; return; } // 近所は同じ「場所」として更新
+    }
+    mem.push({ x: x, y: y });
+    const cap = memCapOf(h);
+    while (mem.length > cap) mem.shift(); // 古い記憶から忘れる
+  };
+  // 記憶から最も近い、今も食べられる場所を思い出す（枯れた場所は記憶から消える）。
+  CivSystem.prototype._recallFood = function (h, world) {
+    const mem = h.memFoods;
+    if (!mem || !mem.length) return null;
+    const W = world.width;
+    let best = null, bd = 1e9;
+    for (let i = mem.length - 1; i >= 0; i--) {
+      const m = mem[i];
+      if (!tile.isEdible(world.terrain[m.y * W + m.x])) { mem.splice(i, 1); continue; } // もう食べられない
+      const dx = m.x + 0.5 - h.x, dy = m.y + 0.5 - h.y, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = m; }
+    }
+    return best;
   };
 
   // 余暇・文化のふるまい。安全と空腹が満たされた日中、人は生業の合間に思い思いに過ごす。
@@ -3472,17 +3538,22 @@
       }
     }
 
-    // 1) 空腹 → 記憶した食料地、無ければ視野内の可食地を探す（空間記憶＝賢い採食）。
-    //    食欲シナプス(synFood)が強い人ほど早めに食料を求める。
-    if (h.food < 0.4 * (h.synFood || 1)) {
-      let t = null;
-      if (h.memFood) {
-        const mi = h.memFood.y * world.width + h.memFood.x;
-        if (tile.isEdible(world.terrain[mi])) t = h.memFood; else h.memFood = null;
+    // 1) 空腹 → 記憶した食料地（賢者ほど複数の場所を覚えている）、無ければ視野内を探す。
+    //    食欲シナプス(synFood)が強い人ほど早めに食料を求める。さらに先読み（冬支度）:
+    //    高緯度の秋は、賢く博識な者ほど早めに食を確保して蓄えを満たす（知能→生存の因果）。
+    let seekAt = 0.4 * (h.synFood || 1);
+    {
+      const season = Game.state.clock && Game.state.clock.season;
+      if (season && season.name === "秋" && Game.poleness) {
+        const pol = Game.poleness(h.y / world.height);
+        if (pol > 0.3) seekAt *= 1 + CP.prepareW * pol * (0.4 * wit + 0.6 * (h.mind || 0)); // 冬支度
       }
+    }
+    if (h.food < seekAt || ((h.pack || 0) < CP.packCap * 0.5 && h.food < seekAt * 1.15 && (h.mind || 0) > 0.3)) {
+      let t = this._recallFood(h, world); // 記憶から最寄りの食料地を思い出す
       if (!t) {
         t = this._nearestTile(h, world, Math.round(sight), function (terr) { return tile.isEdible(terr); });
-        if (t) h.memFood = { x: t.x, y: t.y };
+        if (t) this._rememberFood(h, t.x, t.y);
       }
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 1; return; }
     }
