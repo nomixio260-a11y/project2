@@ -682,6 +682,52 @@ test("CivSystem: 宝物 — 伝説の遺物が国力を底上げし、征服で�
   assert.ok(ka.relics.some(function (r) { return r.name === "叙事詩"; }), "略奪した宝物名が見つからない");
 });
 
+test("CivSystem: 政体の内発的変転 — 革命・帝政・改革・神権化が内情から起こる", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  civ.rand = function () { return 0; }; // 条件を満たせば必ず変転（決定化）
+  civ._tickN = 100000;
+  function setGov(k, gov) { k.gov = gov; k.govMod = { war: 1, ally: 1, trade: 1, tech: 1, unrest: 1, faith: 1, expand: 1 }; k._govLock = 0; }
+
+  // 革命: 圧政(君主制)＋慢性的な高不満 → 素朴な社会は部族連合へ、不満は吐き出される。
+  const A = civ.foundAt(6, 6), ka = civ.kingdoms[A];
+  setGov(ka, "君主制"); ka.unrest = 90; ka.tech = 50; ka.wealth = 0; ka.tileCount = 100;
+  civ._govEvolve(ka);
+  assert.equal(ka.gov, "部族連合", "革命が起きて政体が変わらない: " + ka.gov);
+  assert.ok(ka.unrest < 90, "革命で不満が吐き出されない: " + ka.unrest);
+
+  // 帝政: 多都市・属国を持つ安定した強い君主国が帝国を称する。
+  const B = civ.foundAt(20, 6), kb = civ.kingdoms[B];
+  setGov(kb, "君主制"); kb.unrest = 20; kb.cities = [{ x: 20, y: 6, capital: true }, {}, {}, {}]; kb.vassals = { 99: true }; kb.tileCount = 300;
+  civ._govEvolve(kb);
+  assert.equal(kb.gov, "帝国", "帝政に移行しない: " + kb.gov);
+
+  // 改革: 富裕・法治・安定な君主国が共和/都市国家へ（単一都市→都市国家）。
+  const C = civ.foundAt(6, 20), kc = civ.kingdoms[C];
+  setGov(kc, "君主制"); kc.unrest = 10; kc.wealth = 1000; kc.tileCount = 100; kc.techBits.law = true;
+  civ._govEvolve(kc);
+  assert.equal(kc.gov, "都市国家", "改革（都市国家化）が起きない: " + kc.gov);
+
+  // 神権化: 極めて篤い信仰の国が神権制へ（圧政でも高不満でもない経路）。
+  const D = civ.foundAt(20, 20), kd = civ.kingdoms[D];
+  setGov(kd, "共和制"); kd.faith = 0.9; kd.unrest = 10;
+  civ._govEvolve(kd);
+  assert.equal(kd.gov, "神権制", "神権化が起きない: " + kd.gov);
+
+  // 安定した凡庸な君主国は変転しない（誤発火の防止）。
+  const E = civ.foundAt(33, 33), ke = civ.kingdoms[E];
+  setGov(ke, "君主制"); ke.unrest = 20; ke.wealth = 0; ke.tileCount = 100; ke.faith = 0.3;
+  civ._govEvolve(ke);
+  assert.equal(ke.gov, "君主制", "条件を満たさないのに政体が変わった: " + ke.gov);
+
+  // 冷却期間: 直近に政変した国は、条件を満たしても即座には再変転しない。
+  setGov(ke, "君主制"); ke.unrest = 95; ke._govLock = civ._tickN - 100; // ロック中
+  civ._govEvolve(ke);
+  assert.equal(ke.gov, "君主制", "冷却期間中に政体が変わった: " + ke.gov);
+});
+
 test("CivSystem: 指導者の性格・富・交易・反乱", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 60 });
   const w = new Game.World(60, 60);

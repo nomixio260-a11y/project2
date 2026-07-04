@@ -335,6 +335,16 @@
     vassalTribute: 0.06, // 属国が毎評価で宗主へ納める富の割合（朝貢）
     vassalRevoltMil: 0.7,// 宗主の軍がこの倍率を下回ると属国が独立を試みる
     truceTicks: 1200,    // 講和後の休戦期間（この間は再戦しない）
+    // 政体の内発的な変転（革命・帝政・改革）: 国自身の内情（不満・規模・富・信仰）が
+    //   閾値を越えると政体が変わる。近隣模倣(_emulateGov)とは別の、内側からの政治変動。
+    govLockTicks: 3000,  // 政変から次の政変までの最短間隔（頻繁な変転を防ぐ）
+    revoltUnrest: 78,    // 慢性的な高不満がこれを越えると革命が起こりうる
+    revolutionChance: 0.07, // 条件を満たす評価での革命発生率
+    revolutionVent: 52,  // 革命が積年の不満を吐き出す量（新体制で人心が一新される）
+    empireCities: 3,     // これ以上の都市と属国を持つ強国が帝国を称しうる
+    empireChance: 0.05,  // 条件を満たす評価での帝政移行率
+    reformChance: 0.045, // 富裕・法治・安定な国が共和/都市国家へ改革する率
+    theocracyChance: 0.05, // 極めて篤い信仰の国が神権制へ移る率
     // 戦術（地形・防備）
     steerEvery: 3,       // 操舵(経路再計算)の間隔。間は前回の速度で前進（移動は毎ティック滑らか）
     homeDefense: 0.5,    // 自国領で戦う守備兵が受ける被害の軽減
@@ -2120,8 +2130,52 @@
       if (gi >= 0) {
         k.gov = other.gov; k.govMod = GOV_MODS[gi];
         k.unrest = Math.min(100, k.unrest + 6); // 改革の動揺
+        k._govLock = this._tickN;
         this._logEvent("⚖ " + k.name + " が " + other.name + " に倣い " + other.gov + " へ移行した");
       }
+    }
+  };
+
+  // 政体の内発的な変転: 国自身の内情から政体が変わる（近隣模倣とは別の内側からの政治変動）。
+  //   革命（慢性的な高不満で圧政を転覆）・帝政（覇権を握った強国）・改革（富裕・法治・安定→
+  //   共和/都市国家）・神権化（篤い信仰）。政変は稀・冷却期間つきで、頻繁な変転を防ぐ。
+  CivSystem.prototype._govEvolve = function (k) {
+    if (!k.alive || !k.cities || !k.cities.length) return;
+    if (k._govLock && (this._tickN - k._govLock) < CP.govLockTicks) return;
+    const gov = k.gov, cities = k.cities.length, r = this.rand;
+    const oppressive = gov === "君主制" || gov === "帝国" || gov === "神権制" || gov === "封建制" || gov === "氏族制";
+    let ng = null, reason = "";
+    if (oppressive && k.unrest > CP.revoltUnrest && r() < CP.revolutionChance) {
+      // 革命: 進んだ豊かな社会は共和制へ、素朴な社会は部族連合へ転じる。
+      ng = (k.tech > 120 || k.wealth > k.tileCount) ? "共和制" : "部族連合";
+      reason = "revolution";
+    } else if ((gov === "君主制" || gov === "封建制") && cities >= CP.empireCities && k.unrest < 48 &&
+               (this._count(k.vassals || {}) >= 1 || cities >= CP.empireCities + 2) && r() < CP.empireChance) {
+      ng = "帝国"; reason = "empire"; // 属国を従える、あるいは多数の都市を束ねる拡張的強国が帝国を称する
+    } else if ((gov === "君主制" || gov === "封建制" || gov === "氏族制") && hasTech(k, "law") &&
+               k.wealth > k.tileCount * 1.8 && k.unrest < 35 && r() < CP.reformChance) {
+      ng = cities <= 1 ? "都市国家" : "共和制"; reason = "reform"; // 富裕・法治・安定→代議/商業国家
+    } else if (gov !== "神権制" && (k.faith || 0) > 0.6 && k.unrest < 45 && r() < CP.theocracyChance) {
+      ng = "神権制"; reason = "theocracy"; // 篤い信仰が神権政治を生む
+    }
+    if (!ng || ng === gov) return;
+    const gi = GOV_TYPES.indexOf(ng);
+    if (gi < 0) return;
+    k.gov = ng; k.govMod = GOV_MODS[gi];
+    k._govLock = this._tickN;
+    if (reason === "revolution") {
+      this._succeed(k, true); // 新体制の指導者（実力者）が立つ
+      k.unrest = Math.max(0, (k.unrest || 0) - CP.revolutionVent); // 積年の不満を吐き出す
+      k.dynasty = null; // 旧王朝は倒れる（次代で新たな家系が興る）
+      this._logEvent("🔥 " + k.name + " で革命が起き " + ng + "が成立した");
+    } else if (reason === "empire") {
+      k.unrest = Math.min(100, (k.unrest || 0) + 5);
+      this._logEvent("👑 " + k.name + " が帝国を称した");
+    } else if (reason === "reform") {
+      k.unrest = Math.min(100, (k.unrest || 0) + 4);
+      this._logEvent("⚖ " + k.name + " が" + ng + "へ改革した");
+    } else {
+      this._logEvent("☀ " + k.name + " が" + ng + "へ移行した");
     }
   };
 
@@ -2669,6 +2723,8 @@
           if (rival) this._succeed(ka, true); // 簒奪
         }
       }
+      // 政体の内発的な変転（革命・帝政・改革・神権化）: 国自身の内情から政体が変わる。
+      this._govEvolve(ka);
 
       // 疫病: 過密で技術・衛生（神殿）が乏しい国に発生し、社会を動揺させやがて収束する。
       if (ka.plague > 0) {
