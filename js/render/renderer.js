@@ -348,6 +348,9 @@
     // 国名ラベル（照明の影響を受けず常に読める）。
     this.drawLabels(camera);
 
+    // 国情勢バッジ（戦争・飢饉・疫病・反乱・黄金/暗黒時代を首都上に表示）。世界の情勢を一目で。
+    this.drawStatusBadges(camera);
+
     // ブラシのプレビュー（カーソル位置の円。照明の影響を受けない）。
     this.drawBrushPreview(camera);
   };
@@ -1319,6 +1322,80 @@
       ctx.fillText(k.name, sx, sy);
     }
     ctx.restore();
+  };
+
+  // 国情勢バッジ: 各国の首都の上に、いま起きている顕著な状態を色付きの絵文字バッジで示す。
+  //   ⚔戦争 / 🌾飢饉 / 🦠疫病 / ✊反乱(高不満) / ✨黄金時代 / 🌑暗黒時代。地図を見るだけで
+  //   「どこで何が起きているか」が分かる（クリックして調べなくても世界の情勢が一望できる）。
+  //   色付き背景で状態を二重符号化し、絵文字が単色描画の環境でも状態が伝わる。
+  Renderer.prototype.drawStatusBadges = function (camera) {
+    if (Game.config.settings && Game.config.settings.statusBadges === false) return;
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return;
+    const tile = Game.config.tilePx;
+    const scale = tile * camera.zoom;
+    if (scale < 2.2) return; // 引きすぎでは省略
+    const range = camera.visibleTileRange();
+    const ctx = this.ctx;
+    const kingdoms = civ.kingdoms;
+    const sz = Math.max(12, Math.min(24, scale * 1.5)); // バッジの一辺
+    const gap = Math.max(1, sz * 0.12);
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = (sz * 0.66).toFixed(0) + "px 'Noto Color Emoji','Apple Color Emoji','Segoe UI Emoji',sans-serif";
+    for (let id = 1; id < kingdoms.length; id++) {
+      const k = kingdoms[id];
+      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      const cap = k.cities[0];
+      if (cap.x < range.x0 - 2 || cap.x > range.x1 + 2 || cap.y < range.y0 - 2 || cap.y > range.y1 + 2) continue;
+      // 優先度順に状態グリフを集める（最大4つ）。[絵文字, 背景色]。
+      const badges = [];
+      let atWar = false;
+      if (k.wars) { for (const w in k.wars) { atWar = true; break; } }
+      if (atWar) badges.push(["⚔", "rgba(200,50,45,0.92)"]);
+      if (k.famine) badges.push(["🌾", "rgba(196,132,40,0.92)"]);
+      if (k.plague > 0) badges.push(["🦠", "rgba(120,60,168,0.92)"]);
+      if ((k.unrest || 0) > 70) badges.push(["✊", "rgba(214,170,40,0.92)"]);
+      if (k.goldenAge) badges.push(["✨", "rgba(196,150,40,0.92)"]);
+      else if (k.darkAge) badges.push(["🌑", "rgba(40,44,70,0.92)"]);
+      if (!badges.length) continue;
+      if (badges.length > 4) badges.length = 4;
+      const sx = camera.worldToScreenX((cap.x + 0.5) * tile);
+      // ラベルより更に上の帯に、中央揃えで横並び。
+      const by = camera.worldToScreenY((cap.y + 0.5) * tile) - Math.max(6, scale * 0.9) - sz * 1.55;
+      const totalW = badges.length * sz + (badges.length - 1) * gap;
+      let bx = sx - totalW * 0.5;
+      const rad = Math.max(2, sz * 0.22);
+      for (let b = 0; b < badges.length; b++) {
+        const cx = bx + sz * 0.5;
+        // 角丸の色付き背景（状態を色で二重符号化）。
+        ctx.fillStyle = badges[b][1];
+        this._roundRect(ctx, bx, by, sz, sz, rad);
+        ctx.fill();
+        // 縁取りで地図から浮かせる。
+        ctx.lineWidth = Math.max(1, sz * 0.06);
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        this._roundRect(ctx, bx, by, sz, sz, rad);
+        ctx.stroke();
+        // 絵文字（色絵文字非対応環境でも背景色で状態が伝わる）。
+        ctx.fillStyle = "#fff";
+        ctx.fillText(badges[b][0], cx, by + sz * 0.56);
+        bx += sz + gap;
+      }
+    }
+    ctx.restore();
+  };
+
+  // 角丸矩形のパスを引く（塗り/線は呼び出し側）。
+  Renderer.prototype._roundRect = function (ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
   };
 
   // 王国の都市マーカーを描画（首都は大きめ）。

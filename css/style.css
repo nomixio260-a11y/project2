@@ -358,6 +358,24 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 世界の情勢サマリ（地図の情勢バッジと対応する記号＋国数） */
+.hud-situ {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 7px; padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+.hud-situ-b {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 6px; border-radius: 7px;
+  font-size: 11px; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+}
+.hud-situ-b.crit { background: rgba(200,50,45,0.22); border-color: rgba(200,50,45,0.5); color: #ffb3ae; }
+.hud-situ-b.warn { background: rgba(200,140,40,0.20); border-color: rgba(200,140,40,0.5); color: #ffd79a; }
+.hud-situ-b.good { background: rgba(210,168,60,0.20); border-color: rgba(210,168,60,0.5); color: #ffe9a8; }
+.hud-situ-calm { font-size: 11px; color: var(--text-faint); }
+
 /* ===== 諸国 / 年代記パネル ===== */
 .nations {
   flex: 1 1 auto; min-height: 0; width: 100%;
