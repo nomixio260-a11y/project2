@@ -290,6 +290,9 @@
     ctx.drawImage(this.borderCanvas, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
 
+    // 地表の質感（近景で草・砂粒・岩肌・雪の粒立ちを添える。平坦な塗りに生命を与える）。
+    this.drawTerrainDetail(camera);
+
     // 水面のきらめき（海・湖が穏やかに波打つ。静的な地形に生命を与える）。
     this.drawWater(camera);
 
@@ -1116,6 +1119,86 @@
         if (++drawn >= CAP) break;
       }
     }
+  };
+
+  // 地表の質感: 近景で平坦なタイル塗りに、地形ごとの微細なドット絵を重ねる。
+  //   草地は葉のそよぎ、砂・砂漠は砂粒と風紋、丘・山は岩肌、雪・ツンドラは粒立ち、
+  //   湿地は淀みと葦、焼け地は炭と残り火。位置はタイル index のハッシュで決定的（チラつかない）。
+  //   近景のみ・可視範囲のみ・上限つきで負荷を抑える。設定でオフにできる。
+  Renderer.prototype.drawTerrainDetail = function (camera) {
+    if (Game.config.settings && Game.config.settings.terrainDetail === false) return;
+    const world = this.world;
+    const tile = Game.config.tilePx, scale = tile * camera.zoom;
+    if (scale < 5) return; // 近景のみ（引きの地形はベタ塗り＋陰影で十分）
+    const ctx = this.ctx, W = world.width, terr = world.terrain, T = Game.TERRAIN;
+    const range = camera.visibleTileRange();
+    const sz = Math.ceil(scale);
+    const u = Math.max(1, (scale * 0.12) | 0);       // 粒の基本サイズ
+    const u2 = Math.max(1, (u * 0.7) | 0);           // 細かい粒
+    const bend = (Math.sin(this._t * 1.6) * u * 0.7) | 0; // 草のそよぎ（風）
+    let drawn = 0; const CAP = 16000;
+    ctx.save();
+    for (let ty = range.y0; ty <= range.y1 && drawn < CAP; ty++) {
+      const syT = camera.worldToScreenY(ty * tile) | 0;
+      for (let tx = range.x0; tx <= range.x1; tx++) {
+        const i = ty * W + tx, tt = terr[i];
+        // 森・密林・水は専用描画（drawTrees/drawWater）や陰影に任せてスキップ。
+        if (tt === T.FOREST || tt === T.JUNGLE || tt === T.DEEP_WATER || tt === T.SHALLOW_WATER) continue;
+        const sx = camera.worldToScreenX(tx * tile) | 0;
+        // タイル index から2組のドット位置を決定的に散らす（毎フレーム同じ＝チラつかない）。
+        const h = (i * 2654435761) >>> 0;
+        const px = (sx + ((h & 255) / 256) * (sz - u)) | 0;
+        const py = (syT + (((h >> 8) & 255) / 256) * (sz - u)) | 0;
+        const px2 = (sx + (((h >> 4) & 255) / 256) * (sz - u)) | 0;
+        const py2 = (syT + (((h >> 12) & 255) / 256) * (sz - u)) | 0;
+        switch (tt) {
+          case T.GRASS: case T.SAVANNA: {
+            // 草の葉: 細い縦筋を明暗2本、風でわずかに穂先が傾く。
+            const savanna = tt === T.SAVANNA;
+            ctx.fillStyle = savanna ? "rgba(150,140,70,0.5)" : "rgba(58,118,48,0.5)";
+            ctx.fillRect(px, py, u2, u * 2);
+            ctx.fillStyle = savanna ? "rgba(206,194,112,0.5)" : "rgba(122,192,92,0.5)";
+            ctx.fillRect(px2 + bend, py2 - u, u2, u * 2);
+            break;
+          }
+          case T.SAND: case T.DESERT: {
+            // 砂粒（明るい粒＋暗い粒）と、横に流れる風紋。
+            ctx.fillStyle = "rgba(255,246,206,0.35)"; ctx.fillRect(px, py, u2, u2);
+            ctx.fillStyle = "rgba(150,128,78,0.3)"; ctx.fillRect(px2, py2, u2, u2);
+            ctx.fillStyle = "rgba(192,170,110,0.22)";
+            ctx.fillRect(sx, (syT + (((h >> 16) & 255) / 256) * (sz - u)) | 0, sz, Math.max(1, (u * 0.4) | 0));
+            break;
+          }
+          case T.HILL: case T.MOUNTAIN: {
+            // 岩肌: 暗い割れ目と明るい稜線の欠片（角ばった質感）。
+            ctx.fillStyle = "rgba(38,36,32,0.4)"; ctx.fillRect(px, py, u, u);
+            ctx.fillStyle = "rgba(204,200,190,0.28)"; ctx.fillRect(px2, py2, u2, u2);
+            break;
+          }
+          case T.SNOW: case T.TUNDRA: {
+            // 雪原の粒立ち: 白い煌めきと、わずかに青い陰の粒。
+            ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.fillRect(px, py, u2, u2);
+            ctx.fillStyle = "rgba(150,180,212,0.32)"; ctx.fillRect(px2, py2, u2, Math.max(1, (u2 * 0.8) | 0));
+            break;
+          }
+          case T.SWAMP: {
+            // 淀み: 暗い水溜まりの斑と、立ち上がる葦。
+            ctx.fillStyle = "rgba(28,44,24,0.42)"; ctx.fillRect(px, py, u * 2, u);
+            ctx.fillStyle = "rgba(96,124,72,0.42)"; ctx.fillRect(px2 + bend, py2 - u, u2, u * 2);
+            break;
+          }
+          case T.SCORCHED: {
+            // 焼け地: 炭の黒い粒と、くすぶる残り火。
+            ctx.fillStyle = "rgba(10,8,6,0.5)"; ctx.fillRect(px, py, u, u);
+            ctx.fillStyle = "rgba(206,92,30,0.3)"; ctx.fillRect(px2, py2, u2, u2);
+            break;
+          }
+          default: continue; // 質感を持たない地形は描かない
+        }
+        if (++drawn >= CAP) break;
+      }
+    }
+    ctx.restore();
   };
 
   // 伐採の動き: 切られた木が瞬時に消えるのではなく、傾いて倒れていく（civ が伐採点を伝える）。
