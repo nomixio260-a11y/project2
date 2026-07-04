@@ -227,6 +227,27 @@ test("CreatureSystem: 飽食した捕食者は狩らない（捕食の安定化�
   assert.ok(killed, "空腹の捕食者は獲物を狩れる");
 });
 
+test("CreatureSystem: 進化のトレードオフ — 多産は仔が弱く、大型は寒さに強い", () => {
+  const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
+  const CS = Game.CreatureSystem;
+  const P = CS.P;
+
+  // r/K トレードオフ: 多産(fert>1)ほど仔1体への投資が薄く、少産(fert<1)ほど手厚い。
+  //   fert=1 では既定投資（中立）。
+  assert.ok(Math.abs(CS.offspringInvest(1) - P.offspringEnergy) < 1e-9, "fert=1 で既定投資に一致しない");
+  assert.ok(CS.offspringInvest(1.3) < CS.offspringInvest(1), "多産系統の仔が弱く生まれない");
+  assert.ok(CS.offspringInvest(0.7) > CS.offspringInvest(1), "少産系統の仔が手厚くならない");
+  assert.ok(CS.offspringInvest(1.3) >= 0.2, "投資の下限(0.2)を割り込む");
+
+  // ベルクマンの法則: 大型(gene>1)ほど寒冷の代謝負担が軽く、小型(gene<1)ほど重い。
+  //   gene=1 で 1（中立＝集団平均の挙動は不変）。
+  assert.equal(CS.coldInsul(1), 1, "gene=1 で断熱係数が中立(1)でない");
+  assert.ok(CS.coldInsul(1.3) < 1, "大型が寒さに強くない");
+  assert.ok(CS.coldInsul(0.7) > 1, "小型が寒さに弱くない");
+  // 対称性（gene=1 を中心に線形・対称）: 平均すると相殺しバランス中立。
+  assert.ok(Math.abs((CS.coldInsul(1.3) + CS.coldInsul(0.7)) / 2 - 1) < 1e-9, "断熱係数が gene=1 対称でない");
+});
+
 test("CreatureSystem: 上限を超えて繁殖しない", () => {
   const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
   Game.config.sim.maxEntities = 6;
