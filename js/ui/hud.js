@@ -90,6 +90,14 @@
     }
     body.appendChild(chips);
 
+    // 世界の情勢（いま何ヶ国で戦争・飢饉・疫病・反乱・黄金時代が起きているか）。
+    //   地図上の情勢バッジと同じ記号で、世界全体の「今」を一目で伝える。
+    const situ = document.createElement("div");
+    situ.className = "hud-situ";
+    situ.title = "世界の情勢: 交戦・飢饉・疫病・反乱・黄金時代の国数";
+    body.appendChild(situ);
+    this.situEl = situ;
+
     const self = this;
     header.addEventListener("click", function () {
       self.collapsed = !self.collapsed;
@@ -175,10 +183,45 @@
     this.rows.fires.textContent = String(s.fires);
     this.rows.fps.textContent = String(Math.round(this._fps));
 
+    // 世界の情勢サマリ（顕著な状態にある国数を記号で）。地図の情勢バッジと対応する。
+    if (this.situEl) this.situEl.innerHTML = this._situationHtml();
+
     // スパークライン更新（総個体数の推移）。
     this.history.push(s.pop);
     if (this.history.length > HIST) this.history.shift();
     this._drawSpark();
+  };
+
+  // 世界の情勢を集計し、記号＋国数の小さなバッジ列 HTML を返す（地図の情勢バッジと対応）。
+  Hud._situationHtml = function () {
+    const civ = Game.state.civ;
+    if (!civ || !civ.kingdoms) return "";
+    let wars = 0, famine = 0, plague = 0, revolt = 0, golden = 0;
+    const ks = civ.kingdoms;
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive) continue;
+      let atWar = false;
+      if (k.wars) { for (const w in k.wars) { atWar = true; break; } }
+      if (atWar) wars++;
+      if (k.famine) famine++;
+      if (k.plague > 0) plague++;
+      if ((k.unrest || 0) > 70) revolt++;
+      if (k.goldenAge) golden++;
+    }
+    // 値が 0 の項目は出さない（情勢が静かなら簡潔に）。
+    const parts = [];
+    if (wars) parts.push(['⚔', wars, 'crit']);
+    if (famine) parts.push(['🌾', famine, 'warn']);
+    if (plague) parts.push(['🦠', plague, 'warn']);
+    if (revolt) parts.push(['✊', revolt, 'warn']);
+    if (golden) parts.push(['✨', golden, 'good']);
+    if (!parts.length) return '<span class="hud-situ-calm">☮ 世界は平穏</span>';
+    let html = "";
+    for (let i = 0; i < parts.length; i++) {
+      html += '<span class="hud-situ-b ' + parts[i][2] + '">' + parts[i][0] + " " + parts[i][1] + "</span>";
+    }
+    return html;
   };
 
   Hud._drawSpark = function () {
