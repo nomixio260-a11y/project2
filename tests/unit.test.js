@@ -1061,9 +1061,9 @@ test("CivSystem: 黄金/暗黒時代は強制ではなく実測の活力(fortune
   // 活力は記述（年代記/UI）に用いられるのみで、富・技術は既存の因果系がそのまま生み出す。
   assert.equal(k.goldenAge, 1, "黄金時代フラグは記述的な真偽(1)であるべき");
 
-  // 危機（戦乱・不満・暗君）が続けば活力は下がり、黄金時代は自然に去る。
+  // 危機（貧窮・飢饉・不満・暗君）が続けば活力は下がり、黄金時代は自然に去る。
   for (let t = 0; t < 1500; t++) {
-    k.wealth = 0; k.unrest = 95;
+    k.wealth = 0; k.unrest = 95; k.famine = true;
     if (k.rulerRef) { k.rulerRef.wit = 0.6; k.rulerRef.dili = 0.6; }
     civ.tick(w);
   }
@@ -1699,4 +1699,49 @@ test("CivSystem: 新しい建物 — 城壁(防備)と水道(衛生・給水)の
   const mNoAqua = civ._baseMortality(person, { facilities: { temple: 0, aqueduct: 0 } });
   const mAqua = civ._baseMortality(person, { facilities: { temple: 0, aqueduct: 4 } });
   assert.ok(mAqua < mNoAqua, "水道の衛生で死亡率が下がる: " + mAqua + " < " + mNoAqua);
+});
+
+test("CivSystem: 家族 — 幼い子は親のそばで育ち、成人・死別で独り立ちする", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 12 });
+  const w = new Game.World(40, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  if (w.fertility) w.fertility.fill(0.8);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  Game.state.clock = { year: 1, season: null };
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  civ._night = false;
+
+  function person(x, y, age, extra) {
+    return Object.assign({ x: x, y: y, hx: 0, hy: 0, kid: A, clan: 1, age: age, food: 1, role: 1,
+      state: 0, gx: x | 0, gy: y | 0, repro: 999, social: 0, alive: true, mood: 0.7, wit: 1, brave: 1,
+      vigor: 1, creat: 1, dili: 1, synSafe: 1, synFood: 1, synSoc: 1, skill: 0.3, mind: 0.2, aspire: 0,
+      lx: 0.5, ly: 0.5, culture: 0.5, prestige: 0, home: { x: 20, y: 20 } }, extra || {});
+  }
+  const mom = person(20, 20, 1500);
+  const child = person(28, 28, 60, { _mom: mom }); // 幼子、母から離れた位置（追跡範囲内）
+  civ.people = [mom, child]; k.humanCount = 2; k.roleCount[1] = 2;
+
+  // 子は母のそばへ寄っていく（母を固定し、子を養い、何度も思考させる）。
+  let minD = 1e9;
+  for (let t = 0; t < 120; t++) {
+    mom.x = 20; mom.y = 20; child.food = 1;
+    civ.tick(w);
+    if (!child.alive) break;
+    const dx = child.x - 20, dy = child.y - 20, d = Math.sqrt(dx * dx + dy * dy);
+    if (d < minD) minD = d;
+  }
+  assert.ok(minD < 6, "幼い子は母のそばへ寄る（家族の群れ）: 最接近 " + minD.toFixed(1));
+
+  // 成人すれば独り立ち（_mom 参照が外れる）。
+  child.age = 3000;
+  civ.tick(w);
+  assert.equal(child._mom, null, "成人した子は親から独立する");
+
+  // 死別でも独り立ち。
+  const orphan = person(21, 21, 60, { _mom: mom });
+  civ.people.push(orphan); k.humanCount++;
+  mom.alive = false;
+  civ.tick(w);
+  assert.equal(orphan._mom, null, "親を亡くした子は独り立ちする");
 });
