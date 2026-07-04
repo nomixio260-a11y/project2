@@ -4432,7 +4432,9 @@
     const world = this.world;
     const i = (h.y | 0) * world.width + (h.x | 0);
     const fertile = !world.fertility || world.fertility[i] > 0.3;
-    if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate * this._eff(k, "expand")) {
+    // 水運と飲み水: 川辺・海辺は町が興りやすい（現実の都市の立地）。
+    const waterMul = this._coastal(world, h.x | 0, h.y | 0) ? 1.7 : 1;
+    if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate * waterMul * this._eff(k, "expand")) {
       k.cities.push({ x: h.x | 0, y: h.y | 0, capital: false, level: 1, buildings: [] });
     }
   };
@@ -4463,7 +4465,8 @@
       let okFar = true;
       for (let c = 0; c < cs.length; c++) { const dx = cs[c].x - x, dy = cs[c].y - y; if (dx * dx + dy * dy < minD2) { okFar = false; break; } }
       if (!okFar) continue;
-      const f = fert ? fert[i] : 0.5;
+      // 立地評価: 肥沃さ＋水辺（川・海）の利。水運と飲み水がある地に町は栄える。
+      const f = (fert ? fert[i] : 0.5) + (this._coastal(world, x, y) ? 0.25 : 0);
       if (f > bestF) { bestF = f; best = { x: x, y: y }; }
     }
     if (best) {

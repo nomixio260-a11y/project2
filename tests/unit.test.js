@@ -1592,3 +1592,46 @@ test("CivSystem: 高度な知能 — 叡智で増える空間記憶と、余剰�
   assert.ok(h.pack < packBefore, "飢えれば蓄えを食べるはず");
   assert.ok(h.food > 0.1, "蓄えで空腹が和らぐはず: " + h.food);
 });
+
+test("worldgen: 川辺は氾濫原で潤い、水辺に町が興りやすい（大河文明の地理）", () => {
+  const Game = loadCore({ mapWidth: 120, mapHeight: 90, seed: 4242 });
+  const w = new Game.World(120, 90);
+  Game.worldgen.generate(w, 4242);
+  const W = 120, H = 90, T = Game.TERRAIN, tile = Game.tile;
+
+  // 淡水（海から離れた浅水）の岸辺タイルは、全陸地平均より明確に湿っている。
+  function isFresh(x, y) {
+    if (w.terrain[y * W + x] !== T.SHALLOW_WATER) return false;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      if (w.terrain[ny * W + nx] === T.DEEP_WATER) return false;
+    }
+    return true;
+  }
+  const bank = new Uint8Array(W * H);
+  let anyFresh = false;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!isFresh(x, y)) continue;
+    anyFresh = true;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      if (tile.isLand(w.terrain[ny * W + nx])) bank[ny * W + nx] = 1;
+    }
+  }
+  assert.ok(anyFresh, "淡水（川・湖）が生成されている");
+  let bM = 0, bN = 0, aM = 0, aN = 0;
+  for (let i = 0; i < W * H; i++) {
+    if (!tile.isLand(w.terrain[i])) continue;
+    aM += w.moisture[i]; aN++;
+    if (bank[i]) { bM += w.moisture[i]; bN++; }
+  }
+  assert.ok(bN > 0, "川辺の陸地が存在する");
+  const bankAvg = bM / bN, landAvg = aM / aN;
+  assert.ok(bankAvg > landAvg + 0.1, "川辺は全陸地平均より明確に潤う（氾濫原）: 岸 " + bankAvg.toFixed(3) + " > 全 " + landAvg.toFixed(3));
+
+  // 再現性: 同一シードで同じ湿度分布（決定的な氾濫原）。
+  const w2 = new Game.World(120, 90); Game.worldgen.generate(w2, 4242);
+  let same = true;
+  for (let i = 0; i < W * H && same; i++) if (Math.abs(w.moisture[i] - w2.moisture[i]) > 1e-9) same = false;
+  assert.ok(same, "氾濫原はシードで再現的（決定的）");
+});
