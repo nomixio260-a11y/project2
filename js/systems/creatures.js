@@ -30,6 +30,8 @@
     dehydration: 0.008, // 渇き限界でのエネルギー消耗
     thirstSeek: 0.45, // この渇きで水を探し始める
     geneMutate: 0.06, // 遺伝子の変異幅
+    fertInvest: 0.5,  // r/K トレードオフ: 多産な系統ほど仔1体への投資が薄い（弱く生まれる）
+    coldInsul: 0.35,  // ベルクマンの法則: 大型の体ほど寒冷の代謝負担が小さい（極地で大型化）
     fleeRadius: 3.2, // 草食が捕食者に気づいて逃げ出す距離（近づくまで気づかない）
     fleeBoost: 1.12, // 逃走時の速度倍率（パニック）
     chaseBoost: 1.45, // 肉食が獲物を追うときの速度倍率（しっかり捕らえる）
@@ -48,6 +50,19 @@
     let g = gene + (rand() - 0.5) * 2 * P.geneMutate;
     if (g < 0.7) g = 0.7; else if (g > 1.3) g = 1.3;
     return g;
+  }
+
+  // r/K トレードオフ: 親の多産度 avgFert から仔1体への初期投資(エネルギー)を返す。
+  //   多産(fert>1)ほど薄く、少産(fert<1)ほど手厚い。下限つき。fert=1 で既定値（中立）。
+  function offspringInvest(avgFert) {
+    let e = P.offspringEnergy * (1 - P.fertInvest * (avgFert - 1));
+    return e < 0.2 ? 0.2 : e;
+  }
+
+  // ベルクマンの法則: 体格 gene から寒冷代謝負担の係数を返す。大型(gene>1)ほど小さく
+  //   （寒さに強い）、小型(gene<1)ほど大きい。gene=1 で 1（中立）。
+  function coldInsul(gene) {
+    return 1 - P.coldInsul * (gene - 1);
   }
 
   function CreatureSystem(entities, world, renderer) {
@@ -185,7 +200,11 @@
       let pol = Math.abs(ey[i] * Hinv - 0.5) * 2; if (pol > 1) pol = 1;
       const ew = baseWarmth + soff * (0.5 + pol);      // 季節の効き: 赤道0.5×・中緯度1×・極1.5×
       const coldNeg = ew < 0 ? -ew : 0;
-      const coldF = 1 + coldNeg * 0.45, coldFp = 1 + coldNeg * 0.28; // 肉食は寒さに比較的強い
+      // ベルクマンの法則: 大型の体は体積比の表面積が小さく寒さに強い（＝寒冷の代謝負担が軽い）。
+      //   gene=1 を基準に対称化するので集団平均の挙動は不変（バランス中立）だが、寒い緯度では
+      //   大型が、暑い緯度では小型がわずかに有利になり、緯度に沿った体格の勾配が創発する。
+      const insul = coldInsul(gene);
+      const coldF = 1 + coldNeg * 0.45 * insul, coldFp = 1 + coldNeg * 0.28 * insul; // 肉食は寒さに比較的強い
       const thirstMul = 1 + (ew > 0 ? ew : 0) * 0.8;   // 暑いほど渇きが早い
       // 基礎代謝: 大型・寒冷に加え、俊敏さ・鋭敏な感覚も燃費を悪くする（速い・賢い体は高くつく）。
       //   これで「速さ・感覚はタダではない」=形質のトレードオフが生まれ、淘汰が意味を持つ。
@@ -249,11 +268,16 @@
         if (canRepro) {
           const mate = this._nearest(ex[i], ey[i], type, P.mateRadius, i);
           if (mate !== -1 && energy[mate] > P.mateMinEnergy) {
-            const child = e.spawn(type, ex[i], ey[i], P.offspringEnergy,
+            // r/K トレードオフ: 多産な系統は仔への投資が薄く弱く生まれ（幼時の餓死が増える）、
+            //   少産な系統は少なく産んで手厚く育てる（頑健に生まれる）。多産の利得に代償を課し、
+            //   多産遺伝子を上限に張り付かせず本当の淘汰にかける（r戦略とK戦略の均衡）。
+            const avgFert = ((e.geneFert[i] || 1) + (e.geneFert[mate] || 1)) * 0.5;
+            const offE = offspringInvest(avgFert);
+            const child = e.spawn(type, ex[i], ey[i], offE,
               mutate(rand, (gene + (e.gene[mate] || 1)) * 0.5),
               mutate(rand, (gSpd + (e.geneSpd[mate] || 1)) * 0.5),
               mutate(rand, (gSense + (e.geneSense[mate] || 1)) * 0.5),
-              mutate(rand, ((e.geneFert[i] || 1) + (e.geneFert[mate] || 1)) * 0.5));
+              mutate(rand, avgFert));
             if (child !== -1) { energy[i] -= P.reproCost[type]; energy[mate] -= P.reproCost[type] * 0.5; if (child < ct.length) ct[child] = -1; }
           }
         }
@@ -432,6 +456,10 @@
     }
     return { x: bx, y: by };
   };
+
+  // 進化系の純粋関数を検証・調整用に公開（r/K 投資とベルクマン断熱）。
+  CreatureSystem.offspringInvest = offspringInvest;
+  CreatureSystem.coldInsul = coldInsul;
 
   Game.CreatureSystem = CreatureSystem;
   CreatureSystem.P = P; // チューニング/検証用にパラメータを公開（挙動はこの参照を使う）
