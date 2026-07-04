@@ -317,6 +317,11 @@
     steerEvery: 3,       // 操舵(経路再計算)の間隔。間は前回の速度で前進（移動は毎ティック滑らか）
     homeDefense: 0.5,    // 自国領で戦う守備兵が受ける被害の軽減
     fortDefense: 0.5,    // 砦(KEEP)のある都市タイルの攻略しにくさ（防備）
+    // 補給線: 自国の都市網から遠く離れて戦う軍は補給が細り、戦力が落ちる（過伸長の抑制）。
+    supplyRange: 20,     // 自国の都市からこの距離までは補給が十分届く（存分に戦える）
+    supplyFalloff: 0.03, // これを超えて1タイル遠ざかるごとに戦力が落ちる割合（線形）
+    supplyMin: 0.5,      // 補給が細っても保つ最低戦力（遠征軍も全く戦えなくはない）
+    supplyRoadReach: 12, // 街道上で戦う軍は補給線が伸びる（実効到達距離の延長）
     // 新しい建物: 水道（衛生・給水）と城壁（防備）
     aqueductCap: 7,      // 水道1棟（実効重み）が押し上げる人口扶養力（清潔な水）
     aqueductSanit: 0.7,  // 水道の疫病抵抗への寄与（発生を抑える）
@@ -1816,6 +1821,21 @@
     const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar;
     k._milTick = this._tickN; k._milCache = mil;
     return mil;
+  };
+
+  // 補給線: 兵 h が自国 k の都市網からどれだけ補給を受けられるかを 0..1 で返す。
+  //   自国の最寄り都市が supplyRange 内なら 1（十分な補給）。それより遠いと 1タイルごとに
+  //   supplyFalloff ずつ戦力が落ち、supplyMin で下げ止まる。街道の上なら補給線が伸びる。
+  //   これにより軍は無限には遠征できず、国境は自然な補給圏で安定する（過伸長の抑制）。
+  CivSystem.prototype._supply = function (h, k, ti) {
+    if (!k.cities || k.cities.length === 0) return CP.supplyMin;
+    let d = Math.sqrt(this._home(h, k).d2);
+    // 街道上で戦えば補給が届きやすい（実効距離を縮める）。
+    const world = this.world;
+    if (world.road && ti != null && world.road[ti]) d -= CP.supplyRoadReach;
+    if (d <= CP.supplyRange) return 1;
+    const s = 1 - (d - CP.supplyRange) * CP.supplyFalloff;
+    return s < CP.supplyMin ? CP.supplyMin : s;
   };
 
   // a と b を交戦状態にする（開戦時刻を記録、同盟は解消、関係悪化）。
@@ -4391,6 +4411,9 @@
     if (h.role === ROLE.SOLDIER) {
       // 武具の支給（在庫があれば）。
       if (!h.gear && this.rand() < CP.equipChance) h.gear = this._equipTier(k);
+      // 補給線: 自国の都市網から遠く離れて戦う軍は補給が細り、打撃も征服力も落ちる。
+      //   近くで守る側は常に補給が届くので、過伸長した攻め手はここで自然に鈍る。
+      const supplyMul = this._supply(h, k, ti);
       // 思考時にキャッシュした敵が隣接していれば交戦（探索不要）。
       const e = h._enemy;
       if (e && e.alive && this._atWar(h.kid, e.kid)) {
@@ -4410,7 +4433,7 @@
           if (world.owner[eti] === e.kid) defF -= CP.homeDefense * 0.3; // 郷土防衛の士気
           if (defF < 0.4) defF = 0.4;
           e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) *
-            (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF * rally;
+            (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF * rally * supplyMul;
           practice(h); // 実戦で武を磨く
           // 戦死: 倒れた兵は亡骸として戦場に残る（演出ではなく実際の死の跡）。
           if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y, "corpse"); h.prestige = (h.prestige || 0) + 1.2; k._kills = (k._kills || 0) + 1; }
@@ -4418,7 +4441,7 @@
           // 遠戦: 弓（基本）と銃（火薬以降）で射かける。放たれた弾が飛び、命中すれば損害。
           const gun = hasTech(k, "gunpowder");
           if (this.rand() < (gun ? CP.gunChance : CP.bowChance)) {
-            e.food -= CP.attack * (gun ? CP.gunDmg : CP.bowDmg) * (0.6 + edge) * (0.6 + 0.4 * ability(h, "brave")) * rally;
+            e.food -= CP.attack * (gun ? CP.gunDmg : CP.bowDmg) * (0.6 + edge) * (0.6 + 0.4 * ability(h, "brave")) * rally * supplyMul;
             this._fx(gun ? "shot" : "arrow", h.x, h.y, e.x, e.y); // 実際に放たれた弾の飛跡
             if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y, "corpse"); h.prestige = (h.prestige || 0) + 1; k._kills = (k._kills || 0) + 1; }
           }
@@ -4472,7 +4495,7 @@
               break;
             }
           }
-          const chance = CP.conflictChance * 2 * (m1 / (m1 + m2)) * defMul;
+          const chance = CP.conflictChance * 2 * (m1 / (m1 + m2)) * defMul * supplyMul;
           if (this._adjacentOwner(world, tx, ty, h.kid) && this.rand() < chance) {
             world.owner[ti] = h.kid; k.tileCount++; other.tileCount--;
             if (world.fertility) world.fertility[ti] *= CP.warTrample; // 戦火に踏み荒らされた地（植生が癒す）
