@@ -264,6 +264,7 @@
     foodStoreBase: 36,    // 基本の備蓄上限（小さめ＝戦争・凶作が早く響く）
     foodStoreGranary: 48, // 穀倉1棟あたりの備蓄上限増
     famineDeathFood: 3,   // 食料不足この量ごとに1人が餓死
+    ruinCap: 22,          // 滅んだ国が残す廃墟マークの最大数（大国でも痕跡を有界に）
     // 地力（土壌の養分）: 過耕作は地力を痩せさせ収量を落とす。休閑・好条件・農法（農耕技術・
     //   輪作）が地力を回復させる。持続可能な密度では地力は保たれ（＝均衡は不変）、狭い領土に
     //   農を詰め込む過耕作でのみ痩せる。史実の連作障害・地力低下・輪作の知恵を表す。
@@ -323,6 +324,7 @@
     siegeRise: 0.05,     // 敵兵が都市に迫ると攻囲度が上がる速さ
     siegeDecay: 0.9,     // 攻囲が解けると下がる係数／評価
     siegeWreck: 0.05,    // 攻囲の進んだ都市で建物が崩れて瓦礫になる確率／ティック
+    siegeBuildDmg: 0.02, // 攻囲中に建物が受ける損傷（cond 低下／ティック×攻囲度）。cond が尽きると倒壊
     sackFrac: 0.35,      // 攻略された都市が劫掠され瓦礫になる建物の割合
     warTrample: 0.6,     // 戦火に奪われたタイルの肥沃度に残る係数（踏み荒らし）
     // 戦争の重み: 維持費と厭戦（長期戦は国庫と人心を蝕む）
@@ -842,9 +844,30 @@
   //   演出ではなく、実際の戦闘・破壊の結果として地に残り、長い時間をかけて土に還る。
   CivSystem.prototype._addMark = function (x, y, type, ttl) {
     const m = this.marks;
-    const life = ttl || (type === "rubble" ? 2600 : 1400);
+    // ruin（滅んだ国の廃墟）は長く残る＝歴史の痕跡。rubble（戦火の瓦礫）は中程度、corpse は短命。
+    const life = ttl || (type === "ruin" ? 14000 : type === "rubble" ? 2600 : 1400);
     m.push({ x: x, y: y, ttl: life, life: life, type: type || "corpse" });
-    if (m.length > 600) m.shift();
+    if (m.length > 1500) m.shift();
+  };
+
+  // 滅んだ国 k の建物を廃墟として地に残す（都市ごと・砦や大建造物を優先して最大 ruinCap 棟）。
+  //   これにより国家の消滅が一瞬の消去ではなく、倒れた都市の廃墟として画面に残る（歴史の痕跡）。
+  CivSystem.prototype._leaveRuins = function (k) {
+    if (!k.cities) return;
+    let placed = 0;
+    const CAP = CP.ruinCap || 22;
+    // 砦・大建造物・神殿など大きな建物を優先して廃墟化する（小屋より遺構が残りやすい）。
+    const prio = function (t) { return t === BUILDING.KEEP || t === BUILDING.WONDER || t === BUILDING.WALLS ? 0 : t === BUILDING.TEMPLE || t === BUILDING.MANOR || t === BUILDING.MARKET ? 1 : 2; };
+    for (let c = 0; c < k.cities.length && placed < CAP; c++) {
+      const bs = k.cities[c].buildings;
+      if (!bs || !bs.length) { // 建物情報が無い都市でも中心に廃墟を1つ残す
+        this._addMark(k.cities[c].x, k.cities[c].y, "ruin"); placed++; continue;
+      }
+      const order = bs.slice().sort(function (a, b) { return prio(a.t) - prio(b.t); });
+      for (let bi = 0; bi < order.length && placed < CAP; bi++) {
+        this._addMark(order[bi].x, order[bi].y, "ruin"); placed++;
+      }
+    }
   };
 
   // 飛翔体（矢・銃弾）: 実際の遠戦で放たれた弾の飛跡を短時間だけ描く（射撃という行為そのもの）。
@@ -2488,9 +2511,11 @@
     for (let a = 1; a < ks.length; a++) {
       const ka = ks[a];
       if (!ka || !ka.alive) continue;
-      // 無人・無領土の国は消滅。
+      // 無人・無領土の国は消滅。滅んでも建物は「廃墟」として地に残る（一瞬で消えず、
+      //   倒れた文明の痕跡＝歴史として長く残る）。都市の建物跡に ruin マークを置く（総数に上限）。
       if (ka.humanCount <= 0 || ka.tileCount <= 0) {
         ka.alive = false;
+        this._leaveRuins(ka);
         this._logEvent("☠ " + ka.name + " が滅亡した");
         continue;
       }
@@ -4638,10 +4663,16 @@
           }
           if (siegeCity) {
             siegeCity.siege = Math.min(1, (siegeCity.siege || 0) + CP.siegeRise);
-            // 攻囲が進んだ都市は、砲火と破壊で実際に建物が崩れ瓦礫となる（戦争が生む廃墟）。
-            if (siegeCity.siege > 0.5 && siegeCity.buildings && siegeCity.buildings.length > 1 && this.rand() < CP.siegeWreck) {
+            // 攻囲中は兵が実際に建物を攻撃し、砲火・破壊で建物が傷んでいく（cond 低下→見た目に黒ずみ・
+            //   亀裂が出る）。cond が尽きた建物は倒壊して瓦礫になる。砦(KEEP)は最後まで粘る。攻囲が
+            //   進むほど損傷は激しい（＝戦争が都市を実際に破壊していく様子が段階的に見える）。
+            if (siegeCity.siege > 0.3 && siegeCity.buildings && siegeCity.buildings.length > 1) {
               for (let bi = 0; bi < siegeCity.buildings.length; bi++) {
-                if (siegeCity.buildings[bi].t !== BUILDING.KEEP) { const rb = siegeCity.buildings[bi]; this._addMark(rb.x, rb.y, "rubble"); siegeCity.buildings.splice(bi, 1); break; }
+                const bd = siegeCity.buildings[bi];
+                if (bd.t === BUILDING.KEEP) continue; // 砦は都市が落ちるまで残る
+                bd.cond = (bd.cond == null ? 1 : bd.cond) - CP.siegeBuildDmg * siegeCity.siege;
+                if (bd.cond <= 0) { this._addMark(bd.x, bd.y, "rubble"); siegeCity.buildings.splice(bi, 1); }
+                break; // 1棟／ティック（最も手前の非・砦を集中攻撃）
               }
             }
           }
