@@ -730,6 +730,34 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 信仰の盟主 — 各宗教で最も権威ある国が盟主となり、同信徒を結束させる", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
+  const w = new Game.World(60, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const B = civ.foundAt(30, 20);
+  const C = civ.foundAt(50, 20);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B], kc = civ.kingdoms[C];
+  // A と B は同じ信仰、A が強大（信仰篤く大人口）。C は別信仰。
+  ka.religion = "太陽信仰"; kb.religion = "太陽信仰"; kc.religion = "月の教団";
+  ka.faith = 0.8; kb.faith = 0.5; kc.faith = 0.7;
+  ka.humanCount = 200; kb.humanCount = 40; kc.humanCount = 60;
+  civ._computeFaithHeads();
+  // 太陽信仰の盟主は権威で勝る A。
+  assert.equal(civ._faithHeads["太陽信仰"], A, "強大な同信徒国が盟主にならない: " + civ._faithHeads["太陽信仰"]);
+  assert.equal(ka._faithHead, A, "盟主が自国に記録されない");
+  assert.equal(kb._faithHead, A, "信徒国 B に盟主が記録されない");
+  // 別信仰 C は自らが（唯一の月の教団信徒として）盟主。
+  assert.equal(kc._faithHead, C, "別信仰の唯一国が盟主にならない");
+  // 権威(_authority)は信仰×規模で増える。
+  assert.ok(civ._authority(ka) > civ._authority(kb), "権威が信仰・規模を反映しない");
+  // 信仰が希薄すぎる国は盟主候補にならない。
+  ka.faith = 0.1; kb.faith = 0.1;
+  civ._computeFaithHeads();
+  assert.ok(!civ._faithHeads["太陽信仰"], "信仰の希薄な世界に盟主が立つ");
+});
+
 test("CivSystem: 王家の婚姻と同君連合 — 縁戚は戦を避け、断絶した小国を平和的に継承する", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const w = new Game.World(60, 40);

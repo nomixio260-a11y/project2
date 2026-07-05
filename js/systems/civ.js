@@ -298,6 +298,12 @@
     faithDiploPull: 0.5,  // 同じ信仰の国は親しみ合う（外交関係の漸進）
     faithDiploFric: 0.35, // 異なる信仰の国とは隔たる（外交関係の摩擦）
     faithWarFervor: 0.6,  // 異教との開戦を後押しする信仰の熱（聖戦）
+    // 信仰の盟主（教主国）: 各宗教で最も権威ある国（篤い信仰・規模・神権制・名君）が信徒世界の
+    //   盟主となる。同じ盟主に従う同信徒の国どうしは戦を厭い（宗教的権威の下の同胞意識）、信徒の
+    //   国は共同体への帰属で民が結束する（不満減）。宗教が政治・外交を束ねる力を持つ。
+    headMinFaith: 0.35,   // 盟主となる／その結束を得るのに要する信仰の篤さ
+    headFaithCalm: 0.8,   // 信仰の盟主の下にある信徒国の不満低減（信仰1.0あたり。盟主自身は2倍）
+    coReligionPeace: 0.7, // 同じ盟主に従う同信徒どうしの開戦確率に掛かる係数（信仰の平和）
     schismChance: 0.5,    // 反乱・独立の際に宗派が分裂して異端が生まれる確率
     // 帝国の過伸長（版図が広がりすぎた国は遠隔地の統制を失い分裂する＝帝国の興亡）
     overstretchCities: 5, // この都市数を超えると過伸長で分裂しうる
@@ -2688,6 +2694,41 @@
     }
   };
 
+  // 信仰の盟主（教主国）を各宗教について選ぶ。権威 = 信仰の篤さ × 規模 × 神権制 × 名君。
+  //   ヒステリシス付き（僅差では交代しない）で頻繁な入れ替わりを防ぐ。各国に自信仰の盟主 id を記す。
+  CivSystem.prototype._authority = function (k) {
+    const theo = k.gov === "神権制" ? 1.6 : 1;
+    const prestige = (k.rulerRef && k.rulerRef.alive) ? (k.rulerRef.prestige || 0) : 0;
+    return (k.faith || 0) * (k.humanCount + (k.tileCount || 0) * 0.1) * theo * (1 + prestige * 0.15);
+  };
+  CivSystem.prototype._computeFaithHeads = function () {
+    const ks = this.kingdoms;
+    const prev = this._faithHeads || {};
+    const best = {}; // religion -> {id, auth}
+    for (let i = 1; i < ks.length; i++) {
+      const k = ks[i];
+      if (!k || !k.alive || !k.religion || (k.faith || 0) < CP.headMinFaith) continue;
+      const auth = this._authority(k);
+      const cur = best[k.religion];
+      if (!cur || auth > cur.auth) best[k.religion] = { id: i, auth: auth };
+    }
+    const heads = {};
+    for (const rel in best) {
+      const chal = best[rel];
+      const incId = prev[rel];
+      const inc = (incId && ks[incId] && ks[incId].alive && ks[incId].religion === rel) ? ks[incId] : null;
+      // ヒステリシス: 現盟主が挑戦者の 87% 以上の権威を保っていれば地位を守る。
+      if (inc && incId !== chal.id && this._authority(inc) * 1.15 >= chal.auth) heads[rel] = incId;
+      else heads[rel] = chal.id;
+      if (this._faithHeadsInit && heads[rel] !== incId) {
+        this._logEvent("☦ " + this.realmName(ks[heads[rel]]) + " が " + rel + " の盟主となった");
+      }
+    }
+    this._faithHeads = heads;
+    this._faithHeadsInit = 1;
+    for (let i = 1; i < ks.length; i++) { const k = ks[i]; if (k && k.alive) k._faithHead = heads[k.religion] || 0; }
+  };
+
   CivSystem.prototype._diplomacy = function () {
     const ks = this.kingdoms;
 
@@ -2696,6 +2737,8 @@
     // 製錬の燃料（森林＝炭）は変化が緩やかなので、全マップ走査は数回に1回に間引く。
     this._fuelEval = (this._fuelEval || 0) + 1;
     if (this._fuelEval % 3 === 1) this._tallyFuel();
+    // 信仰の盟主を各宗教について定める（信徒国の結束・信仰の平和・表示に用いる）。
+    this._computeFaithHeads();
 
     // --- 国家ごと: 経済(富・技術) と 社会(不満) ---
     for (let a = 1; a < ks.length; a++) {
@@ -2877,6 +2920,11 @@
       if (ka.wealth < ka.tileCount * 0.4) dU += 1.5; else dU -= 1.2;
       dU -= fac.temple * 0.7 + fac.granary * 0.4 + fac.tavern * CP.tavernCalm + res.fish * 0.3 + fac.wonder * 2.5 + (hasTech(ka, "law") ? 2 : 0) + ka.faith * CP.faithCalm; // 信仰・食料・酒場・漁場・記念碑・法典で安定
       dU -= innov[5] * CP.innovArtW + (ka.renown || 0) * CP.renownCalm; // 文化革新・文化的威信が国民の誇りと結束を生む
+      // 信仰の結束: 篤い信仰を持ち、その信仰に盟主がいる国は信徒共同体への帰属で民がまとまる
+      //   （盟主自身は宗教的権威が正統性を与え、二倍の結束）。宗教が政治の安定に寄与する。
+      if (ka._faithHead && (ka.faith || 0) > CP.headMinFaith) {
+        dU -= CP.headFaithCalm * (ka._faithHead === a ? 2 : 1) * (ka.faith || 0);
+      }
       // 宝器（宝物）: 国の象徴として威信を高め、民の誇りとなって不満を和らげる（保持する限り持続）。
       const regalia = this._relicBonus(ka, 2);
       if (regalia) { dU -= regalia * CP.relicCalmEach; ka.renown = (ka.renown || 0) + regalia * CP.relicRenownEach; }
@@ -3138,6 +3186,8 @@
           // 王家の縁戚（婚姻で結ばれた王朝）どうしは戦を厭う（血は水よりも濃い）。
           const kin = !!(ka.royalTies && ka.royalTies[b]);
           if (kin) warP *= CP.marriageWarDamp;
+          // 信仰の平和: 同じ盟主に従う同信徒の国どうしは戦を厭う（宗教的権威の下の同胞意識）。
+          if (sameFaith && ka._faithHead && ka._faithHead === kb._faithHead) warP *= CP.coReligionPeace;
           // 連合（敵の敵は味方）: 共通の敵と交戦中なら手を結びやすい。強大国が諸国を次々に攻めると
           //   その敵どうしが結束し、反覇権連合が創発する（一強の暴走を諸国が均衡で抑える）。
           if (ka.wars && kb.wars) { for (const e in ka.wars) { if (kb.wars[e]) { allyP += CP.coalitionAlly; break; } } }

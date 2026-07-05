@@ -273,7 +273,15 @@
       (rmix.length ? row("民族", rmix.slice(0, 3).map(function (r) { return esc(r.name) + " " + r.pct + "%"; }).join(" ・ ") + (k.diversity > 0.15 ? " 〔多文化〕" : "")) : "") +
       (k.langX != null && civ.langNameOf ? row("言語", esc(civ.langNameOf(k))) : "") +
       row("時代", (info ? info.era : "")) +
-      row("信仰", esc(k.religion) + (k.faith != null ? "（" + (k.faith >= 0.6 ? "篤い" : k.faith >= 0.35 ? "普通" : "希薄") + "）" : "")) +
+      row("信仰", esc(k.religion) + (k.faith != null ? "（" + (k.faith >= 0.6 ? "篤い" : k.faith >= 0.35 ? "普通" : "希薄") + "）" : "") +
+        (function () {
+          // 信仰の盟主（教主国）: この国が盟主なら称え、そうでなければ盟主国を示す。
+          const h = k._faithHead;
+          if (!h) return "";
+          if (h === k.id) return ' <span class="insp-tag good">☦ 盟主</span>';
+          const kh = civ.kingdoms[h];
+          return kh && kh.alive ? ' <span class="insp-tag">盟主: ' + esc(civ.realmName ? civ.realmName(kh) : kh.name) + "</span>" : "";
+        })()) +
       row("気質", esc(k.trait.name) + (k.ethos && k.ethos.name ? " ・ " + esc(k.ethos.name) : "")) +
       (k.doctrineName ? row("国策", (k.doctrineEmoji ? k.doctrineEmoji + " " : "") + esc(k.doctrineName)) : "") +
       row("人口", String(k.humanCount) + " 人") +
