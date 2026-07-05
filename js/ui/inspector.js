@@ -286,6 +286,21 @@
         return row("地方", (k.cities.length - 1) + "州 · 忠誠 " + Math.round(s / n * 100) + "%" + (restless ? ' <span class="insp-tag bad">⚠ 不穏 ' + restless + "州</span>" : ""));
       })() +
       (function () {
+        // 地方の方針: 各州が立地・情勢から選んだ役割（辺境防衛・穀倉・交易港・鉱山・中枢…）を集計して示す。
+        if (!k.cities || k.cities.length < 2) return "";
+        const tally = {}; let any = 0;
+        for (let c = 1; c < k.cities.length; c++) {
+          const e = k.cities[c].stanceEmoji, nm = k.cities[c].stanceName;
+          if (!nm) continue; any++;
+          const key = (e ? e + " " : "") + nm;
+          tally[key] = (tally[key] || 0) + 1;
+        }
+        if (!any) return "";
+        const parts = [];
+        for (const key in tally) parts.push(key + "×" + tally[key]);
+        return row("地方の方針", parts.join(" · "));
+      })() +
+      (function () {
         // 街の発展: 建物の平均段階(普請で育つ)と整備度(状態)を集計して示す。
         let n = 0, lvlS = 0, condS = 0;
         if (k.cities) for (let c = 0; c < k.cities.length; c++) {

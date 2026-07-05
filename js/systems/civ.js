@@ -310,6 +310,27 @@
     loyaltyRate: 0.06,    // 忠誠が目標へ近づく速さ／評価
     secedeLoyalty: 0.34,  // これを下回った州は独立を試みる
     secedeChance: 0.28,   // 忠誠崩壊した州が実際に独立する確率／評価（機が熟すのを待つ）
+    // 総督（各領地を治める実力者）: 非首都都市には総督が置かれ、その威信(prestige)が求心力を高め
+    //   （忠誠の底上げ）、野心(ambition)が中央への忠誠をむしばむ。野心的で威信ある総督を戴く遠隔・
+    //   不忠の州は、その総督を新王として独立へ突き進む（＝独立が人物・野心に駆動される）。
+    govPrestigeStart: 0.6, // 総督の初期威信の基準
+    govPrestigeCap: 0.18,  // 総督の威信が忠誠目標へ与える上限（+0.18）
+    govAmbErode: 0.09,     // 総督の野心が忠誠目標を下げる係数（野心1で最大 -0.09）
+    govAmbSecede: 0.28,    // 独立確率へ乗る総督の野心の重み（野心的総督ほど機を狙う）
+    govTurnover: 0.02,     // 評価ごとに総督が代替わりする確率（世代交代・罷免）
+    // 地方の方針（各領地が自らの立地・情勢から選ぶ役割）: 辺境は守りを固め（+軍）、沿岸は交易港となり
+    //   （+富）、肥沃地は穀倉に（+食）、鉱脈は鉱山に（+工具）、首都近郊の富裕な州は中枢として統治を
+    //   支える（+技術・忠誠）。各州の小さな寄与を国全体で束ね、有界に加算する（均衡は壊さない）。
+    provFoodEach: 0.05,   // 穀倉の州1つが食料生産へ与える寄与
+    provTradeEach: 0.05,  // 交易港の州1つが富へ与える寄与
+    provMilEach: 0.06,    // 辺境の州1つが軍事へ与える寄与
+    provToolsEach: 0.05,  // 鉱山の州1つが武具生産へ与える寄与
+    provTechEach: 0.04,   // 中枢の州1つが技術へ与える寄与
+    provBonusCap: 0.22,   // 地方の方針が生む国全体の底上げの上限（各分野ごと）
+    // 継承危機の分裂: 世襲の断絶・簒奪で王統が揺れた時、大きく不安定な国では最も不忠で野心的な
+    //   総督が機に乗じて一斉に独立を図る（王朝崩壊＝群雄割拠の引き金）。
+    crisisFragmentUnrest: 60, // これ以上の不満なら継承危機時に地方が離反しうる
+    crisisFragmentChance: 0.5,// 条件を満たした継承危機で追加の離反が起きる確率
     // 外交
     diploInterval: 90,  // 外交を評価する間隔(ティック)
     warThreshold: -50,   // 関係がこれ以下で開戦しうる
@@ -1965,7 +1986,8 @@
     const wonderWar = 1 + (k.wonderField ? k.wonderField.war : 0) * CP.wonderWarW; // 巨像が軍を鼓舞
     // 伝説の武具（宝物）: 名匠が鍛えた・戦で受け継いだ名器が軍を奮い立たせる（累積・上限つき）。
     const relicWar = 1 + Math.min(CP.relicMilCap, this._relicBonus(k, 0) * CP.relicMilEach);
-    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar * relicWar;
+    const provMil = k._provMil || 1; // 辺境防衛に徹する州が軍を支える
+    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar * relicWar * provMil;
     k._milTick = this._tickN; k._milCache = mil;
     return mil;
   };
@@ -2538,6 +2560,8 @@
     // 継承の動揺: 平穏な世襲は小、選挙はやや、王朝交代・断絶・簒奪は大。
     let shock = !hadRuler ? 0 : coup ? 16 : crisis ? 18 : houseChanged ? 11 : (k.gov === "共和制" ? 4 : 3);
     k.unrest = Math.min(100, (k.unrest || 0) + shock);
+    // 継承危機（断絶・簒奪・王朝交代）は地方の離反を招きうる（後段の分裂トリガーが機を見る）。
+    if (hadRuler && (coup || crisis || houseChanged)) k._successionCrisis = this._tickN || 1;
     if (hadRuler) {
       if (coup) this._logEvent("⚔ " + k.name + ": " + k.ruler + " が政権を簒奪した（" + newHouse + "家）");
       else if (crisis) this._logEvent("👑 " + k.name + ": 王統が断絶し " + k.ruler + " が新王朝（" + newHouse + "家）を開いた");
@@ -2681,7 +2705,7 @@
       const indF = 1 + ka.industry * CP.industryWealthW;
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君・産業で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (ka.wonderField ? ka.wonderField.trade : 0) * CP.wonderTradeW + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW) * indF;
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (ka.wonderField ? ka.wonderField.trade : 0) * CP.wonderTradeW + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW) * indF * (ka._provTrade || 1);
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -2699,7 +2723,7 @@
       }
       // 技術: 都市・人口・富・鍛冶場・学院・鉱石・記念碑で進歩（賢明・政体・文字・印刷・治安・名君で加速）。
       const techRate = 1 + (hasTech(ka, "writing") ? 0.15 : 0) + (hasTech(ka, "printing") ? 0.3 : 0) + (ka.diversity || 0) * CP.diversityTech + innov[0] * CP.innovTechW + ka.industry * CP.industryTechW;
-      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2 + (ka.wonderField ? ka.wonderField.tech : 0) * CP.wonderTechW) * this._eff(ka, "tech") * techRate * order * kingWit;
+      ka.tech += (ka.cities.length * 0.4 + ka.humanCount * 0.01 + ka.wealth * 0.001 + fac.smithy * 0.6 + fac.academy * CP.academyTech + res.ore * 0.5 + fac.wonder * 1.2 + (ka.wonderField ? ka.wonderField.tech : 0) * CP.wonderTechW) * this._eff(ka, "tech") * techRate * order * kingWit * (ka._provTech || 1);
       // 人々の閃きの蓄積（創造システム）を技術へ転化する。文明は建物だけでなく「人」が進める。
       //   一評価あたりの転化は上限を設け、人口増による暴走を防ぐ（残りは次評価へ持ち越し）。
       if (ka.insight > 0) {
@@ -2712,7 +2736,7 @@
       const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
       // 名工の道具（宝物）: 受け継がれた名工の道具・技法が工房の生産を底上げする（保持する限り）。
       const relicCraft = Math.min(CP.relicCraftCap, this._relicBonus(ka, 1) * CP.relicCraftEach);
-      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order * (1 + ka.industry * CP.industryToolW) * (1 + relicCraft);
+      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order * (1 + ka.industry * CP.industryToolW) * (1 + relicCraft) * (ka._provTools || 1);
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
       // 製鉄の炭焼き: 鉄・鋼を盛んに鍛える国は、森を炭に費やして後退させる（史実の森林伐採）。
       //   植生システムが時とともに森を再生し、過伐採と再生の均衡が生まれる。
@@ -2804,7 +2828,7 @@
       ka.soil = soilStep(ka.soil, intensity, sustain, fert);
       const soilF = soilYield(ka.soil); // 痩せた土は収量を落とす（下限つき）
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
-        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order * soilF * (1 + innov[3] * CP.innovFoodW); // 農業革新で増産・地力で増減
+        res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order * soilF * (1 + innov[3] * CP.innovFoodW) * (ka._provFood || 1); // 農業革新で増産・地力で増減・穀倉の州が底上げ
       // 自給採集ぶんは国の備蓄消費から差し引く（小国は自給、都市化した大国では無視できるほど小）。
       const forage = Math.min(CP.forageBase, (ka.tileCount || 0) * CP.foragePerTile);
       const consume = Math.max(0, ka.humanCount - forage) * CP.foodConsume * (1 + warCount * 0.5);
@@ -2876,9 +2900,19 @@
       // 地方の忠誠（各領地の方針決定）: 各州の忠誠を情勢から更新し、最も不忠な州を記録する。
       this._updateProvinces(ka);
       const worstIdx = ka._worstProvIdx, worstLoy = ka._worstProvLoy;
+      const roomForNew = this.kingdoms.length - 1 < Game.config.sim.maxKingdoms;
+      // 継承危機の分裂: 断絶・簒奪で王統が揺れた直後、大きく不安定な国では最も不忠な地方の総督が
+      //   機に乗じて独立を宣する（王朝崩壊が群雄割拠を呼ぶ。危機の記憶は一度で消費する）。
+      if (ka._successionCrisis && ((this._tickN || 1) - ka._successionCrisis) < CP.diploInterval * 4 &&
+          ka.unrest >= CP.crisisFragmentUnrest && ka.cities.length >= 3 && worstIdx >= 1 &&
+          worstLoy < CP.secedeLoyalty + 0.12 && roomForNew && this.rand() < CP.crisisFragmentChance) {
+        ka._successionCrisis = 0;
+        this._rebellion(ka, worstIdx);
+        this._logEvent("👑💥 " + ka.name + " の王統が揺らぎ、地方の総督が独立を宣した");
+      }
       // 反乱: 不満が高く複数都市を持つ国は、最も不忠な地方が独立する（どの州が離れるかは忠誠が決める）。
-      if (ka.unrest > 80 && ka.cities.length >= 2 &&
-          this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < 0.18) {
+      else if (ka.unrest > 80 && ka.cities.length >= 2 &&
+          roomForNew && this.rand() < 0.18) {
         this._rebellion(ka, worstIdx);
       }
       // 地方の離反: 忠誠の尽きた州は、国が乱れていなくても自ら独立を選ぶ（遠く顧みられぬ辺境の分離）。
@@ -3054,8 +3088,11 @@
   //   遠く痩せ細り顧みられぬ地方は離れ、豊かで善政の届く近国は留まる――地方分権と帝国の綻びが創発。
   //   最も不忠な州の index と忠誠を ka._worstProvIdx / ka._worstProvLoy に記録する（独立はしない）。
   CivSystem.prototype._updateProvinces = function (ka) {
-    ka._worstProvIdx = -1; ka._worstProvLoy = 2;
+    ka._worstProvIdx = -1; ka._worstProvLoy = 2; ka._worstProvSecede = -1e9;
+    // 地方の方針が国全体へ束ねる底上げ（毎評価この関数で作り直す）。
+    let bFood = 0, bTrade = 0, bMil = 0, bTools = 0, bTech = 0, restless = 0;
     const cities = ka.cities;
+    ka._provMil = 1; ka._provFood = 1; ka._provTrade = 1; ka._provTools = 1; ka._provTech = 1;
     if (!cities || cities.length < 2) return;
     const cap = cities[0];
     const rate = CP.loyaltyRate;
@@ -3068,12 +3105,96 @@
       if (city.loyalty == null) city.loyalty = CP.loyaltyStart;
       const dx = city.x - cap.x, dy = city.y - cap.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      // --- 総督（各領地を治める実力者）: 威信が求心力を、野心が離反心を生む ---
+      const g = this._provinceGovernor(ka, city);
+      const govBonus = Math.min(CP.govPrestigeCap, (g.prestige - CP.govPrestigeStart) * 0.3); // 名総督は民をまとめる（-も有り）
+      const ambPen = g.ambition * CP.govAmbErode;                 // 野心ある総督は中央から心が離れる
+      // --- 地方の方針（立地・情勢から州が選ぶ役割）: 忠誠と国の底上げに効く ---
+      const st = this._provinceStance(ka, city, dist);
+      city.stance = st.key; city.stanceName = st.name; city.stanceEmoji = st.emoji;
+      bFood += st.food; bTrade += st.trade; bMil += st.mil; bTools += st.tools; bTech += st.tech;
       const distPen = Math.min(0.55, dist / CP.loyaltyRange * 0.55);        // 遠いほど求心力が届かない
       const prosperity = Math.min(0.2, ((city.level || 1) - 1) * 0.09 + (city.buildings ? city.buildings.length : 0) * 0.008);
-      const target = clamp01(0.9 - distPen - unrestPen + prosperity + rulerBonus + renownBonus + calmBonus);
+      const target = clamp01(0.9 - distPen - unrestPen + prosperity + rulerBonus + renownBonus + calmBonus + govBonus - ambPen + st.loyal);
       city.loyalty += (target - city.loyalty) * rate;
+      if (city.loyalty < CP.secedeLoyalty) restless++;
+      // 独立の切迫度: 忠誠が低いほど、そして総督が野心的なほど機が熟す（人物駆動の独立）。
+      const secedePush = (CP.secedeLoyalty - city.loyalty) + g.ambition * CP.govAmbSecede;
+      if (secedePush > ka._worstProvSecede) { ka._worstProvSecede = secedePush; }
       if (city.loyalty < ka._worstProvLoy) { ka._worstProvLoy = city.loyalty; ka._worstProvIdx = c; }
     }
+    ka._restlessProv = restless;
+    ka._provMil = 1 + Math.min(CP.provBonusCap, bMil);
+    ka._provFood = 1 + Math.min(CP.provBonusCap, bFood);
+    ka._provTrade = 1 + Math.min(CP.provBonusCap, bTrade);
+    ka._provTools = 1 + Math.min(CP.provBonusCap, bTools);
+    ka._provTech = 1 + Math.min(CP.provBonusCap, bTech);
+  };
+
+  // 総督（各領地を治める実力者）: 州ごとに威信と野心を持つ人物を置く。無ければ任命し、
+  //   時に代替わりする。威信は繁栄する州で緩やかに育ち、野心は不忠のもとで研がれる。
+  //   決定的乱数(this.rand)で駆動＝再現可能。
+  CivSystem.prototype._provinceGovernor = function (ka, city) {
+    let g = city.governor;
+    if (!g || this.rand() < CP.govTurnover) {
+      // 新総督の任命（世代交代・罷免・登用）。名家からの起用は名前で表現。
+      const prev = g;
+      g = {
+        name: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
+        sur: makeName(this.rand),
+        prestige: CP.govPrestigeStart + (this.rand() - 0.4) * 0.5,   // 器量の個体差
+        ambition: this.rand() * this.rand(),                        // 多くは従順、稀に野心家
+      };
+      if (g.prestige < 0.1) g.prestige = 0.1;
+      city.governor = g;
+      // 前任の野心家が退けば州は少し落ち着く（忠誠の回復余地）。
+      if (prev && prev.ambition > 0.6 && ka._doctrineInit) this._logEvent("🏛 " + ka.name + ": " + g.name + " " + g.sur + " が地方の総督となった");
+    }
+    // 威信は州の繁栄で育ち、野心は不忠のもとで研がれる（有界）。
+    const prosper = ((city.level || 1) - 1) * 0.02 + (city.buildings ? city.buildings.length : 0) * 0.003;
+    g.prestige = Math.min(3, g.prestige + prosper * 0.1);
+    if ((city.loyalty || 1) < 0.5) g.ambition = Math.min(1, g.ambition + 0.02); // 中央が弱ると野心が募る
+    return g;
+  };
+
+  // 地方の方針: 州が自らの立地・情勢から役割を選ぶ。優先度の高いものを一つ採り、国全体への
+  //   小さな寄与（有界）と、その役割ゆえの忠誠補正(loyal)を返す。
+  CivSystem.prototype._provinceStance = function (ka, city, dist) {
+    const world = this.world;
+    const coastal = this._coastal(world, city.x, city.y);
+    const ore = world.resource ? !!this._oreSpotNear(world, ka, city) || (this._resTypeNear(city, Game.RESOURCE.ORE)) : false;
+    const fert = this._cityFertility(city);
+    const frontier = dist > CP.loyaltyRange * 0.6;
+    const core = dist < CP.loyaltyRange * 0.32 && (city.level || 1) >= 2;
+    // 優先順: 辺境（守り）＞ 鉱山 ＞ 穀倉 ＞ 交易港 ＞ 中枢 ＞ 属領。
+    if (frontier)      return { key: "frontier", name: "辺境防衛", emoji: "🛡", food: 0, trade: 0, mil: CP.provMilEach, tools: 0, tech: 0, loyal: 0.04 };
+    if (ore)           return { key: "mine",     name: "鉱山",     emoji: "⛏", food: 0, trade: 0, mil: 0, tools: CP.provToolsEach, tech: 0, loyal: 0 };
+    if (fert > 0.85)   return { key: "granary",  name: "穀倉",     emoji: "🌾", food: CP.provFoodEach, trade: 0, mil: 0, tools: 0, tech: 0, loyal: 0.02 };
+    if (coastal)       return { key: "port",     name: "交易港",   emoji: "⚓", food: 0, trade: CP.provTradeEach, mil: 0, tools: 0, tech: 0, loyal: 0.02 };
+    if (core)          return { key: "core",     name: "中枢",     emoji: "🏛", food: 0, trade: 0, mil: 0, tools: 0, tech: CP.provTechEach, loyal: 0.05 };
+    return { key: "province", name: "属領", emoji: "🏘", food: 0, trade: 0, mil: 0, tools: 0, tech: 0, loyal: 0 };
+  };
+
+  // 都市周辺の平均肥沃度（穀倉判定用・軽量サンプル）。
+  CivSystem.prototype._cityFertility = function (city) {
+    const world = this.world;
+    if (!world.fertility) return 0.7;
+    const W = world.width, H = world.height, f = world.fertility;
+    const off = [0, 0, -2, 0, 2, 0, 0, -2, 0, 2];
+    let sum = 0, n = 0;
+    for (let o = 0; o < off.length; o += 2) {
+      const x = city.x + off[o], y = city.y + off[o + 1];
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      sum += f[y * W + x]; n++;
+    }
+    return n ? sum / n : 0.7;
+  };
+
+  // 都市の建物に鉱山があれば鉱脈の州とみなす（_oreSpotNear が未採掘のみ見るため補完）。
+  CivSystem.prototype._resTypeNear = function (city, resType) {
+    const bs = city.buildings;
+    if (bs) for (let i = 0; i < bs.length; i++) if (bs[i].type === BUILDING.MINE) return true;
+    return false;
   };
 
   CivSystem.prototype._rebellion = function (parent, forcedIdx) {
@@ -3091,6 +3212,9 @@
     }
     if (idx < 0) return;
     const city = parent.cities[idx];
+    // 独立を率いる総督（居れば）: 名総督は自ら新王として国を興し、その家が新王朝になる
+    //   （＝独立が人物に駆動される。無名の州は成り行きで指導者が立つ）。
+    const gov = city.governor;
 
     // 新国家レコード（独立都市を首都に）。
     const id = this.kingdoms.length;
@@ -3098,7 +3222,8 @@
     const nk = {
       id: id,
       name: makeName(this.rand),
-      ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
+      ruler: gov ? (gov.name + " " + gov.sur) : RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
+      dynasty: gov ? gov.sur : null, // 総督の家名が新王朝を開く
       gov: GOV_TYPES[govIdx],
       govMod: GOV_MODS[govIdx],
       color: makeColor(this.rand),
