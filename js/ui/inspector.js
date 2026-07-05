@@ -338,7 +338,8 @@
       (k.soil != null && k.soil < 0.98 ? row("地力", Math.round(k.soil * 100) + "%" + (k.soil < 0.72 ? " ⚠ 土が痩せている" : "")) : "") +
       row("資源", resStr) +
       row("通貨", moneyStr) +
-      (craftStr ? row("工芸", esc(craftStr)) : "") +
+      (craftStr ? row("工芸", (ci && ci.tradEmoji ? ci.tradEmoji + " " + esc(ci.tradName) + " ・ " : "") + esc(craftStr)) : "") +
+      (ci && ci.product ? row("名産", "🏷 " + esc(ci.product)) : "") +
       (info && info.market
         ? row("市場", "希少 " + esc(info.market.scarce) + " ↑　余剰 " + esc(info.market.abundant) + " ↓") : "") +
       (info && info.partners && info.partners.length

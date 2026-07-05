@@ -730,6 +730,42 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 工芸の伝統 — 資源・立地から流儀を究め、名産品と得意分野の底上げを得る", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
+  const w = new Game.World(60, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const k = civ.kingdoms[A];
+  k.name = "アルデン";
+  k.craft = 0.8; // 高い工芸力
+  // 鉱石・燃料・鉄器 → 武具鍛冶を究める。
+  k.res = { ore: 3, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
+  k.fuel = 999; k.techBits = { iron: true, bronze: true };
+  k.facilities = Object.assign(k.facilities || {}, { smithy: 3 });
+  civ._chooseCraftTradition(k);
+  assert.equal(k.craftTrad, "weapon", "鉱石・鉄の国が武具鍛冶を選ばない: " + k.craftTrad);
+  assert.ok(k.craftProduct && k.craftProduct.indexOf("アルデン") === 0, "名産品が国名を冠さない: " + k.craftProduct);
+  // 武具鍛冶は軍事・道具を底上げし、富は底上げしない。
+  assert.ok(k._craftMil > 1, "武具鍛冶が軍事を底上げしない: " + k._craftMil);
+  assert.ok(k._craftTools > 1, "武具鍛冶が道具を底上げしない: " + k._craftTools);
+  assert.ok(Math.abs(k._craftWealth - 1) < 1e-9, "武具鍛冶が富を底上げしてしまう: " + k._craftWealth);
+  // 底上げは工芸力に比例（低い工芸力なら小さい）。
+  const milHi = k._craftMil;
+  k.craft = 0.2; civ._chooseCraftTradition(k);
+  assert.ok(k._craftMil < milHi, "工芸力が低くても底上げが変わらない");
+
+  // 宝石・金の国は装身具を究め、富を底上げする。
+  const B = civ.foundAt(40, 20);
+  const kb = civ.kingdoms[B];
+  kb.craft = 0.8;
+  kb.res = { ore: 0, fish: 0, gems: 5, gold: 4, horses: 0, spice: 0, salt: 0, timber: 0 };
+  kb.fuel = 0; kb.techBits = {};
+  civ._chooseCraftTradition(kb);
+  assert.equal(kb.craftTrad, "jewel", "宝石・金の国が装身具を選ばない: " + kb.craftTrad);
+  assert.ok(kb._craftWealth > 1, "装身具が富を底上げしない: " + kb._craftWealth);
+});
+
 test("CivSystem: 信仰の盟主 — 各宗教で最も権威ある国が盟主となり、同信徒を結束させる", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const w = new Game.World(60, 40);
