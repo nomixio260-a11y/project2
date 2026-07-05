@@ -730,6 +730,35 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 地方の方針と総督 — 各州が役割を選び、総督が置かれ、方針が国力を底上げする", () => {
+  const Game = loadCore({ mapWidth: 100, mapHeight: 40 });
+  const w = new Game.World(100, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const k = civ.kingdoms[A];
+  // 首都 ＋ 遠い辺境州（守りを固める）。
+  k.cities = [
+    { x: 10, y: 20, capital: true, level: 2, buildings: [] },
+    { x: 90, y: 20, capital: false, level: 2, buildings: [{}, {}] },
+  ];
+  civ._updateProvinces(k);
+  // 遠方州は辺境防衛の方針を選ぶ。
+  assert.equal(k.cities[1].stance, "frontier", "遠方州が辺境防衛にならない: " + k.cities[1].stance);
+  assert.ok(k.cities[1].stanceName && k.cities[1].stanceEmoji, "方針の表示名が付かない");
+  // 総督が任命される（威信と野心を持つ人物）。
+  const g = k.cities[1].governor;
+  assert.ok(g && typeof g.prestige === "number" && typeof g.ambition === "number", "総督が置かれない");
+  // 辺境防衛の州は国全体の軍事を底上げする（_provMil > 1）。
+  assert.ok(k._provMil > 1, "地方の方針が軍事を底上げしない: " + k._provMil);
+  // その底上げは実際の軍事力に反映される。
+  k.roleCount[Game.ROLE.SOLDIER] = 10;
+  const milHi = civ._military(k);
+  k._provMil = 1; k._milTick = -1; // 底上げを外して比較
+  const milLo = civ._military(k);
+  assert.ok(milHi > milLo, "地方の方針が軍事力に反映されない: " + milHi + " vs " + milLo);
+});
+
 test("CivSystem: 宝物 — 伝説の遺物が国力を底上げし、征服で戦利品として受け継がれる", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   const w = new Game.World(40, 40);
