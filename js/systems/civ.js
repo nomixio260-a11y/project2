@@ -265,6 +265,11 @@
     foodStoreGranary: 48, // 穀倉1棟あたりの備蓄上限増
     famineDeathFood: 3,   // 食料不足この量ごとに1人が餓死
     ruinCap: 22,          // 滅んだ国が残す廃墟マークの最大数（大国でも痕跡を有界に）
+    // 自給採集（狩猟採集の扶養力）: 小さな集団は土地からの採集で自給し、国の備蓄への依存が小さい。
+    //   都市化して人口が増えると自給しきれず組織的農業に頼る。これで若い小国が食料自給できず即
+    //   飢饉崩壊する churn を和らげ、文明がより永続する（大国では humanCount に対し無視できるほど小）。
+    forageBase: 14,       // 採集で自給できる人数の上限（都市化前の集団の扶養力）
+    foragePerTile: 0.45,  // 領土1タイルが支える採集自給人数（痩せた小領土は少ししか養えない）
     // 地力（土壌の養分）: 過耕作は地力を痩せさせ収量を落とす。休閑・好条件・農法（農耕技術・
     //   輪作）が地力を回復させる。持続可能な密度では地力は保たれ（＝均衡は不変）、狭い領土に
     //   農を詰め込む過耕作でのみ痩せる。史実の連作障害・地力低下・輪作の知恵を表す。
@@ -2717,7 +2722,9 @@
       const soilF = soilYield(ka.soil); // 痩せた土は収量を落とす（下限つき）
       const produce = (ka.roleCount[ROLE.FARMER] * CP.foodFarmer + fac.farm * CP.foodFarmBldg +
         res.fish * CP.foodFish + fac.harbor * CP.foodHarbor + ka.tileCount * CP.foodGather) * agriF * warDisrupt * fert * seasonF * climF * order * soilF * (1 + innov[3] * CP.innovFoodW); // 農業革新で増産・地力で増減
-      const consume = ka.humanCount * CP.foodConsume * (1 + warCount * 0.5);
+      // 自給採集ぶんは国の備蓄消費から差し引く（小国は自給、都市化した大国では無視できるほど小）。
+      const forage = Math.min(CP.forageBase, (ka.tileCount || 0) * CP.foragePerTile);
+      const consume = Math.max(0, ka.humanCount - forage) * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary + (res.salt || 0) * CP.saltStore; // 塩で保存（備蓄増）
       ka._famineDeaths = 0;
