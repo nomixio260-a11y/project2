@@ -221,21 +221,30 @@
     this.dirty.push(x, y);
   };
 
+  // 1タイルの色（標高＋陰影）をオフスクリーン地形バッファへ描き直す。
+  Renderer.prototype._paintTile = function (world, rgb, tctx, x, y) {
+    const i = y * world.width + x;
+    const c = rgb[world.terrain[i]];
+    const shade = this._tileShade(world, i, x, y);
+    const r = Math.min(255, (c[0] * shade) | 0), g = Math.min(255, (c[1] * shade) | 0), b = Math.min(255, (c[2] * shade) | 0);
+    tctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
+    tctx.fillRect(x, y, 1, 1);
+  };
+
   // dirty タイルをオフスクリーンへ反映。
   Renderer.prototype.flushDirty = function () {
     if (this.dirty.length === 0) return;
     const world = this.world;
     const rgb = Game.TERRAIN_RGB;
     const tctx = this.terrainCtx;
+    const W = world.width, H = world.height;
     for (let k = 0; k < this.dirty.length; k += 2) {
-      const x = this.dirty[k];
-      const y = this.dirty[k + 1];
-      const i = y * world.width + x;
-      const c = rgb[world.terrain[i]];
-      const shade = this._tileShade(world, i, x, y);
-      const r = Math.min(255, (c[0] * shade) | 0), g = Math.min(255, (c[1] * shade) | 0), b = Math.min(255, (c[2] * shade) | 0);
-      tctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
-      tctx.fillRect(x, y, 1, 1);
+      const x = this.dirty[k], y = this.dirty[k + 1];
+      this._paintTile(world, rgb, tctx, x, y);
+      // 陰影は西・北の隣接標高から算出するため、編集タイルは東・南の隣の陰影も変える。
+      //   その2タイルも塗り直さないと縁に古い陰影が残る（改変後の照明のズレ）。
+      if (x + 1 < W) this._paintTile(world, rgb, tctx, x + 1, y);
+      if (y + 1 < H) this._paintTile(world, rgb, tctx, x, y + 1);
     }
     this.dirty.length = 0;
   };
