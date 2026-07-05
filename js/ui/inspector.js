@@ -204,7 +204,7 @@
       this.titleEl.innerHTML = (k ? "🧑 " : "🚶 ") + fullName +
         (p._famed ? ' <span class="insp-tag good">★ ' + esc(title(p)) + "</span>" : "");
       let html =
-        row("所属", k ? swatch(k.color) + " " + esc(k.name) : "なし（放浪者）") +
+        row("所属", k ? swatch(k.color) + " " + esc(civ.realmName ? civ.realmName(k) : k.name) : "なし（放浪者）") +
         row("役割", role + "（" + stage + "）") +
         (p.race != null && civ.raceName ? row("人種", esc(civ.raceName(p.race))) : "") +
         (p.lx != null && civ.personLangName ? row("言葉", esc(civ.personLangName(p))) : "") +
@@ -260,14 +260,15 @@
     const craftStr = ci ? (ci.name + "（工芸 " + (ci.level >= 0.6 ? "高" : ci.level >= 0.3 ? "中" : "低") +
       " ・ 鉱石" + (ci.ore ? "有" : "無") + " ・ 炭" + ci.fuel + "）") : null;
     const moneyStr = hasCoin ? ("鋳貨 🪙" + Math.round(k.coin || 0)) : "物々交換";
-    this.titleEl.innerHTML = swatch(k.color) + " " + esc(k.name) +
+    const realm = civ.realmName ? civ.realmName(k) : k.name;
+    this.titleEl.innerHTML = swatch(k.color) + " " + esc(realm) +
       (k.goldenAge > 0 ? ' <span class="insp-tag good">✨ 黄金時代</span>' : "") +
       (k.darkAge > 0 ? ' <span class="insp-tag bad">🌑 暗黒時代</span>' : "") +
       (k.plague > 0 ? ' <span class="insp-tag bad">☣ 疫病</span>' : "") +
       (k.famine ? ' <span class="insp-tag bad">🌾 飢饉</span>' : "");
     const rmix = civ.raceMixOf ? civ.raceMixOf(k) : [];
     this.bodyEl.innerHTML =
-      row("統治", esc(k.ruler) + "（" + esc(k.gov) + "）") +
+      row("統治", (civ.rulerTitle ? esc(civ.rulerTitle(k)) + " " : "") + esc(k.ruler) + "（" + esc(k.gov) + "）") +
       (k.dynasty ? row("王朝", esc(k.dynasty) + "家") : "") +
       (rmix.length ? row("民族", rmix.slice(0, 3).map(function (r) { return esc(r.name) + " " + r.pct + "%"; }).join(" ・ ") + (k.diversity > 0.15 ? " 〔多文化〕" : "")) : "") +
       (k.langX != null && civ.langNameOf ? row("言語", esc(civ.langNameOf(k))) : "") +

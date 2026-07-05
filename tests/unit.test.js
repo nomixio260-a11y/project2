@@ -730,6 +730,48 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 国号 — 政治（政体・国の格）が国の呼び名と統治者の称号を定める", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
+  const w = new Game.World(60, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const k = civ.kingdoms[A];
+  k.name = "アルデン";
+  // 君主制・小国（都市1・狭い版図）→ 侯国。
+  k.gov = "君主制";
+  k.cities = [{ x: 10, y: 20, capital: true, level: 1, buildings: [] }];
+  k.tileCount = 50; k.vassals = {};
+  assert.equal(civ.realmName(k), "アルデン侯国", "小国が侯国にならない: " + civ.realmName(k));
+  assert.equal(civ.rulerTitle(k), "候", "小君主の称号が候でない: " + civ.rulerTitle(k));
+  // 中堅（都市2）→ 王国、称号は王。
+  k.cities = [{ x: 10, y: 20, capital: true }, { x: 20, y: 20 }]; k.tileCount = 400;
+  assert.equal(civ.realmName(k), "アルデン王国", "中堅が王国にならない: " + civ.realmName(k));
+  assert.equal(civ.rulerTitle(k), "王", "王でない: " + civ.rulerTitle(k));
+  // 帝国級（都市3以上）→ 大王国。
+  k.cities = [{ x: 10, y: 20, capital: true }, { x: 20, y: 20 }, { x: 30, y: 20 }];
+  assert.equal(civ.realmName(k), "アルデン大王国", "帝国級が大王国にならない: " + civ.realmName(k));
+  // 政体が変われば呼び名も方針も変わる: 共和制→共和国、帝国→帝国、神権制の大国→神聖…帝国。
+  k.gov = "共和制"; k.cities = [{ x: 10, y: 20, capital: true }, { x: 20, y: 20 }];
+  assert.equal(civ.realmName(k), "アルデン共和国", "共和国にならない: " + civ.realmName(k));
+  assert.equal(civ.rulerTitle(k), "統領", "共和の統治者が統領でない");
+  k.gov = "帝国";
+  assert.equal(civ.realmName(k), "アルデン帝国", "帝国にならない");
+  assert.equal(civ.rulerTitle(k), "皇帝", "皇帝でない");
+  k.gov = "神権制"; k.cities = [{ x: 10, y: 20, capital: true }, { x: 20, y: 20 }, { x: 30, y: 20 }];
+  assert.equal(civ.realmName(k), "神聖アルデン帝国", "神権大国が神聖帝国にならない: " + civ.realmName(k));
+  // _updateRealmName が k.realmName を更新し、変化を年代記に記す。
+  k.gov = "君主制"; k.cities = [{ x: 10, y: 20, capital: true }]; k.tileCount = 50;
+  civ._updateRealmName(k); // 初回（ログなし）
+  assert.equal(k.realmName, "アルデン侯国", "realmName が更新されない");
+  let logged = "";
+  civ._logEvent = function (m) { logged = m; };
+  k.cities = [{ x: 10, y: 20, capital: true }, { x: 20, y: 20 }, { x: 30, y: 20 }]; k.tileCount = 400;
+  civ._updateRealmName(k); // 侯国→大王国（ログあり）
+  assert.equal(k.realmName, "アルデン大王国", "政治変化で国号が更新されない");
+  assert.ok(logged.indexOf("大王国") >= 0, "国号の変化が年代記に記されない: " + logged);
+});
+
 test("CivSystem: 地方の方針と総督 — 各州が役割を選び、総督が置かれ、方針が国力を底上げする", () => {
   const Game = loadCore({ mapWidth: 100, mapHeight: 40 });
   const w = new Game.World(100, 40);

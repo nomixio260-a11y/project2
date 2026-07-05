@@ -2640,6 +2640,8 @@
       // 国策（ドクトリン）の意思決定: 情勢からこの評価の方針を選ぶ。以後の生産・技術・拡張・外交は
       //   _eff を通じてこの方針の補正を受ける（＝国家の戦略が振る舞い全体に一貫して反映される）。
       this._chooseDoctrine(ka);
+      // 国号の更新: 政治（政体・国の格）が定める呼び名を情勢に合わせて改める（王国→帝国など）。
+      this._updateRealmName(ka);
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
       ka.tradeVol = (ka.tradeVol || 0) * 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0; // (|| 0) で未初期化国の NaN を防ぐ
       // 交易相手はこの評価のペア処理で再集計するが、文化伝播・言語/信仰の関係補正はペア処理で
@@ -3298,6 +3300,60 @@
     this._logEvent("✊ " + nk.name + " が " + parent.name + " から独立した");
   };
 
+  // 国の格（政治の規模）: 都市数・属国・版図から小(0)・中(1)・大(2)を判定する。
+  //   政治が動けば（改革・征服・分裂・属国化）格も変わり、国号がそれに応じて変わる。
+  CivSystem.prototype._realmTier = function (k) {
+    const cities = k.cities ? k.cities.length : 1;
+    const vass = this._count(k.vassals);
+    if (cities >= CP.empireCities || vass >= 1 || (k.tileCount || 0) > 900) return 2; // 大国・帝国級
+    if (cities <= 1 && (k.tileCount || 0) < 180 && vass === 0) return 0;               // 小国・都市規模
+    return 1;                                                                          // 中堅
+  };
+
+  // 国号（政治が定める国の名称）: 固有名に、政体と国の格に応じた称号を冠する。
+  //   君主制の小国は侯国、栄えれば王国、帝国級なら大王国…と、政治の変転で呼び名が変わる。
+  CivSystem.prototype.realmName = function (k) {
+    const base = k.name;
+    const t = this._realmTier(k);
+    switch (k.gov) {
+      case "帝国":     return base + "帝国";
+      case "君主制":   return base + (t === 2 ? "大王国" : t === 0 ? "侯国" : "王国");
+      case "封建制":   return base + (t === 2 ? "大公国" : t === 0 ? "辺境伯領" : "王国");
+      case "共和制":   return base + (t === 2 ? "共和連邦" : t === 0 ? "自治市" : "共和国");
+      case "都市国家": return t === 2 ? base + "都市同盟" : t === 0 ? "自由都市" + base : base + "市国";
+      case "神権制":   return t === 2 ? "神聖" + base + "帝国" : t === 0 ? base + "聖庁" : base + "聖王国";
+      case "部族連合": return base + (t === 2 ? "部族大連合" : t === 0 ? "族" : "部族連合");
+      case "氏族制":   return base + (t === 2 ? "氏族連邦" : t === 0 ? "氏族" : "氏国");
+      default:         return base + "王国";
+    }
+  };
+
+  // 統治者の称号（政体が定める）: 帝国の皇帝、王国の王、共和の統領…と政治で呼称が変わる。
+  CivSystem.prototype.rulerTitle = function (k) {
+    switch (k.gov) {
+      case "帝国":     return "皇帝";
+      case "君主制":   return this._realmTier(k) === 0 ? "候" : "王";
+      case "封建制":   return "王";
+      case "共和制":   return "統領";
+      case "都市国家": return "市長";
+      case "神権制":   return "法王";
+      case "部族連合": return "首長";
+      case "氏族制":   return "族長";
+      default:         return "王";
+    }
+  };
+
+  // 政治の変転に応じて国号を更新し、変わった時は年代記に記す（王国→帝国など、
+  //   呼び名が変わる歴史的瞬間を可視化する）。表示側はこの k.realmName を用いる。
+  CivSystem.prototype._updateRealmName = function (k) {
+    const nm = this.realmName(k);
+    if (k.realmName && k.realmName !== nm && k._realmInit) {
+      this._logEvent("🏛 " + k.realmName + " は " + nm + " と呼ばれるようになった");
+    }
+    k.realmName = nm;
+    k._realmInit = 1;
+  };
+
   // UI 用: 各国の要約（人口降順）。
   CivSystem.prototype.getNations = function () {
     const ks = this.kingdoms;
@@ -3309,7 +3365,8 @@
       for (const b in k.wars) if (ks[b] && ks[b].alive) wars.push(ks[b].name);
       for (const b in k.allies) if (ks[b] && ks[b].alive) allies.push(ks[b].name);
       out.push({
-        id: a, name: k.name, ruler: k.ruler, dynasty: k.dynasty || null, gov: k.gov, color: k.color,
+        id: a, name: k.name, realmName: k.realmName || this.realmName(k), rulerTitle: this.rulerTitle(k),
+        ruler: k.ruler, dynasty: k.dynasty || null, gov: k.gov, color: k.color,
         pop: k.humanCount, cities: k.cities.length, tiles: k.tileCount,
         capital: k.cities[0], wars: wars, allies: allies,
         religion: k.religion, era: eraOf(k.tech), tech: Math.round(k.tech),
