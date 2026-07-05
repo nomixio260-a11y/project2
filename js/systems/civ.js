@@ -461,6 +461,10 @@
     masterwork: 0.3,     // 工芸力1.0あたりの業物（一段上の傑作）を打つ確率
     craftToolW: 0.4,     // 鍛冶場1棟あたりの道具産出（工芸力で増減）
     craftLuxW: 0.6,      // 工芸力による奢侈品（金・宝石）の付加価値
+    // 工芸の伝統（ものづくりの流儀）: 得意分野への底上げは工芸力(craft)に比例して効く（有界）。
+    craftTradBonus: 0.16, // 究めた伝統が得意分野へ与える底上げの上限（craft=1・weight=1 で +16%）
+    craftTradRenown: 0.012,// 名産品が交易で知られ国の文化的威信へ寄与する量/評価（craft比例）
+    craftTradSwitch: 0.85,// 工芸の伝統を乗り換えるのに要するスコア差（ヒステリシス。流儀は根づき容易には変わらない）
     // 生物群系の資源（地形ごとの恵み）
     horseMil: 0.06,      // 馬1つあたりの軍事力上乗せ（騎兵。上限あり）
     spiceWealth: 2.2,    // 香辛料1つの富（高値の奢侈。工芸で付加価値）
@@ -599,6 +603,20 @@
     { key: "culture", name: "文治策", emoji: "📜", mod: { tech: 1.35, trade: 1.15, faith: 1.05, war: 0.8, ally: 1.15, expand: 0.9, unrest: 0.85 } },
   ];
   const DOCTRINE_BY_KEY = {}; for (let i = 0; i < DOCTRINES.length; i++) DOCTRINE_BY_KEY[DOCTRINES[i].key] = DOCTRINES[i];
+
+  // 工芸の伝統（各国が育む「ものづくりの流儀」）: 国は手にした資源・立地・技術から、最も適う工芸の
+  //   道を究める。武具鍛冶は軍と道具を、装身具・織物・陶工は富を、造船は海運を、石工は記念碑と威信を
+  //   厚くする。究めた伝統は名産品を生み、その名は交易で諸国に知られ、国の文化的威信を高める。
+  //   bonus は工芸力(craft)に比例して効く有界の底上げ（tools/wealth/mil）。goods は名産品の語彙。
+  const CRAFT_TRADITIONS = [
+    { key: "weapon", name: "武具鍛冶", emoji: "⚔", bonus: { tools: 1.0, mil: 0.7, wealth: 0 }, goods: ["名剣", "業物の槍", "鋼の大盾", "鍛えの甲冑"] },
+    { key: "jewel",  name: "装身具",   emoji: "💎", bonus: { tools: 0, mil: 0, wealth: 1.0 }, goods: ["黄金の装身具", "宝冠", "銀細工", "彫玉"] },
+    { key: "textile",name: "織物",     emoji: "🧵", bonus: { tools: 0, mil: 0, wealth: 0.9 }, goods: ["絹織物", "錦", "染め布", "毛織物"] },
+    { key: "ship",   name: "造船",     emoji: "⚓", bonus: { tools: 0.3, mil: 0.3, wealth: 0.7 }, goods: ["快速船", "交易帆船", "堅牢な竜骨", "遠洋船"] },
+    { key: "masonry",name: "石工",     emoji: "🏛", bonus: { tools: 0.3, mil: 0, wealth: 0.5 }, goods: ["切石の意匠", "石橋", "円柱列", "石彫"] },
+    { key: "pottery",name: "陶工",     emoji: "🏺", bonus: { tools: 0, mil: 0, wealth: 0.6 }, goods: ["彩陶", "青磁", "硝子器", "施釉の壺"] },
+  ];
+  const CRAFT_TRAD_BY_KEY = {}; for (let i = 0; i < CRAFT_TRADITIONS.length; i++) CRAFT_TRAD_BY_KEY[CRAFT_TRADITIONS[i].key] = CRAFT_TRADITIONS[i];
 
   // 個別の技術発見。tech 値が閾値 at を超えると獲得し、具体的な恩恵を得る。
   // 技術ツリー: 各技術は前提技術(req)と分野(field)を持つ。前提を満たし、かつ国の性格で
@@ -994,6 +1012,12 @@
     [200, 180, 110], [150, 170, 200], [220, 210, 160],
   ];
   // 文字列（家名）から決定的に色を作る（王朝ビュー: 同じ王朝＝同じ色）。
+  // 文字列の安定ハッシュ（決定的。名産品など、国ごとに一定の選択を与える）。
+  function hashStr(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+    return h | 0;
+  }
   function hashColor(s) {
     let h = 2166136261;
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
@@ -1329,6 +1353,45 @@
     const g = k.govMod ? (k.govMod[f] || 1) : 1;
     const e = k.ethos ? (k.ethos[f] || 1) : 1;
     return (t - 1) + (g - 1) + (e - 1); // 各補正の中立(1)からのずれの和
+  };
+
+  // 工芸の伝統の意思決定: 手にした資源・立地・技術から最も適う「ものづくりの道」を究める。
+  //   ヒステリシス付きで一度根づいた流儀はそう変わらない。得意分野への底上げ(_craftTools/_craftWealth/
+  //   _craftMil)を工芸力に比例して定め、名産品(craftProduct)を決め、その名声を文化的威信へ寄与させる。
+  CivSystem.prototype._chooseCraftTradition = function (ka) {
+    const res = ka.res || {}, fac = ka.facilities || {};
+    const coastal = ka._coastalNation;
+    const ore = (res.ore || 0) > 0 || (fac.mine || 0) > 0;
+    const fuel = ka.fuel || 0;
+    // 各伝統の適性スコア（資源・立地・技術・施設から）。
+    const score = {
+      weapon:  (ore ? 0.5 : 0) + (fuel >= CP.fuelIron ? 0.4 : 0) + (hasTech(ka, "iron") ? 0.5 : 0) + (hasTech(ka, "bronze") ? 0.2 : 0) + (fac.smithy || 0) * 0.12,
+      jewel:   (res.gems || 0) * 0.6 + (res.gold || 0) * 0.5 + this._charLean(ka, "trade") * 0.3,
+      textile: (fac.farm || 0) * 0.1 + (res.spice || 0) * 0.4 + (res.salt || 0) * 0.3 + (fac.market || 0) * 0.12 + this._charLean(ka, "trade") * 0.3,
+      ship:    (coastal ? 0.6 : -0.3) + (res.timber || 0) * 0.4 + (fac.harbor || 0) * 0.3 + (hasTech(ka, "sail") ? 0.4 : 0),
+      masonry: (fac.wonder || 0) * 0.5 + (ka.tileCount || 0) * 0.001 + (fac.temple || 0) * 0.12 + this._charLean(ka, "tech") * 0.2,
+      pottery: 0.32 + (fac.market || 0) * 0.08, // どの国も一定は営める素地（既定の受け皿）
+    };
+    let bestKey = "pottery", bestScore = -1e9;
+    for (const k in score) if (score[k] > bestScore) { bestScore = score[k]; bestKey = k; }
+    const curKey = ka.craftTrad;
+    if (curKey && curKey !== bestKey && (score[curKey] || -1e9) > bestScore - CP.craftTradSwitch) bestKey = curKey;
+    const trad = CRAFT_TRAD_BY_KEY[bestKey];
+    if (bestKey !== ka.craftTrad) {
+      ka.craftTrad = bestKey;
+      // 名産品: 伝統の語彙から国ごとに安定した1品を選ぶ（pid的な決定論。国名を冠して呼ぶ）。
+      const gi = (Math.abs(hashStr(ka.name + bestKey)) % trad.goods.length);
+      ka.craftProduct = ka.name + "の" + trad.goods[gi];
+      if (ka._craftTradInit) this._logEvent(trad.emoji + " " + this.realmName(ka) + " が " + trad.name + " を究め、" + ka.craftProduct + " を名産とした");
+      ka._craftTradInit = 1;
+    }
+    // 得意分野への底上げは工芸力に比例（究めた技ほど差が出る）。
+    const cr = ka.craft || 0, B = CP.craftTradBonus;
+    ka._craftTools = 1 + B * cr * trad.bonus.tools;
+    ka._craftWealth = 1 + B * cr * trad.bonus.wealth;
+    ka._craftMil = 1 + B * cr * trad.bonus.mil;
+    // 名産品の名声: 高い工芸力の名品は交易で諸国に知られ、国の文化的威信を少しずつ高める（有界・減衰あり）。
+    if (cr > 0.35) ka.renown = (ka.renown || 0) + CP.craftTradRenown * cr;
   };
 
   // 国策（ドクトリン）の意思決定: 情勢＋国の性格から最も適う方針を選ぶ。ヒステリシス付きで
@@ -2002,7 +2065,8 @@
     // 伝説の武具（宝物）: 名匠が鍛えた・戦で受け継いだ名器が軍を奮い立たせる（累積・上限つき）。
     const relicWar = 1 + Math.min(CP.relicMilCap, this._relicBonus(k, 0) * CP.relicMilEach);
     const provMil = k._provMil || 1; // 辺境防衛に徹する州が軍を支える
-    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar * relicWar * provMil;
+    const craftMil = k._craftMil || 1; // 武具鍛冶の伝統が軍の装備を厚くする
+    const mil = soldiers * (1 + k.tech * 0.0025) * (1 + barracks * 0.18) * armed * techMul * cav * innovMil * wonderWar * relicWar * provMil * craftMil;
     k._milTick = this._tickN; k._milCache = mil;
     return mil;
   };
@@ -2820,6 +2884,8 @@
         Math.min(CP.insightCraftCap, ka.craftLore || 0) + innov[1] * CP.innovCraftW) * metalF; // 工人の閃き・工芸革新
       ka.craftLore = (ka.craftLore || 0) * 0.6; // 蓄えた工夫は緩やかに常態化していく
       ka.craft = (ka.craft || 0) + (craftTgt - (ka.craft || 0)) * 0.1; // ゆっくり推移
+      // 工芸の伝統: 究めた「ものづくりの道」を情勢から定め、得意分野の底上げと名産品を得る。
+      this._chooseCraftTradition(ka);
       // 産業力: 工房・市・港・鉱山・学院と職人・商人、交通・貨幣の技術が織りなす「生産と
       //   商いの厚み」。都市あたりの集積で測り、ゆっくり育つ。富・武具・技術・交易を底上げ。
       const merchants = ka.roleCount[ROLE.MERCHANT] || 0;
@@ -2831,7 +2897,7 @@
       const indF = 1 + ka.industry * CP.industryWealthW;
       // 富: 領土・都市・市場・宝石・金鉱石・記念碑（観光）・車輪（交易）・貨幣から収入
       //   （商才・政体・治安・名君・産業で増減）。
-      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (ka.wonderField ? ka.wonderField.trade : 0) * CP.wonderTradeW + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW) * indF * (ka._provTrade || 1);
+      ka.wealth += (ka.tileCount * 0.02 + ka.cities.length * 0.6 + fac.market * 2.5 + (res.gems * 2.0 + res.gold * CP.goldWealth + (res.spice || 0) * CP.spiceWealth) * (1 + (ka.craft || 0) * CP.craftLuxW) + (res.timber || 0) * CP.timberWealth + fac.wonder * 3 + (ka.wonderField ? ka.wonderField.trade : 0) * CP.wonderTradeW + (hasTech(ka, "wheel") ? 3 : 0) + (ka.coin || 0) * CP.coinWealth) * this._eff(ka, "trade") * order * kingDili * (1 + innov[2] * CP.innovTradeW) * indF * (ka._provTrade || 1) * (ka._craftWealth || 1);
       if (ka.wealth < 0) ka.wealth = 0;
       // 貨幣経済: ある程度の文明（鋳貨技術）になり金鉱石を持つ国は、それを鋳造して
       //   貨幣を発行する。物々交換から貨幣経済へ移行し、交易と富の蓄積が潤滑になる。
@@ -2862,7 +2928,7 @@
       const fuelF = 0.4 + 0.6 * Math.min(1, (ka.fuel || 0) / CP.fuelIron);
       // 名工の道具（宝物）: 受け継がれた名工の道具・技法が工房の生産を底上げする（保持する限り）。
       const relicCraft = Math.min(CP.relicCraftCap, this._relicBonus(ka, 1) * CP.relicCraftEach);
-      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order * (1 + ka.industry * CP.industryToolW) * (1 + relicCraft) * (ka._provTools || 1);
+      ka.tools += (metalAvail ? ((res.ore * 0.3 * (0.6 + 0.8 * ka.craft) + fac.smithy * CP.craftToolW * ka.craft) * fuelF + Math.min(2.5, ka.wealth * 0.0025)) : 0) * order * (1 + ka.industry * CP.industryToolW) * (1 + relicCraft) * (ka._provTools || 1) * (ka._craftTools || 1);
       if (ka.tools > ka.humanCount) ka.tools = ka.humanCount;
       // 製鉄の炭焼き: 鉄・鋼を盛んに鍛える国は、森を炭に費やして後退させる（史実の森林伐採）。
       //   植生システムが時とともに森を再生し、過伐採と再生の均衡が生まれる。
@@ -5021,7 +5087,11 @@
   CivSystem.prototype.craftInfo = function (k) {
     const t = craftTier(k);
     const ore = !!((k.res && k.res.ore > 0) || (k.facilities && k.facilities.mine > 0));
-    return { level: k.craft || 0, tier: t, name: gearName(t), ore: ore, fuel: k.fuel || 0 };
+    const trad = k.craftTrad ? CRAFT_TRAD_BY_KEY[k.craftTrad] : null;
+    return {
+      level: k.craft || 0, tier: t, name: gearName(t), ore: ore, fuel: k.fuel || 0,
+      tradName: trad ? trad.name : null, tradEmoji: trad ? trad.emoji : null, product: k.craftProduct || null,
+    };
   };
 
   // 役割の局所効果（毎ティックだが探索なし＝低負荷）。ti は足下のタイル index。
