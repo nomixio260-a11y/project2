@@ -1102,13 +1102,15 @@
     if (scale < 4) return; // 近景のみ（負荷と見栄えの両立。引きの海はベタ塗りで十分）
     const ctx = this.ctx, W = world.width, terr = world.terrain, isWater = Game.tile.isWater;
     const range = camera.visibleTileRange();
+    // visibleTileRange の x1/y1 は W/H まで（排他上限）に丸められるため、末端でのタイル参照は W-1/H-1 に留める。
+    const xb = Math.min(range.x1, W - 1), yb = Math.min(range.y1, world.height - 1);
     const t = this._t;
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
     let drawn = 0; const CAP = 8000;
-    for (let ty = range.y0; ty <= range.y1 && drawn < CAP; ty++) {
+    for (let ty = range.y0; ty <= yb && drawn < CAP; ty++) {
       const sy0 = camera.worldToScreenY(ty * tile);
-      for (let tx = range.x0; tx <= range.x1; tx++) {
+      for (let tx = range.x0; tx <= xb; tx++) {
         if (!isWater(terr[ty * W + tx])) continue;
         const sx = camera.worldToScreenX(tx * tile);
         // タイルごとに位相をずらした2筋のさざ波（寄せては返す）。
@@ -1135,11 +1137,12 @@
     if (scale < 5) return;
     const ctx = this.ctx, W = world.width, terr = world.terrain, T = Game.TERRAIN;
     const range = camera.visibleTileRange();
+    const xb = Math.min(range.x1, W - 1), yb = Math.min(range.y1, world.height - 1); // 末端で範囲外参照を避ける
     const u = Math.max(1, scale * 0.13);
     const sway = Math.sin(this._t * 1.6) * scale * 0.04; // そよ風
     let drawn = 0; const CAP = 3600;
-    for (let ty = range.y0; ty <= range.y1 && drawn < CAP; ty++) {
-      for (let tx = range.x0; tx <= range.x1; tx++) {
+    for (let ty = range.y0; ty <= yb && drawn < CAP; ty++) {
+      for (let tx = range.x0; tx <= xb; tx++) {
         const i = ty * W + tx, tt = terr[i];
         if (tt !== T.FOREST && tt !== T.JUNGLE) continue;
         const hsh = (i * 2654435761) >>> 0;
@@ -1173,15 +1176,16 @@
     if (scale < 5) return; // 近景のみ（引きの地形はベタ塗り＋陰影で十分）
     const ctx = this.ctx, W = world.width, terr = world.terrain, T = Game.TERRAIN;
     const range = camera.visibleTileRange();
+    const xb = Math.min(range.x1, W - 1), yb = Math.min(range.y1, world.height - 1); // 末端で範囲外参照を避ける
     const sz = Math.ceil(scale);
     const u = Math.max(1, (scale * 0.12) | 0);       // 粒の基本サイズ
     const u2 = Math.max(1, (u * 0.7) | 0);           // 細かい粒
     const bend = (Math.sin(this._t * 1.6) * u * 0.7) | 0; // 草のそよぎ（風）
     let drawn = 0; const CAP = 16000;
     ctx.save();
-    for (let ty = range.y0; ty <= range.y1 && drawn < CAP; ty++) {
+    for (let ty = range.y0; ty <= yb && drawn < CAP; ty++) {
       const syT = camera.worldToScreenY(ty * tile) | 0;
-      for (let tx = range.x0; tx <= range.x1; tx++) {
+      for (let tx = range.x0; tx <= xb; tx++) {
         const i = ty * W + tx, tt = terr[i];
         // 森・密林・水は専用描画（drawTrees/drawWater）や陰影に任せてスキップ。
         if (tt === T.FOREST || tt === T.JUNGLE || tt === T.DEEP_WATER || tt === T.SHALLOW_WATER) continue;

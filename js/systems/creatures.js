@@ -278,7 +278,12 @@
               mutate(rand, (gSpd + (e.geneSpd[mate] || 1)) * 0.5),
               mutate(rand, (gSense + (e.geneSense[mate] || 1)) * 0.5),
               mutate(rand, avgFert));
-            if (child !== -1) { energy[i] -= P.reproCost[type]; energy[mate] -= P.reproCost[type] * 0.5; if (child < ct.length) ct[child] = -1; }
+            if (child !== -1) {
+              energy[i] -= P.reproCost[type]; energy[mate] -= P.reproCost[type] * 0.5;
+              // 新生児は前にそのスロットを使っていた個体の行動キャッシュを引き継がないよう全て初期化する
+              //   （さもないと次の think まで古い逃走方向で誤って動く）。
+              if (child < ct.length) { ct[child] = -1; cdx[child] = 0; cdy[child] = 0; cfl[child] = 0; }
+            }
           }
         }
       }

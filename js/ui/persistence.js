@@ -38,6 +38,7 @@
       moisture: encA(world.moisture), temperature: encA(world.temperature),
       fertility: encA(world.fertility), owner: encA(world.owner),
       resource: encA(world.resource), resourceList: world.resourceList || [],
+      road: world.road ? encA(world.road) : null, // 街道（供給線・移動速度・描画に使う）
     };
     const e = {
       capacity: ent.capacity, count: ent.count, live: ent.live, freeTop: ent._freeTop,
@@ -94,6 +95,13 @@
     world.owner.set(decU16(snap.world.owner));
     world.resource.set(decU8(snap.world.resource));
     world.resourceList = snap.world.resourceList || [];
+    // 街道を復元し、roadList（描画・上限管理用の index 一覧）を road 配列から再構築する。
+    //   旧セーブ（road 無し）は空のまま＝文明が改めて敷設する。
+    if (snap.world.road && world.road) {
+      world.road.set(decU8(snap.world.road));
+      const rl = []; for (let i = 0; i < world.road.length; i++) if (world.road[i]) rl.push(i);
+      world.roadList = rl;
+    }
     cfg.seed = snap.seed; cfg.mapWidth = W; cfg.mapHeight = H;
     st.world = world;
 
@@ -164,7 +172,15 @@
   }
 
   function save() {
-    const json = JSON.stringify(serialize());
+    // 失敗（循環参照・容量超過など）を握り潰さず、利用者に知らせる（無反応で保存されない事故を防ぐ）。
+    let json;
+    try {
+      json = JSON.stringify(serialize());
+    } catch (e) {
+      if (typeof console !== "undefined") console.error("save failed:", e);
+      toast("⚠ 保存に失敗しました");
+      return;
+    }
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     triggerDownload(url, "fantasy-map-" + stamp() + ".json");

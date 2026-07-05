@@ -387,9 +387,16 @@ test("セーブ/ロード: 世界状態を保存して復元できる", async ()
       p1.bonds = [{ ref: p2, aff: 0.5 }];    // 親友（{ref,aff} 構造）
       for (let ki = 1; ki < civ.kingdoms.length; ki++) if (civ.kingdoms[ki]) { civ.kingdoms[ki]._genRef = p1; break; } // 将
     }
+    // 街道を数タイル敷いて、保存/復元で街道（供給線・移動速度・描画）が保たれることを検証する。
+    const roadIdx = [10 * cfg.mapWidth + 10, 10 * cfg.mapWidth + 11, 11 * cfg.mapWidth + 11];
+    for (const ri of roadIdx) w.road[ri] = 1;
     const json = JSON.stringify(Game.persistence.serialize()); // ここで循環参照だと throw する
     Game.regenerate();
     Game.persistence.deserialize(JSON.parse(json));
+    let roadOk = true;
+    const w3 = Game.state.world;
+    for (const ri of roadIdx) if (!w3.road[ri]) roadOk = false;
+    if (!(w3.roadList && w3.roadList.length >= roadIdx.length)) roadOk = false;
     let refOk = true;
     if (civ.people.length >= 2) {
       const p1 = civ.people[0];
@@ -401,7 +408,7 @@ test("セーブ/ロード: 世界状態を保存して復元できる", async ()
     let partnerOk = true;
     for (const p of civ.people) { if (p._partnerPid !== undefined) partnerOk = false; if (p.partner && (typeof p.partner !== "object" || !p.partner.pid)) partnerOk = false; }
     const after = { kingdoms: civ.kingdoms.length, pop: civ.stats().population, live: Game.state.entities.live, seed: cfg.seed, osum: osum2 };
-    return { before, after, jsonLen: json.length, partnerOk, refOk };
+    return { before, after, jsonLen: json.length, partnerOk, refOk, roadOk };
   });
   assert.ok(res.before.kingdoms >= 2, "建国できていない: " + res.before.kingdoms);
   assert.equal(res.after.kingdoms, res.before.kingdoms, "復元後の国数が一致");
@@ -411,6 +418,7 @@ test("セーブ/ロード: 世界状態を保存して復元できる", async ()
   assert.equal(res.after.osum, res.before.osum, "領有が一致");
   assert.ok(res.partnerOk, "参照(partner)が復元されていない");
   assert.ok(res.refOk, "人物間参照(母_mom/親友bonds)が正しく復元されていない");
+  assert.ok(res.roadOk, "街道(road/roadList)が保存/復元で保たれていない");
   assert.ok(res.jsonLen > 100, "スナップショットが空");
   assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
   await page.close();
