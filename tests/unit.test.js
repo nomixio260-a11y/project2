@@ -730,6 +730,39 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 王家の婚姻と同君連合 — 縁戚は戦を避け、断絶した小国を平和的に継承する", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
+  const w = new Game.World(60, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const B = civ.foundAt(40, 20);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+  ka.gov = "君主制"; kb.gov = "君主制";
+  ka.rulerRef = { alive: true, prestige: 2 }; kb.rulerRef = { alive: true, prestige: 2 };
+  // 婚姻: 縁戚となり、強固な同盟と高い友好が生まれる。
+  civ._royalMarriage(A, B);
+  assert.ok(ka.royalTies[B] && kb.royalTies[A], "縁戚関係が結ばれない");
+  assert.ok(ka.allies[B] && kb.allies[A], "婚姻が同盟をもたらさない");
+  assert.ok(ka.relations[B] >= 80, "婚姻で友好が高まらない: " + ka.relations[B]);
+
+  // 同君連合: 縁戚を持つ小国 B が王統を欠くと、より強い縁戚 A が全土・住民を継承する。
+  kb.cities = [{ x: 40, y: 20, capital: true, level: 1, buildings: [] }]; // 小国（都市1）
+  kb.humanCount = 5; kb.roleCount = [5, 0, 0, 0, 0, 0, 0];
+  ka.humanCount = 30; // A の方が強い縁戚
+  const w2 = w.width; for (let i = 0; i < w.owner.length; i++) if (i === 20 * w2 + 40) w.owner[i] = B;
+  kb.tileCount = 1;
+  const popA0 = ka.humanCount, tilesA0 = ka.tileCount, citiesA0 = ka.cities.length;
+  // rand を 0 に固定して unionChance を必ず満たす。
+  civ.rand = function () { return 0; };
+  const united = civ._tryPersonalUnion(kb);
+  assert.ok(united, "同君連合が成立しない");
+  assert.equal(kb.alive, false, "継承された国が消えない");
+  assert.ok(ka.humanCount > popA0, "住民が継承されない: " + ka.humanCount + " vs " + popA0);
+  assert.ok(ka.cities.length > citiesA0, "都市が継承されない");
+  assert.ok(ka.tileCount >= tilesA0 + 1, "領土が継承されない");
+});
+
 test("CivSystem: 国号 — 政治（政体・国の格）が国の呼び名と統治者の称号を定める", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const w = new Game.World(60, 40);

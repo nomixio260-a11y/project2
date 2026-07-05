@@ -374,6 +374,17 @@
         let vn = 0; if (k.vassals) for (const v in k.vassals) { const kv = civ.kingdoms[+v]; if (kv && kv.alive) vn++; }
         if (!suz && !vn) return "";
         return row("従属", (suz ? "⚑ " + esc(suz.name) + "の属国" : "") + (vn ? (suz ? " ・ " : "") + "属国 " + vn + "国" : ""));
+      })() +
+      (function () {
+        // 王家の縁戚（婚姻で結ばれた王朝）: 縁戚国の名を示す（戦を避け、断絶時に継承しうる）。
+        if (!k.royalTies) return "";
+        const names = [];
+        for (const t in k.royalTies) {
+          const kt = civ.kingdoms[+t];
+          if (kt && kt.alive) names.push(civ.realmName ? civ.realmName(kt) : kt.name);
+        }
+        if (!names.length) return "";
+        return row("縁戚", "💍 " + names.slice(0, 4).map(esc).join(" ・ "));
       })();
   };
 
