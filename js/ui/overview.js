@@ -89,7 +89,7 @@
       const n = top[i];
       html += '<div class="ov-row">' +
         '<span class="ov-sw" style="background:rgb(' + n.color[0] + "," + n.color[1] + "," + n.color[2] + ')"></span>' +
-        '<span class="ov-name">' + esc(n.name) + "</span>" +
+        '<span class="ov-name">' + esc(n.realmName || n.name) + "</span>" +
         '<span class="ov-bar"><i style="width:' + (100 * n.pop / Math.max(1, maxPop)).toFixed(0) + '%"></i></span>' +
         '<span class="ov-num">' + n.pop + "</span></div>";
     }

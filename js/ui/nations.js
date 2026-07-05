@@ -81,7 +81,7 @@
       info.className = "nation-info";
       const name = document.createElement("div");
       name.className = "nation-name";
-      name.textContent = n.name;
+      name.textContent = n.realmName || n.name; // 国号（政治が定める呼び名）
       const meta = document.createElement("div");
       meta.className = "nation-meta";
       let badges = "";
@@ -100,7 +100,7 @@
 
       row.appendChild(sw);
       row.appendChild(info);
-      row.title = n.name + "\n統治者: " + n.ruler + "（" + n.gov + " / " + n.trait + "）" +
+      row.title = (n.realmName || n.name) + "\n統治者: " + (n.rulerTitle ? n.rulerTitle + " " : "") + n.ruler + "（" + n.gov + " / " + n.trait + "）" +
         "\n時代: " + n.era + " / 宗教: " + n.religion + " / 技術: " + n.tech +
         "\n富: " + n.wealth + " / 不満: " + n.unrest +
         (n.wars.length ? "\n交戦: " + n.wars.join(", ") : "") +

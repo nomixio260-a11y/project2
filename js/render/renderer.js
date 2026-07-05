@@ -1384,10 +1384,11 @@
       if (cap.x < range.x0 || cap.x > range.x1 || cap.y < range.y0 || cap.y > range.y1) continue;
       const sx = camera.worldToScreenX((cap.x + 0.5) * tile);
       const sy = camera.worldToScreenY((cap.y + 0.5) * tile) - Math.max(6, scale * 0.9);
+      const label = k.realmName || k.name; // 国号（政治が定める呼び名）を地図に示す
       ctx.strokeStyle = "rgba(0,0,0,0.7)";
-      ctx.strokeText(k.name, sx, sy);
+      ctx.strokeText(label, sx, sy);
       ctx.fillStyle = "#fff";
-      ctx.fillText(k.name, sx, sy);
+      ctx.fillText(label, sx, sy);
     }
     ctx.restore();
   };
