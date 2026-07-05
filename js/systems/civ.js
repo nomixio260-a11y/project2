@@ -175,6 +175,7 @@
     mutBigAmt: 0.5,      // 大変異の跳び幅
     dangerTtl: 900,      // 危険な目に遭った場所を覚えている期間(ティック)
     dangerR: 6,          // 記憶した危険地を避ける半径
+    lifeMax: 6,          // 人生の歩み（個人の伝記）に残す出来事の上限（生誕を保ち直近を残す）
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
     aspireFamily: 1.4,   // 家族の志を持つ者の繁殖意欲
     aspireCreate: 1.5,   // 創造の志を持つ者の閃きの起きやすさ
@@ -1493,6 +1494,8 @@
         h.lx = clamp01((ax + bx) * 0.5 + (this.rand() - 0.5) * m);
         h.ly = clamp01((ay + by) * 0.5 + (this.rand() - 0.5) * m);
       }
+      // 人生の始まり: 誰もが物語の第一頁を持つ（家名を冠して生を受ける）。
+      this._recordLife(h, (h.sur ? h.sur + "家に" : "") + "生を受けた");
     }
     return h;
   };
@@ -2708,6 +2711,8 @@
     k.ruler = (chosen.name || "?") + (chosen.sur ? " " + chosen.sur : "");
     k.dynasty = newHouse;
     k.reign = 0;
+    // 統治者となった日を、その人の人生に刻む（政体に応じた称号で）。
+    this._recordLife(chosen, (this.rulerTitle ? this.rulerTitle(k) : "王") + "として" + k.name + "を統べた");
     // 継承の動揺: 平穏な世襲は小、選挙はやや、王朝交代・断絶・簒奪は大。
     let shock = !hadRuler ? 0 : coup ? 16 : crisis ? 18 : houseChanged ? 11 : (k.gov === "共和制" ? 4 : 3);
     k.unrest = Math.min(100, (k.unrest || 0) + shock);
@@ -3785,7 +3790,16 @@
     };
     this._endow(child, h, partner); // 両親から個性・文化を遺伝
     this._bond(h, partner);         // 伴侶として結ばれる
+    this._firstChild(h, partner, child);
     this._births.push(child);
+  };
+
+  // 初めての子を授かった節目を両親の人生に刻む（最初の一子のみ。多産でも記録は溢れない）。
+  CivSystem.prototype._firstChild = function (a, b, child) {
+    if (!child) return;
+    const nm = child.name ? "子 " + child.name + " を授かった" : "子を授かった";
+    if (!a._hadChild) { a._hadChild = 1; this._recordLife(a, nm); }
+    if (b && !b._hadChild) { b._hadChild = 1; this._recordLife(b, nm); }
   };
 
   // 自国領に地続きの未開地のみ確保する（足下が自国領のときだけ周囲へ拡張）。
@@ -3836,7 +3850,12 @@
   // 二人を伴侶として結ぶ（独身どうしのみ。一夫一妻的な家族の核を作る）。
   CivSystem.prototype._bond = function (a, b) {
     if (a === b) return;
-    if (!a.partner && !b.partner) { a.partner = b; b.partner = a; }
+    if (!a.partner && !b.partner) {
+      a.partner = b; b.partner = a;
+      // 生涯の伴侶を得た日を、双方の人生に刻む。
+      if (b.name) this._recordLife(a, b.name + " と結ばれた");
+      if (a.name) this._recordLife(b, a.name + " と結ばれた");
+    }
   };
 
   // a の親友リストに b を加える/絆を深める（会話の積み重ねで友誼が育つ。上限あり）。
@@ -3853,11 +3872,23 @@
     if (amount > wv * 0.5) list[wi] = { ref: b, aff: amount };
   };
 
+  // 人生の歩み（個人の伝記）: その人の生涯の節目を書き留める。生誕・結婚・子・栄達・発明・
+  //   傑作・死別・即位…人ひとりが「歩んできた物語」を持つことで、住民が単なる数値でなくなる。
+  //   上限つきで、冒頭（生誕）を保ちつつ直近の出来事を残す。
+  CivSystem.prototype._recordLife = function (h, text) {
+    let L = h.life;
+    if (!L) L = h.life = [];
+    // 直近と同一の記録は重ねない（連続する同種イベントの重複を避ける）。
+    if (L.length && L[L.length - 1] === text) return;
+    L.push(text);
+    if (L.length > CP.lifeMax) L.splice(1, 1); // 生誕を残し、以降の最古を落とす
+  };
+
   // 親友・伴侶の死を悼む（絆の相手が世を去っていたら悲嘆し、リストを整理する）。
   // grief は機嫌を下げ、社会の喪失が個人に影を落とす。
   CivSystem.prototype._mournLost = function (h) {
     let grief = 0;
-    if (h.partner && !h.partner.alive) { grief += 0.28; h.partner = null; }
+    if (h.partner && !h.partner.alive) { grief += 0.28; if (h.partner.name) this._recordLife(h, "伴侶 " + h.partner.name + " に先立たれた"); h.partner = null; }
     const list = h.bonds;
     if (list && list.length) {
       let w = 0;
@@ -3886,7 +3917,7 @@
     // 熟達し齢を重ねた者ほど周囲に一目置かれ、やがて名のある人物となる（ごく一部）。
     h.prestige = (h.prestige || 0) + 0.05 * (0.2 + (h.skill || 0)) * (h.age > CP.elderAge ? 1.6 : h.age > CP.adultAge ? 1 : 0.2) * ((h.aspire === 0 || h.aspire === 3) ? CP.aspirePrestige : 1);
     // 名のある人物として頭上に金の輝きを灯す（地域で一目置かれる＝視覚的な標識）。
-    if (!h._famed && h.prestige >= FAME_THRESHOLD) h._famed = true;
+    if (!h._famed && h.prestige >= FAME_THRESHOLD) { h._famed = true; this._recordLife(h, titleOf(h) + "として名を馳せた"); }
     // 年代記には、地域の名士すべてではなく真に傑出した者だけを刻む（歴史は王・偉人・大業を
     //   記すもので、土地の篤農や古老まで全て書き残しはしない）。これで年代記が出来事の洪水に
     //   埋もれず、戦争・建国・発明・災厄といった重大事が読み取れる。
@@ -4076,6 +4107,7 @@
       const pool = INVENT_NAMES[dom];
       const name = pool[(this.rand() * pool.length) | 0];
       h.invention = name;
+      this._recordLife(h, "「" + name + "」を生み出した");
       (k.inventions || (k.inventions = [])).push(name);
       if (k.inventions.length > 12) k.inventions.shift();
       this._logEvent("💡 " + h.name + "（" + k.name + "）が「" + name + "」を生み出した");
@@ -4092,6 +4124,7 @@
       const pool = INVENT_NAMES[5];
       const name = pool[(this.rand() * pool.length) | 0];
       h.masterwork = name;
+      this._recordLife(h, "傑作「" + name + "」を遺した");
       (k.artworks || (k.artworks = [])).push(name);
       if (k.artworks.length > 12) k.artworks.shift();
       this._logEvent("🎨 " + h.name + "（" + k.name + "）が傑作「" + name + "」を遺した");
@@ -4941,7 +4974,7 @@
     h.food -= CP.reproCost; partner.food -= CP.reproCost;
     this._bond(h, partner); // 伴侶として結ばれる
     const child = this._spawnHuman(k, h.x, h.y, h.clan, this._assignRole(k), 0.7, h, partner);
-    if (child) this._births.push(child);
+    if (child) { this._firstChild(h, partner, child); this._births.push(child); }
   };
 
   CivSystem.prototype._move = function (h, k, world) {
