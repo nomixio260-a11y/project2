@@ -234,12 +234,22 @@
       if (p.pid !== undefined) {
         const rel = [];
         if (p.partner && p.partner.alive) rel.push("💞 " + esc(p.partner.name || "伴侶"));
-        const fr = p.bonds ? p.bonds.filter(function (b) { return b.ref && b.ref.alive; }).length : 0;
-        if (fr > 0) rel.push("🤝 親友" + fr + "人");
-        if (rel.length) html += row("縁", rel.join(" "));
+        // 親友は名前で示す（最大2人＋残りは人数）。人が「顔の見える縁」を持つ。
+        if (p.bonds) {
+          const friends = p.bonds.filter(function (b) { return b.ref && b.ref.alive; });
+          if (friends.length) {
+            const names = friends.slice(0, 2).map(function (b) { return esc(b.ref.name || "友"); }).join(" ・ ");
+            rel.push("🤝 " + names + (friends.length > 2 ? " ほか" + (friends.length - 2) + "人" : ""));
+          }
+        }
+        if (rel.length) html += row("縁", rel.join("　"));
         if ((p.prestige || 0) >= 1) html += row("名声", "★ " + Math.round(p.prestige));
         if (p.invention) html += row("発明", "💡 「" + esc(p.invention) + "」");
         if (p.masterwork) html += row("傑作", "🎨 「" + esc(p.masterwork) + "」");
+        // 人生の歩み（個人の伝記）: その人が歩んできた物語を辿る。
+        if (p.life && p.life.length) {
+          html += row("人生", p.life.map(esc).join(" → "));
+        }
       }
       this.bodyEl.innerHTML = html;
       return;

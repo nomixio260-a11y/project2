@@ -730,6 +730,47 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 人生の歩み — 住民が生誕・結婚・子・死別の物語を刻み、上限で溢れない", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 30 });
+  const w = new Game.World(40, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(20, 15);
+  const k = civ.kingdoms[A];
+  // 建国者は「生を受けた」を人生の第一頁に持つ。
+  const founders = civ.people.filter(function (p) { return p.kid === A; });
+  assert.ok(founders.length > 0, "建国者がいない");
+  assert.ok(founders[0].life && founders[0].life[0].indexOf("生を受けた") >= 0, "生誕が記録されない: " + JSON.stringify(founders[0].life));
+
+  // 結婚: _bond で双方の人生に伴侶が刻まれる。
+  const a = { name: "アイン", alive: true, partner: null };
+  const b = { name: "ベル", alive: true, partner: null };
+  civ._bond(a, b);
+  assert.ok(a.life && a.life.join().indexOf("ベル と結ばれた") >= 0, "結婚が記録されない: " + JSON.stringify(a.life));
+  assert.ok(b.life && b.life.join().indexOf("アイン と結ばれた") >= 0, "相手の結婚が記録されない");
+
+  // 初めての子: 両親に一度だけ刻まれる（多産でも溢れない）。
+  civ._firstChild(a, b, { name: "セラ" });
+  civ._firstChild(a, b, { name: "トール" }); // 2人目は記録しない
+  const childEntries = a.life.filter(function (s) { return s.indexOf("授かった") >= 0; });
+  assert.equal(childEntries.length, 1, "初子が一度だけ記録されない: " + JSON.stringify(a.life));
+  assert.ok(a.life.join().indexOf("セラ") >= 0, "子の名が記録されない");
+
+  // 死別: 伴侶の死を人生に刻む。
+  b.alive = false;
+  const grief = civ._mournLost(a);
+  assert.ok(grief > 0, "死別で悲嘆が生じない");
+  assert.ok(a.life.join().indexOf("先立たれた") >= 0, "死別が記録されない: " + JSON.stringify(a.life));
+  assert.equal(a.partner, null, "死別後も伴侶が残る");
+
+  // 上限: 生誕（先頭）を保ちつつ、溢れた分は最古から落ちる。
+  const c = { name: "テスト", life: ["生を受けた"] };
+  for (let i = 0; i < 20; i++) civ._recordLife(c, "出来事" + i);
+  assert.ok(c.life.length <= 6, "人生の記録が上限を超える: " + c.life.length);
+  assert.equal(c.life[0], "生を受けた", "生誕が上限で失われる");
+  assert.equal(c.life[c.life.length - 1], "出来事19", "直近の出来事が残らない");
+});
+
 test("CivSystem: 工芸の伝統 — 資源・立地から流儀を究め、名産品と得意分野の底上げを得る", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const w = new Game.World(60, 40);
