@@ -21,8 +21,9 @@
       const invH = 1 / H;
       const cx = (W - 1) * 0.5;
       const cy = (H - 1) * 0.5;
-      // 中心からの最大距離（島マスク正規化用）。
+      // 中心からの最大距離（島マスク正規化用）。1x1 等の退化マップで 0 になり得るので逆数を安全化。
       const maxDist = Math.sqrt(cx * cx + cy * cy);
+      const invMaxDist = maxDist > 0 ? 1 / maxDist : 0;
 
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
@@ -40,7 +41,7 @@
           if (g.islandMask) {
             const dx = x - cx;
             const dy = y - cy;
-            const d = Math.sqrt(dx * dx + dy * dy) / maxDist; // 0(中心)..1(角)
+            const d = Math.sqrt(dx * dx + dy * dy) * invMaxDist; // 0(中心)..1(角)。退化マップでは 0
             // 中心は 1、端は 0 に近づく減衰。
             const falloff = 1 - Math.pow(d, 2.2) * g.islandStrength;
             e = e * Game.utils.clamp(falloff, 0, 1);

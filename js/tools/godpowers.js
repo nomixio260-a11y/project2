@@ -226,8 +226,9 @@
       group: "disaster",
       swatch: "#6db33f",
       apply: function (world, x, y, falloff) {
-        // 中心タイルでのみ発動し、ブラシ半径内の生物を大量死させる（1回スキャン）。
-        if (falloff < 0.95) return;
+        // 中心タイル（falloff===1）でのみ発動し、ブラシ半径内の生物を大量死させる（クリック毎に1回だけ
+        //   全走査する）。大ブラシでも複数タイルで O(生物数) 走査を繰り返さないよう厳密に中心で判定。
+        if (falloff < 1) return;
         const ent = Game.state.entities;
         const brush = Game.state.brush;
         if (!ent || !brush) return;

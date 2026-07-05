@@ -1768,6 +1768,8 @@
           const k = ks[o];
           if (!k || !k.alive) { // 滅亡国の亡霊領土を消す
             owner[i] = 0; if (rndr) rndr.markTerritoryDirty(x, y);
+          } else if (!tile.isLand(world.terrain[i])) { // 陸でなくなった領土を手放す（改変・洪水で水没したタイル）
+            owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
           } else if (!this._withinControl(k, x, y)) { // 支配限界を超えた辺境を手放す
             owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
           }

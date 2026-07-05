@@ -465,6 +465,26 @@ test("CivSystem: 交易で双方が富み、余剰国から飢饉国へ食料が
   assert.ok(kb.wealth < wkb0 && ka.wealth > wka0, "食料の対価（富）が動かない");
 });
 
+test("CivSystem: 水没した領土は所有権を失い tileCount が減る（陸→水になったタイル）", () => {
+  const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
+  const w = new Game.World(20, 20);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  const A = civ.foundAt(10, 10);
+  const k = civ.kingdoms[A];
+  const idx = 10 * 20 + 11; // 首都の隣（支配圏内）
+  w.owner[idx] = A; k.tileCount = 5;
+  // 陸地のうちは維持される（全行を走査）。
+  for (let n = 0; n < 40; n++) civ._maintainTerritory(w);
+  assert.equal(w.owner[idx], A, "支配圏内の陸地領土が誤って手放された");
+  // 水没させると、維持走査で所有権が外れ tileCount が1減る。
+  w.terrain[idx] = Game.TERRAIN.SHALLOW_WATER;
+  const before = k.tileCount;
+  for (let n = 0; n < 40; n++) civ._maintainTerritory(w);
+  assert.equal(w.owner[idx], 0, "水没した領土の所有権が外れていない");
+  assert.equal(k.tileCount, before - 1, "水没で tileCount が減っていない");
+});
+
 test("CivSystem: 地力 — 過耕作で土が痩せ収量が落ち、休閑・農法で回復する", () => {
   const Game = loadCore({ mapWidth: 20, mapHeight: 20 });
   const CS = Game.CivSystem;
