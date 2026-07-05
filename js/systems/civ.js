@@ -2061,7 +2061,7 @@
   // 接触する2文明の文化交流（技術・宗教・政体の伝播と迎合）。
   CivSystem.prototype._culturalExchange = function (a, b, ka, kb) {
     const allied = !!ka.allies[b];
-    const trading = !!(ka.partners && ka.partners[b]);
+    const trading = !!(ka._partnersPrev && ka._partnersPrev[b]); // 直前評価の交易相手（当評価はまだ未集計）
     if (!this._isNeighbor(ka, b) && !allied && !trading) return; // 接触が無ければ交流しない
     const oab = this._openness(ka, kb, allied); // ka が kb を受け入れる度合い
     const oba = this._openness(kb, ka, allied);
@@ -2107,7 +2107,7 @@
       const recv = coinKa ? kb : ka;
       const donor = coinKa ? ka : kb;
       const o = recv === ka ? oab : oba;
-      const bond = (recv.partners && recv.partners[donor.id]) ? 1.8 : 1; // 交易相手からはより伝わる
+      const bond = (recv._partnersPrev && recv._partnersPrev[donor.id]) ? 1.8 : 1; // 交易相手からはより伝わる（直前評価分）
       // 前提（文字・車輪）を欠く国は貨幣を使いこなせない。
       if (techReqMet(recv, TECH_BY_ID.coin) && this.rand() < CP.coinAdoptChance * Math.min(2.5, o) * bond) {
         recv.techBits.coin = true;
@@ -2166,9 +2166,11 @@
     k.gov = ng; k.govMod = GOV_MODS[gi];
     k._govLock = this._tickN;
     if (reason === "revolution") {
-      this._succeed(k, true); // 新体制の指導者（実力者）が立つ
+      const installed = this._succeed(k, true); // 新体制の指導者（実力者）が立つ
       k.unrest = Math.max(0, (k.unrest || 0) - CP.revolutionVent); // 積年の不満を吐き出す
-      k.dynasty = null; // 旧王朝は倒れる（次代で新たな家系が興る）
+      // 適格な成人がいて新指導者が立てば、その者の家系が新王朝になる（_succeed が dynasty を設定済み）。
+      //   立てられなければ空位にし、旧君主を居座らせず次代の継承に委ねる（成人が現れ次第 succeed）。
+      if (!installed) { k.rulerRef = null; k.rulerPid = 0; k.dynasty = null; }
       this._logEvent("🔥 " + k.name + " で革命が起き " + ng + "が成立した");
     } else if (reason === "empire") {
       k.unrest = Math.min(100, (k.unrest || 0) + 5);
@@ -2502,7 +2504,11 @@
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
-      ka.tradeVol *= 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0;
+      ka.tradeVol = (ka.tradeVol || 0) * 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0; // (|| 0) で未初期化国の NaN を防ぐ
+      // 交易相手はこの評価のペア処理で再集計するが、文化伝播・言語/信仰の関係補正はペア処理で
+      //   _trade より前に「交易しているか」を読むため、直前評価の交易相手を _partnersPrev に退避して
+      //   参照させる（さもないと当評価で未集計＝常に null になり、純粋な交易相手間の文化伝播が死ぬ）。
+      ka._partnersPrev = ka.partners;
       ka.tradeIncome = 0; ka.foodTrade = 0; ka.partners = null;
       ka.prices = this._marketPrices(ka); // 当評価期の市場価格（交易の駆動・UI表示）
       // 治安（不満）が生産を左右する: 高い不満は混乱を生み、富・技術・食料・武具の
@@ -2510,15 +2516,17 @@
       const order = 1 - ka.unrest / 200;
       // 統治者の資質: 勤勉な君主は富を、賢明な君主は技術を伸ばす（名君と暗君の差。
       //   平均的な統治者(資質~1.0)では中立）。
-      const king = ka.rulerRef;
-      const kingDili = king && king.alive ? (0.7 + 0.3 * (king.dili || 1)) : 1;
-      const kingWit = king && king.alive ? (0.7 + 0.3 * (king.wit || 1)) : 1;
+      // 統治者は「今この国の」健在な君主のみ資質補正を与える（離国・被征服で他国へ移った旧君主が
+      //   継承の是正（下記 2708 付近）までの1評価、旧国の産出を底上げしてしまうのを防ぐ）。
+      const king = (ka.rulerRef && ka.rulerRef.alive && ka.rulerRef.kid === ka.id) ? ka.rulerRef : null;
+      const kingDili = king ? (0.7 + 0.3 * (king.dili || 1)) : 1;
+      const kingWit = king ? (0.7 + 0.3 * (king.wit || 1)) : 1;
       // 黄金時代・暗黒時代は系が強制するものではなく、いくつもの因果（富・治安・人口・平和・
       //   統治者の資質）が重なって生じる「状態」である。ここではそれらの実測値から緩やかな
       //   活力(fortune)を導き、持続した高揚・沈滞をヒステリシス付きで「認識」して年代記に
       //   刻むのみ――産出には一切の人為補正をかけない。盛衰は既存の因果系がそのまま生み出す。
       const cap = this._capacity(ka);
-      const able = king && king.alive ? ((king.wit || 1) + (king.dili || 1)) * 0.5 : 0.9;
+      const able = king ? ((king.wit || 1) + (king.dili || 1)) * 0.5 : 0.9;
       const fWar = this._count(ka.wars);
       const wealthN = clamp01(ka.wealth / Math.max(1, ka.tileCount) / 0.9);
       const orderN = clamp01((order - 0.5) * 2);
@@ -2808,13 +2816,13 @@
         // 言語と外交: 言葉が通じ合う国どうしは親しみ（共通語・同系統の言葉＝意思疎通が
         //   容易で結びつきやすい）、言葉の隔たる国とは疎遠になりがち。接触下でのみ働く。
         if (ka.langX != null && kb.langX != null &&
-            (this._isNeighbor(ka, b) || ka.allies[b] || (ka.partners && ka.partners[b]))) {
+            (this._isNeighbor(ka, b) || ka.allies[b] || (ka._partnersPrev && ka._partnersPrev[b]))) {
           const lmi = mutualIntel(ka.langX, ka.langY, kb.langX, kb.langY);
           this._setRel(a, b, ka.relations[b] + (lmi - 0.7) * CP.langDiploPull);
         }
 
         // 信仰と外交: 同じ信仰の国は親しみ合い、異教の国とは隔たる（接触下でのみ働く）。
-        if (this._isNeighbor(ka, b) || ka.allies[b] || (ka.partners && ka.partners[b])) {
+        if (this._isNeighbor(ka, b) || ka.allies[b] || (ka._partnersPrev && ka._partnersPrev[b])) {
           this._setRel(a, b, ka.relations[b] + (ka.religion === kb.religion ? CP.faithDiploPull : -CP.faithDiploFric));
           // 文化的威信と外交: 不朽の傑作で世界に名を馳せた国は諸国の敬意を集め、関係が和らぐ。
           const adm = ((kb.renown || 0) + (ka.renown || 0)) * CP.renownDiplo;
@@ -2944,7 +2952,9 @@
       langY: clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05),
       trait: TRAITS[(this.rand() * TRAITS.length) | 0],
       ethos: parent.ethos || NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0], // 国是は母国から継ぐ
-      wealth: 0, food: 20, soil: parent.soil == null ? 1 : parent.soil, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 }, alive: true,
+      wealth: 0, food: 20, soil: parent.soil == null ? 1 : parent.soil, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 },
+      tradeVol: 0, tradeIncome: 0, foodTrade: 0, partners: null, // 交易系の初期化（未設定だと tradeVol が NaN 汚染する）
+      alive: true,
     };
     this.kingdoms.push(nk);
     // 宗派分裂（独立に伴う異端の発生）: 独立国はしばしば母国の信仰から分かれ、

@@ -27,7 +27,7 @@
   const PERSON_DROP = { _px: 1, _py: 1, _mv: 1, look: 1, _enemy: 1 };
   // 王国の一時集計・参照（保存不要。復元時に再構築/再計算）。
   const K_DROP = { rulerRef: 1, _topRef: 1, _genRef: 1, _genReftmp: 1, prices: 1, _moodS: 1, _moodN: 1, _cultS: 1,
-    _lxS: 1, _lyS: 1, _fireLoss: 1, _raceCnt: 1, _topP: 1, _famineDeaths: 1 };
+    _lxS: 1, _lyS: 1, _fireLoss: 1, _raceCnt: 1, _topP: 1, _famineDeaths: 1, _partnersPrev: 1 };
 
   function serialize() {
     const st = Game.state;

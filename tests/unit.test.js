@@ -1301,8 +1301,10 @@ test("CivSystem: 創造システム — 人の閃きが文明を内側から進�
   const kb = civ.kingdoms[B];
   kb.innov = [0, 0, 0, 0, 0, 0];
   k.innov = [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]; // 先進国
-  // 接触（交易相手）として扱わせ、文化交流で伝播させる。
+  // 接触（交易相手）として扱わせ、文化交流で伝播させる。_culturalExchange は「直前評価の交易相手」
+  //   (_partnersPrev) を読むため、実際の評価順（_trade より前に読む）を模して _partnersPrev を張る。
   k.partners = {}; k.partners[B] = 5; kb.partners = {}; kb.partners[A] = 5;
+  k._partnersPrev = { [B]: 5 }; kb._partnersPrev = { [A]: 5 };
   for (let t = 0; t < 8; t++) civ._culturalExchange(A, B, k, kb);
   assert.ok(kb.innov.some((v) => v > 0.01), "革新が接触相手へ伝播するはず: " + kb.innov.join(","));
 
