@@ -1002,42 +1002,54 @@
     const W = world.width;
     const range = camera.visibleTileRange();
     const x0 = range.x0, x1 = range.x1, y0 = range.y0, y1 = range.y1;
-    const seg = Math.ceil(scale) + 1;          // 隣接タイルが繋がって途切れない幅
-    const edge = "rgba(58,44,28,0.55)";        // 路肩（暗い縁）
-    const surf = "rgba(196,172,122,0.85)";     // 路面（明るい土）
-    const inset = Math.max(1, scale * 0.18);
+    const H = world.height, road = world.road;
+    const edge = "rgba(52,40,26,0.6)";         // 路肩（暗い縁）
+    const surf = "rgba(198,174,124,0.9)";      // 路面（明るい土）
+    // 実際の道幅（タイルより細い帯）。隣接する街道タイルへ「スポーク」を伸ばして繋ぐことで、
+    //   四角の羅列ではなく曲がり・十字路のある連続した一本道に見せる。
+    const cw = Math.max(2, scale * 0.42);      // 路面の幅
+    const ew = cw + Math.max(2, scale * 0.16); // 路肩込みの幅
+    const reach = Math.ceil(scale * 0.5) + 1;  // 隣タイルへ伸ばす長さ（途切れ防止）
+    const hasRoad = function (tx, ty) { return tx >= 0 && ty >= 0 && tx < W && ty < H && road && road[ty * W + tx]; };
     ctx.save();
-    // 2層: まず暗い縁、次に明るい路面。タイルごとに四角を置き、隣接で連続した道に見せる。
+    // 2層: まず暗い路肩（太）、次に明るい路面（細）。各層で中央ノード＋隣接方向スポークを描く。
     for (let pass = 0; pass < 2; pass++) {
+      const wdt = pass === 0 ? ew : cw, half = wdt * 0.5;
       ctx.fillStyle = pass === 0 ? edge : surf;
-      const pad = pass === 0 ? 0 : inset;
-      const sz = pass === 0 ? seg : Math.max(1, seg - inset * 2);
       for (let n = 0; n < list.length; n++) {
         const i = list[n];
         const tx = i % W, ty = (i / W) | 0;
         if (tx < x0 - 1 || tx > x1 + 1 || ty < y0 - 1 || ty > y1 + 1) continue;
-        const sx = camera.worldToScreenX(tx * tile);
-        const sy = camera.worldToScreenY(ty * tile);
-        ctx.fillRect((sx + pad) | 0, (sy + pad) | 0, sz | 0, sz | 0);
+        const cx = camera.worldToScreenX((tx + 0.5) * tile);
+        const cy = camera.worldToScreenY((ty + 0.5) * tile);
+        ctx.fillRect((cx - half) | 0, (cy - half) | 0, wdt | 0, wdt | 0); // 中央ノード
+        if (hasRoad(tx + 1, ty)) ctx.fillRect(cx | 0, (cy - half) | 0, reach, wdt | 0); // 東へ
+        if (hasRoad(tx - 1, ty)) ctx.fillRect((cx - reach) | 0, (cy - half) | 0, reach, wdt | 0); // 西へ
+        if (hasRoad(tx, ty + 1)) ctx.fillRect((cx - half) | 0, cy | 0, wdt | 0, reach); // 南へ
+        if (hasRoad(tx, ty - 1)) ctx.fillRect((cx - half) | 0, (cy - reach) | 0, wdt | 0, reach); // 北へ
       }
     }
-    // 敷石の質感: 路面に明暗の小石をタイルごと決定的に散らす（ピクセルアートらしさ）。
-    if (scale >= 5) {
-      const px = Math.max(1, (scale * 0.16) | 0);
+    // 轍(わだち): 荷車が刻んだ2本の平行な溝を、道の走る向きに沿って刻む（近景のみ）。
+    if (scale >= 6) {
+      const rw = Math.max(1, (cw * 0.14) | 0);       // 溝の太さ
+      const gap = Math.max(1, (cw * 0.28) | 0);      // 2本の間隔（中心からのオフセット）
+      ctx.fillStyle = "rgba(120,98,64,0.55)";
       for (let n = 0; n < list.length; n++) {
         const i = list[n];
         const tx = i % W, ty = (i / W) | 0;
         if (tx < x0 || tx > x1 || ty < y0 || ty > y1) continue;
-        const sx = camera.worldToScreenX(tx * tile) | 0;
-        const sy = camera.worldToScreenY(ty * tile) | 0;
-        // タイル index から擬似乱数で2つの小石位置を決める（毎フレーム同じ＝チラつかない）。
-        const h1 = (i * 2654435761) >>> 0, h2 = (i * 40503 + 12345) >>> 0;
-        const ox1 = (h1 % 1000) / 1000 * (seg - px), oy1 = ((h1 >> 10) % 1000) / 1000 * (seg - px);
-        const ox2 = (h2 % 1000) / 1000 * (seg - px), oy2 = ((h2 >> 10) % 1000) / 1000 * (seg - px);
-        ctx.fillStyle = "rgba(150,128,86,0.8)";  // 暗い石
-        ctx.fillRect(sx + ox1, sy + oy1, px, px);
-        ctx.fillStyle = "rgba(220,200,150,0.7)"; // 明るい石
-        ctx.fillRect(sx + ox2, sy + oy2, px, px);
+        const cx = camera.worldToScreenX((tx + 0.5) * tile) | 0;
+        const cy = camera.worldToScreenY((ty + 0.5) * tile) | 0;
+        const horiz = hasRoad(tx + 1, ty) || hasRoad(tx - 1, ty);
+        const vert = hasRoad(tx, ty + 1) || hasRoad(tx, ty - 1);
+        if (horiz) { // 東西の轍（横向き）
+          ctx.fillRect(cx - reach, cy - gap, reach * 2, rw);
+          ctx.fillRect(cx - reach, cy + gap - rw, reach * 2, rw);
+        }
+        if (vert && !horiz) { // 南北の轍（縦向き。交差点では横を優先して二重描画を避ける）
+          ctx.fillRect(cx - gap, cy - reach, rw, reach * 2);
+          ctx.fillRect(cx + gap - rw, cy - reach, rw, reach * 2);
+        }
       }
     }
     ctx.restore();
@@ -1642,7 +1654,20 @@
       const a = (mk.ttl / mk.life); // 時間で薄れる（土に還る）
       const cx = camera.worldToScreenX((mk.x + 0.5) * tile);
       const cy = camera.worldToScreenY((mk.y + 0.5) * tile);
-      if (mk.type === "rubble") {
+      if (mk.type === "ruin") {
+        // 廃墟: 滅んだ国の建物跡。崩れかけた石壁と折れた柱が苔むして残る（倒れた文明の痕跡）。
+        //   長寿命なので序盤はくっきり、時とともにゆっくり土に還る。
+        const av = Math.min(1, 0.55 + 0.45 * a); // 長く濃く残す
+        ctx.fillStyle = "rgba(64,60,54," + (0.7 * av).toFixed(3) + ")";      // 基壇（崩れた土台）
+        ctx.fillRect((cx - s * 0.5) | 0, (cy + s * 0.05) | 0, (s) | 0, (s * 0.3) | 0);
+        ctx.fillStyle = "rgba(122,116,104," + (0.85 * av).toFixed(3) + ")";  // 折れた壁・柱
+        ctx.fillRect((cx - s * 0.42) | 0, (cy - s * 0.35) | 0, Math.max(1, s * 0.16) | 0, (s * 0.45) | 0);
+        ctx.fillRect((cx + s * 0.26) | 0, (cy - s * 0.2) | 0, Math.max(1, s * 0.16) | 0, (s * 0.3) | 0); // 低く折れた柱
+        ctx.fillStyle = "rgba(140,134,120," + (0.8 * av).toFixed(3) + ")";   // 崩れた石材
+        ctx.fillRect((cx - s * 0.08) | 0, (cy - s * 0.18) | 0, Math.max(1, s * 0.2) | 0, (s * 0.28) | 0);
+        ctx.fillStyle = "rgba(74,110,64," + (0.35 * av).toFixed(3) + ")";    // 苔・草に覆われる
+        ctx.fillRect((cx - s * 0.5) | 0, (cy + s * 0.28) | 0, (s) | 0, Math.max(1, u * 0.6) | 0);
+      } else if (mk.type === "rubble") {
         // 瓦礫: 戦火に崩れた建物の残骸。灰色の石材が散らばる（戦争が生んだ廃墟）。
         ctx.fillStyle = "rgba(70,66,60," + (0.75 * a).toFixed(3) + ")";
         ctx.fillRect((cx - s * 0.45) | 0, (cy - s * 0.1) | 0, (s * 0.9) | 0, (s * 0.5) | 0);
