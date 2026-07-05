@@ -312,6 +312,12 @@
     borderWindow: 400,   // この tick 数以内に接触があれば「隣国」とみなす
     warPressure: 0.55,   // 土地不足の隣国どうしは領土紛争で開戦しやすい
     maxAllies: 3,        // 1国が結べる同盟の上限（同盟の乱立を防ぐ）
+    // 力の均衡（勢力均衡の外交）: 弱国は格上へ単独では戦を仕掛けにくく（抑止）、共通の敵を持つ国
+    //   どうしは手を結びやすい（連合）。強大国の一強を諸国が連合で抑える均衡政治が創発する。
+    deterMin: 0.35,      // 相対戦力が最小のとき warP に掛かる下限係数（格上への無謀な開戦を抑止）
+    deterSlope: 1.3,     // 相対戦力に応じた抑止係数の傾き（強国ほど開戦しやすく、弱国ほど控える）
+    coalitionAlly: 0.09, // 共通の敵と交戦中の国どうしが同盟へ傾く上乗せ（敵の敵は味方＝反覇権連合）
+    embargoAllyWar: true,// 同盟国と交戦中の相手とは通商を断つ（外交ブロックに交易ブロックが揃う）
     reignSpan: 1500,     // 君主の標準的な治世（これを超えると代替わりしうる）
     // 黄金時代・暗黒時代は固定の発生確率や持続期間を持たない。実測の活力(fortune)が
     //   持続して閾値を越えたときに「認識」されるだけで、興亡は既存の因果系が生み出す。
@@ -2330,6 +2336,15 @@
     k.partners[id] = (k.partners[id] || 0) + vol;
   }
 
+  // 通商の禁輸: ka の同盟国（または宗主）が kb と交戦していれば、ka は連帯して kb との交易を断つ。
+  //   外交ブロック（同盟）に交易ブロックが揃い、陣営が経済でも割れる（覇権連合の経済的な締め上げ）。
+  CivSystem.prototype._embargoed = function (ka, kb) {
+    if (!CP.embargoAllyWar) return false;
+    if (ka.allies) { for (const al in ka.allies) { const kal = this.kingdoms[al]; if (kal && kal.alive && kal.wars && kal.wars[kb.id]) return true; } }
+    if (ka.suzerain) { const su = this.kingdoms[ka.suzerain]; if (su && su.alive && su.wars && su.wars[kb.id]) return true; }
+    return false;
+  };
+
   // 2国間の交易を1回ぶん実行する。交易が成立すれば true。
   CivSystem.prototype._trade = function (a, b, ka, kb) {
     const route = this._tradeRoute(a, b, ka, kb);
@@ -2872,7 +2887,8 @@
 
         // 交易（取引）: 戦争でなければ、余剰と不足を交換して双方が富む（比較優位）。
         // 交易力は文明により異なり、食料は飢えた国へ流れて飢饉を和らげる。
-        if (!ka.wars[b]) {
+        //   ただし同盟国が交戦中の相手とは連帯して禁輸する（交易ブロックが外交ブロックに揃う）。
+        if (!ka.wars[b] && !this._embargoed(ka, kb) && !this._embargoed(kb, ka)) {
           const traded = this._trade(a, b, ka, kb);
           if (traded && !ka.allies[b]) this._setRel(a, b, ka.relations[b] + 0.5); // 通商は友好を育む（この評価の言語・信仰・威信の加算に積み増す）
         }
@@ -2914,10 +2930,18 @@
             if (needA || needB) territorial = CP.warPressure * 0.18;
           }
           let warP = (neighbor ? (0.06 + (rel < 0 ? (-rel / 100) * 0.25 : 0)) * warF : 0) + territorial;
-          const allyP = (0.05 + (rel > 0 ? (rel / 100) * 0.2 : 0)) * allyF;
+          let allyP = (0.05 + (rel > 0 ? (rel / 100) * 0.2 : 0)) * allyF;
           // 経済的相互依存: 主要な交易相手とは戦になりにくい（交易が平和を育む）。
           const bond = (ka.partners && ka.partners[b]) || 0;
           if (bond > 0) { const dep = Math.min(1, bond / (1 + ka.tradeVol)); warP *= 1 - CP.tradePeace * dep; }
+          // 力の均衡（抑止）: 弱国は格上へ単独では戦を仕掛けにくい（相対戦力で warP を調整。同盟で
+          //   束になれば別途参戦で覆せるため、これは「単独開戦」の抑止）。無謀な自殺的開戦を防ぐ。
+          const m1 = this._military(ka), m2 = this._military(kb);
+          const powerRatio = m1 / (m1 + m2); // ka の相対戦力 0..1（0.5 で互角）
+          warP *= CP.deterMin + CP.deterSlope * powerRatio; // 弱いほど抑制、強いほど促進
+          // 連合（敵の敵は味方）: 共通の敵と交戦中なら手を結びやすい。強大国が諸国を次々に攻めると
+          //   その敵どうしが結束し、反覇権連合が創発する（一強の暴走を諸国が均衡で抑える）。
+          if (ka.wars && kb.wars) { for (const e in ka.wars) { if (kb.wars[e]) { allyP += CP.coalitionAlly; break; } } }
           // 休戦中・従属関係（宗主と属国）とは開戦しない。
           const truced = ka.truce && ka.truce[b] && ka.truce[b] > (this._tickN || 0);
           const bound = ka.suzerain === b || kb.suzerain === a;
