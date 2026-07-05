@@ -2832,7 +2832,7 @@
         // 交易力は文明により異なり、食料は飢えた国へ流れて飢饉を和らげる。
         if (!ka.wars[b]) {
           const traded = this._trade(a, b, ka, kb);
-          if (traded && !ka.allies[b]) this._setRel(a, b, rel + 0.5); // 通商は友好を育む
+          if (traded && !ka.allies[b]) this._setRel(a, b, ka.relations[b] + 0.5); // 通商は友好を育む（この評価の言語・信仰・威信の加算に積み増す）
         }
 
         if (ka.wars[b]) {
@@ -2887,10 +2887,12 @@
           else {
             // 平時のゆらぎ。異教は緊張（悪化寄り）、同教は親和（改善寄り）。
             // 国境を接さない国とは関係が徐々に中立へ薄れる。
-            if (!neighbor && Math.abs(rel) > 4) this._setRel(a, b, rel * 0.85);
+            // ゆらぎ・希薄化は「この評価で言語・信仰・威信・通商が積み上げた最新の関係値」に
+            //   加える（stale な rel を使うと、それらの加算を毎評価上書きで捨ててしまう＝バグ）。
+            if (!neighbor && Math.abs(ka.relations[b]) > 4) this._setRel(a, b, ka.relations[b] * 0.85);
             else {
               const drift = sameFaith ? (this.rand() * 8 - 3) : (this.rand() * 8 - 5.5);
-              this._setRel(a, b, rel + drift);
+              this._setRel(a, b, ka.relations[b] + drift);
             }
           }
         }

@@ -26,7 +26,7 @@
   // 人物の描画用・一時フィールド（保存不要）。
   const PERSON_DROP = { _px: 1, _py: 1, _mv: 1, look: 1, _enemy: 1 };
   // 王国の一時集計・参照（保存不要。復元時に再構築/再計算）。
-  const K_DROP = { rulerRef: 1, _topRef: 1, prices: 1, _moodS: 1, _moodN: 1, _cultS: 1,
+  const K_DROP = { rulerRef: 1, _topRef: 1, _genRef: 1, _genReftmp: 1, prices: 1, _moodS: 1, _moodN: 1, _cultS: 1,
     _lxS: 1, _lyS: 1, _fireLoss: 1, _raceCnt: 1, _topP: 1, _famineDeaths: 1 };
 
   function serialize() {
@@ -38,6 +38,7 @@
       moisture: encA(world.moisture), temperature: encA(world.temperature),
       fertility: encA(world.fertility), owner: encA(world.owner),
       resource: encA(world.resource), resourceList: world.resourceList || [],
+      road: world.road ? encA(world.road) : null, // 街道（供給線・移動速度・描画に使う）
     };
     const e = {
       capacity: ent.capacity, count: ent.count, live: ent.live, freeTop: ent._freeTop,
@@ -51,8 +52,14 @@
       const o = {};
       for (const k in p) {
         if (PERSON_DROP[k]) continue;
+        // 人物への直接参照は pid に置き換える（生オブジェクトを入れると循環参照で JSON 化が失敗する）。
         if (k === "partner") { o._partnerPid = p.partner ? (p.partner.pid || 0) : 0; continue; }
-        if (k === "bonds") { o._bondsPids = p.bonds ? p.bonds.map(function (b) { return b.pid || 0; }) : null; continue; }
+        if (k === "_mom") { o._momPid = p._mom ? (p._mom.pid || 0) : 0; continue; }
+        // 親友は {ref,aff} の配列。pid と affinity の対 [pid,aff] にして保存する。
+        if (k === "bonds") {
+          o._bondsData = p.bonds ? p.bonds.map(function (b) { return [b.ref ? (b.ref.pid || 0) : 0, b.aff]; }).filter(function (x) { return x[0]; }) : null;
+          continue;
+        }
         o[k] = p[k];
       }
       return o;
@@ -88,6 +95,13 @@
     world.owner.set(decU16(snap.world.owner));
     world.resource.set(decU8(snap.world.resource));
     world.resourceList = snap.world.resourceList || [];
+    // 街道を復元し、roadList（描画・上限管理用の index 一覧）を road 配列から再構築する。
+    //   旧セーブ（road 無し）は空のまま＝文明が改めて敷設する。
+    if (snap.world.road && world.road) {
+      world.road.set(decU8(snap.world.road));
+      const rl = []; for (let i = 0; i < world.road.length; i++) if (world.road[i]) rl.push(i);
+      world.roadList = rl;
+    }
     cfg.seed = snap.seed; cfg.mapWidth = W; cfg.mapHeight = H;
     st.world = world;
 
@@ -132,7 +146,10 @@
     for (let i = 0; i < civ.people.length; i++) {
       const p = civ.people[i];
       p.partner = p._partnerPid ? (pmap[p._partnerPid] || null) : null; delete p._partnerPid;
-      p.bonds = p._bondsPids ? p._bondsPids.map(function (id) { return pmap[id]; }).filter(Boolean) : null; delete p._bondsPids;
+      p._mom = p._momPid ? (pmap[p._momPid] || null) : null; delete p._momPid;
+      // 親友は {ref,aff} 構造で復元する（そのまま人物配列にすると _socialize が .ref/.aff を読めず壊れる）。
+      p.bonds = p._bondsData ? p._bondsData.map(function (bp) { const ref = pmap[bp[0]]; return ref ? { ref: ref, aff: bp[1] } : null; }).filter(Boolean) : null;
+      delete p._bondsData;
     }
     for (let id = 1; id < civ.kingdoms.length; id++) {
       const k = civ.kingdoms[id]; if (!k) continue;
@@ -155,7 +172,15 @@
   }
 
   function save() {
-    const json = JSON.stringify(serialize());
+    // 失敗（循環参照・容量超過など）を握り潰さず、利用者に知らせる（無反応で保存されない事故を防ぐ）。
+    let json;
+    try {
+      json = JSON.stringify(serialize());
+    } catch (e) {
+      if (typeof console !== "undefined") console.error("save failed:", e);
+      toast("⚠ 保存に失敗しました");
+      return;
+    }
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     triggerDownload(url, "fantasy-map-" + stamp() + ".json");
