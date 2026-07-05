@@ -730,6 +730,42 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 自由意志 — 自らの意志で天職を選び、より良き生を求めて旅立つ", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 30 });
+  const w = new Game.World(40, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(20, 15);
+  const k = civ.kingdoms[A];
+  const R = Game.ROLE;
+
+  // 天職の判定: 勇敢な者は武の道（平時は上限内）。
+  const brave = { brave: 1.3, wit: 1, creat: 1, dili: 1, aspire: 1, role: R.FARMER };
+  k.roleCount = [0, 5, 0, 0, 0, 0, 0]; k.humanCount = 5; k.wars = {};
+  assert.equal(civ._callingRole(brave, k), R.SOLDIER, "勇者の天職が武でない");
+  // 職人の天職は鍛冶場（施設）を要する。
+  const maker = { brave: 1, wit: 1, creat: 1.3, dili: 1, aspire: 5, role: R.EXPLORER };
+  k.facilities = Object.assign(k.facilities || {}, { smithy: 0, temple: 0, market: 0 });
+  assert.equal(civ._callingRole(maker, k), -1, "職場が無いのに職人の天職が成立する");
+  k.facilities.smithy = 2;
+  assert.equal(civ._callingRole(maker, k), R.SMITH, "鍛冶場があるのに職人の天職にならない");
+
+  // _volition: 天職と違う生業の勇者は、自らの意志で武の道へ転じる（rand を固定して確実に）。
+  const hero = { age: 9999, food: 1, mood: 0.6, brave: 1.4, wit: 1, creat: 1, dili: 1, aspire: 1, role: R.BUILDER, skill: 0.8 };
+  k.roleCount = [0, 5, 3, 0, 0, 0, 0]; k.humanCount = 8; k.famine = false; k.wars = {};
+  civ.rand = function () { return 0; }; // evalChance/転身判定を必ず通す
+  const emigrated = civ._volition(hero, k, w);
+  assert.equal(emigrated, false, "天職転身は旅立ちではない");
+  assert.equal(hero.role, R.SOLDIER, "自らの意志で天職に転じない: " + hero.role);
+  assert.ok(hero.life && hero.life.join().indexOf("武の道を選んだ") >= 0, "天職を選んだ生涯が刻まれない: " + JSON.stringify(hero.life));
+
+  // 満ち足りて天職に就いている者は現状に留まる（自由意志でも動かない）。
+  const content = { age: 9999, food: 1, mood: 0.9, brave: 1.4, wit: 1, creat: 1, dili: 1, aspire: 1, role: R.SOLDIER, skill: 0.8 };
+  civ.rand = function () { return 0.99; }; // evalChance を通さない
+  assert.equal(civ._volition(content, k, w), false, "満ち足りた者が不必要に動く");
+  assert.equal(content.role, R.SOLDIER, "留まるべき者の生業が変わる");
+});
+
 test("CivSystem: 人生の歩み — 住民が生誕・結婚・子・死別の物語を刻み、上限で溢れない", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 30 });
   const w = new Game.World(40, 30);

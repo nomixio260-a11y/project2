@@ -176,6 +176,14 @@
     dangerTtl: 900,      // 危険な目に遭った場所を覚えている期間(ティック)
     dangerR: 6,          // 記憶した危険地を避ける半径
     lifeMax: 6,          // 人生の歩み（個人の伝記）に残す出来事の上限（生誕を保ち直近を残す）
+    // 自由意志（自らの意志で進路を選ぶ）: 安全と食が満たされた大人は、時に立ち止まって己の生を
+    //   顧み、自らの意志で天職を志したり、より良き生を求めて旅立ったりする。頻度は個人の意志の
+    //   強さ（勇気・知性・創造性）と不満で変わり、同じ境遇でも人により選択が分かれる（＝自由意志）。
+    willBase: 0.05,       // 自由意志が働く基準確率（重い思考1回あたり。意志と不満で増減）
+    willFollowCall: 0.5,  // 天職の岐路に立ったとき実際に転身する確率
+    willEmigrateMood: 0.33,// これ未満の不満なら「より良き生」を求めて旅立ちを考える
+    willEmigrate: 0.12,   // 不遇な意志ある者が自らの意志で国を離れる確率
+    soldierPeaceCap: 0.22,// 平時に志願で兵になれる上限（人口比。常備軍の暴走を防ぐ）
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
     aspireFamily: 1.4,   // 家族の志を持つ者の繁殖意欲
     aspireCreate: 1.5,   // 創造の志を持つ者の閃きの起きやすさ
@@ -3724,6 +3732,64 @@
   };
 
   // 市民が状況に応じて転職する（飢饉で農民へ、戦時に兵士へ等の適応行動）。
+  // 天職（その人が心から向く生業）: 最も際立つ素質・志から導く。専門職は職場（施設）があり、
+  //   まだ空きがある国でのみ選べる（自由には共同体の受け皿という制約が伴う）。天職が無ければ -1。
+  const WAY_NAME = ["開拓者", "農", "普請", "武", "職人", "商", "聖職"]; // ROLE 順の道の呼称
+  CivSystem.prototype._callingRole = function (h, k) {
+    const f = k.facilities || {};
+    const rc = k.roleCount, pop = k.humanCount + 1;
+    const brave = h.brave || 1, wit = h.wit || 1, creat = h.creat || 1, dili = h.dili || 1;
+    // 志を第一に、際立つ素質を第二に見る。専門職は施設と空きを要する。
+    if (h.aspire === 1 || brave >= 1.15) {
+      // 武人: 戦時は誰でも志願できるが、平時は常備軍の上限内でのみ（暴走を防ぐ）。
+      if (this._count(k.wars) > 0 || rc[ROLE.SOLDIER] < pop * CP.soldierPeaceCap) return ROLE.SOLDIER;
+    }
+    if (h.aspire === 5 || creat >= 1.15) { if (f.smithy > 0 && rc[ROLE.SMITH] < f.smithy * 3) return ROLE.SMITH; }
+    if (h.aspire === 2 || wit >= 1.18) { if (f.temple > 0 && rc[ROLE.PRIEST] < f.temple * 2) return ROLE.PRIEST; }
+    if (h.aspire === 3 || dili >= 1.15) { if (f.market > 0 && rc[ROLE.MERCHANT] < f.market * 3) return ROLE.MERCHANT; }
+    if (h.aspire === 4) return ROLE.FARMER;   // 家族の志→定住の農
+    if (h.aspire === 0) return ROLE.BUILDER;  // 立身の志→普請で身を立てる
+    return -1;                                 // 際立った天職なし（今の生業のまま）
+  };
+
+  // 自由意志: 安全と食が満たされた大人が、自らの意志で進路を選ぶ。天職を志すか、より良き生を
+  //   求めて旅立つか。頻度・選択は個人の意志の強さと不満で変わる（同じ境遇でも人により分かれる）。
+  //   国を去った（旅立った）ときのみ true を返す（＝この評価の行動を確定）。
+  CivSystem.prototype._volition = function (h, k, world) {
+    if (h.age < CP.adultAge || h.food < 0.45 || k.famine) return false;
+    const mood = h.mood == null ? 0.6 : h.mood;
+    // 意志の強さ: 勇気・知性・創造性に富む個性ほど、自ら運命を選び取ろうとする。
+    const will = 0.5 * ((h.brave || 1) - 1) + 0.5 * ((h.wit || 1) - 1) + 0.4 * ((h.creat || 1) - 1);
+    // 己の生を顧みる契機は稀。強い意志と不満が背中を押す（満ち足りた者は現状に留まりやすい）。
+    const evalChance = CP.willBase * (1 + Math.max(0, will) * 2) * (1 + Math.max(0, 0.6 - mood) * 1.5);
+    if (this.rand() > evalChance) return false;
+
+    // (A) 天職の追求: 今の生業が性に合わないなら、自らの意志で天職へ転じる。ただし国の要（農）を
+    //     欠かせない・飢饉時は動かない（自由には共同体への責任が伴う）。
+    const call = this._callingRole(h, k);
+    if (call >= 0 && call !== h.role) {
+      const farmersOk = k.roleCount[ROLE.FARMER] / (k.humanCount + 1) > 0.3;
+      const canLeaveFarm = h.role !== ROLE.FARMER || farmersOk;
+      if (canLeaveFarm && this.rand() < CP.willFollowCall) {
+        this._switchRole(h, k, call);
+        if (!h._choseWay) { h._choseWay = 1; this._recordLife(h, "自らの意志で" + WAY_NAME[call] + "の道を選んだ"); }
+        return false; // 転身後はこの評価の通常行動へ続く
+      }
+    }
+
+    // (B) より良き生を求める旅立ち: 慢性的に満たされぬ勇気ある者・探究心ある者は、不遇を耐える
+    //     だけでなく、自らの意志で国を離れ新天地やより良い国を目指す（家族の志ある者は留まる）。
+    if (mood < CP.willEmigrateMood && h.aspire !== 4 &&
+        (h.brave || 1) + (h.aspire === 2 ? 0.4 : 0) > 1.05) {
+      if (this.rand() < CP.willEmigrate * (1 + Math.max(0, will))) {
+        this._recordLife(h, "より良き生を求めて故郷を離れた");
+        this._leaveKingdom(h, k);
+        return true;
+      }
+    }
+    return false;
+  };
+
   CivSystem.prototype._switchRole = function (h, k, role) {
     if (h.role === role) return;
     k.roleCount[h.role]--;
@@ -4300,6 +4366,10 @@
         k.roleCount[ROLE.SOLDIER] < k.humanCount * 0.12 && this.rand() < 0.06 * wit * (h.aspire === 1 ? 1.8 : 1)) {
       this._switchRole(h, k, ROLE.SOLDIER);
     }
+
+    // 0.3) 自由意志: 差し迫った危機や欠乏が無い大人は、自らの意志で己の進路を選ぶ――天職を志し、
+    //      あるいはより良き生を求めて旅立つ。人は状況に押されるだけでなく、自分の生を選び取る。
+    if (this._volition(h, k, world)) return;
 
     // 自分の町（home）への方向・距離。
     const hcx = (h.home ? h.home.x : k.cities[0].x);
