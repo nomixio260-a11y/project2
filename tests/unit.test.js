@@ -661,6 +661,28 @@ test("CivSystem: 補給線 — 遠征軍は自国の都市網から離れるほ�
   assert.ok(civ._supply(soldier(10, 20), k, tiAt(10, 20)) <= 0.5 + 1e-9, "都市無しで補給が過大");
 });
 
+test("CivSystem: 交易の禁輸 — 同盟国（宗主）と交戦中の相手とは通商を断つ", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
+  const w = new Game.World(40, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(6, 6), B = civ.foundAt(20, 6), C = civ.foundAt(34, 6);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B], kc = civ.kingdoms[C];
+
+  // 無関係な平時は禁輸なし。
+  assert.equal(civ._embargoed(ka, kc), false, "無関係なのに禁輸された");
+
+  // A の同盟国 B が C と交戦 → A は連帯して C と禁輸する（同盟国自身とは禁輸しない）。
+  ka.allies[B] = 1; kb.allies[A] = 1;
+  kb.wars[C] = 1; kc.wars[B] = 1;
+  assert.equal(civ._embargoed(ka, kc), true, "同盟国が交戦中の相手と禁輸されない");
+  assert.equal(civ._embargoed(ka, kb), false, "同盟国自身を禁輸してしまった");
+
+  // 宗主が交戦中でも従って禁輸する。
+  ka.allies = {}; ka.suzerain = B;
+  assert.equal(civ._embargoed(ka, kc), true, "宗主が交戦中の相手と禁輸されない");
+});
+
 test("CivSystem: 宝物 — 伝説の遺物が国力を底上げし、征服で戦利品として受け継がれる", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   const w = new Game.World(40, 40);
