@@ -341,6 +341,14 @@
     borderWindow: 400,   // この tick 数以内に接触があれば「隣国」とみなす
     warPressure: 0.55,   // 土地不足の隣国どうしは領土紛争で開戦しやすい
     maxAllies: 3,        // 1国が結べる同盟の上限（同盟の乱立を防ぐ）
+    // 王家の婚姻（王朝どうしの縁組）: 友好で世襲の二国は王家を婚姻で結び、強固な同盟と縁戚関係を
+    //   築く。縁戚どうしは戦を避け（血は水よりも濃い）、一方の王統が断絶すると縁戚の王家が王位を
+    //   継ぎうる（＝小国の平和的な同君連合。崩壊の代わりに継承が起こる）。
+    marriageRel: 66,     // これ以上の友好で王家の婚姻が成立しうる
+    marriageChance: 0.12,// 条件を満たした友好二国が婚姻を結ぶ確率／評価
+    marriageWarDamp: 0.3,// 縁戚どうしの開戦確率に掛かる係数（血縁は戦を厭う）
+    unionMaxCities: 2,   // これ以下の小国が断絶したとき、縁戚の王家が平和的に継承（同君連合）
+    unionChance: 0.6,    // 縁戚を持つ小国が断絶したとき同君連合が成る確率
     // 力の均衡（勢力均衡の外交）: 弱国は格上へ単独では戦を仕掛けにくく（抑止）、共通の敵を持つ国
     //   どうしは手を結びやすい（連合）。強大国の一強を諸国が連合で抑える均衡政治が創発する。
     deterMin: 0.35,      // 相対戦力が最小のとき warP に掛かる下限係数（格上への無謀な開戦を抑止）
@@ -1113,6 +1121,7 @@
       truce: {},     // 休戦中の id → 解除 tick（この間は再戦しない）
       vassals: {},   // 属国の id → true（朝貢を受け、戦に従える）
       suzerain: 0,   // 宗主国の id（0=独立）
+      royalTies: {}, // 王家の婚姻で結ばれた他国 id → 成婚 tick（縁戚。戦を避け、断絶時に継承しうる）
       langX: this.rand(), langY: this.rand(), // 国の言語（言語空間の位置。住民の言葉の重心で更新）
       coin: 0,       // 鋳造された貨幣の量（鋳貨技術＋金鉱石で増える。交易・富を潤す）
       tech: 0,       // 技術力（時代の指標）
@@ -2138,6 +2147,78 @@
     this._setRel(a, b, 70);
   };
 
+  // 世襲の政体か（王家が代々継ぐ国＝婚姻外交が働く）。共和制・都市国家は選挙制で除く。
+  CivSystem.prototype._hereditary = function (k) {
+    const g = k.gov;
+    return g === "君主制" || g === "氏族制" || g === "部族連合" || g === "帝国" || g === "封建制" || g === "神権制";
+  };
+
+  // 王家の婚姻（王朝どうしの縁組）: 友好で世襲の二国を縁戚で結ぶ。強固な同盟と友好をもたらし、
+  //   以後は互いに戦を厭う。断絶時には縁戚の王家が王位を継ぎうる（同君連合の下地）。
+  CivSystem.prototype._royalMarriage = function (a, b) {
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    const t = this._tickN || 1;
+    if (!ka.royalTies) ka.royalTies = {};
+    if (!kb.royalTies) kb.royalTies = {};
+    ka.royalTies[b] = t; kb.royalTies[a] = t;
+    if (this._count(ka.allies) < CP.maxAllies && this._count(kb.allies) < CP.maxAllies) {
+      ka.allies[b] = true; kb.allies[a] = true;
+    }
+    delete ka.wars[b]; delete kb.wars[a];
+    this._setRel(a, b, 88);
+    this._logEvent("💍 " + this.realmName(ka) + " と " + this.realmName(kb) + " が王家の婚姻で結ばれた");
+  };
+
+  // 同君連合: 世襲の小国の王統が断絶したとき、生存する縁戚の王家がその王位を継ぐ。国は崩壊・
+  //   混乱の代わりに縁戚へ平和的に統合される（婚姻外交が生んだ継承。大国は継がせず通常危機に委ねる）。
+  CivSystem.prototype._tryPersonalUnion = function (k) {
+    if (!k.royalTies || !k.cities || k.cities.length > CP.unionMaxCities) return false;
+    let heir = null, best = -1;
+    for (const b in k.royalTies) {
+      const kb = this.kingdoms[b];
+      if (!kb || !kb.alive || kb.id === k.id) continue;
+      if (kb.wars && kb.wars[k.id]) continue;   // 交戦中の縁戚には継がせない
+      const power = kb.humanCount + (kb.tileCount || 0) * 0.1;
+      if (power > best) { best = power; heir = kb; }
+    }
+    if (!heir || this.rand() >= CP.unionChance) return false;
+    this._personalUnion(heir, k);
+    return true;
+  };
+
+  // 継承国 win が断絶国 lose の全土・全都市・全住民を平和的に相続する（同君連合の実体）。
+  CivSystem.prototype._personalUnion = function (win, lose) {
+    const world = this.world, W = world.width, owner = world.owner, rndr = this.renderer;
+    const loseRealm = this.realmName(lose), winRealm = this.realmName(win);
+    // 全領土の相続。
+    for (let i = 0; i < owner.length; i++) {
+      if (owner[i] === lose.id) {
+        owner[i] = win.id;
+        if (rndr) rndr.markTerritoryDirty(i % W, (i / W) | 0);
+      }
+    }
+    win.tileCount = (win.tileCount || 0) + (lose.tileCount || 0); lose.tileCount = 0;
+    // 全都市の相続（占領ではなく相続なので忠誠は中程度から始まる）。
+    const clan = ++win.clanSeq;
+    for (let c = 0; c < lose.cities.length; c++) {
+      const city = lose.cities[c]; city.capital = false; city.loyalty = 0.55; win.cities.push(city);
+    }
+    lose.cities = [];
+    // 全住民の相続。
+    const people = this.people;
+    for (let p = 0; p < people.length; p++) {
+      const o = people[p];
+      if (!o.alive || o.kid !== lose.id) continue;
+      lose.humanCount--; lose.roleCount[o.role]--;
+      o.kid = win.id; o.clan = clan;
+      win.humanCount++; win.roleCount[o.role]++;
+    }
+    if (win.royalTies) delete win.royalTies[lose.id];
+    this._fuse(win, lose); // 相続した文明の技術・信仰を取り込む
+    lose.alive = false;
+    this._logEvent("👑🤝 " + loseRealm + " の王統が絶え、縁戚の " + winRealm + " が王位を継いだ（同君連合）");
+  };
+
   // ===== 文明の文化交流・同化・融合 =====
   // 文明どうしは接触（隣国・交易・同盟・征服）を通じて影響し合い、自国の時代や流儀に
   // 合わない技術・宗教・政体さえ「何らかの理由で」取り込む。
@@ -2857,6 +2938,9 @@
 
       // 政治: 統治者の確認と継承。
       if (!rr || !rr.alive || rr.kid !== ka.id) {
+        // 同君連合: 王統を欠いた世襲の小国は、生存する縁戚の王家が王位を継ぎうる（崩壊の代わりに
+        //   平和的統合）。継がれなければ通常の継承（政体に応じた新指導者の擁立）に委ねる。
+        if (this._hereditary(ka) && this._tryPersonalUnion(ka)) continue;
         this._succeed(ka); // 空位・崩御・離反 → 政体に応じて継承
       } else {
         ka.reign += CP.diploInterval;
@@ -3051,6 +3135,9 @@
           const m1 = this._military(ka), m2 = this._military(kb);
           const powerRatio = m1 / (m1 + m2); // ka の相対戦力 0..1（0.5 で互角）
           warP *= CP.deterMin + CP.deterSlope * powerRatio; // 弱いほど抑制、強いほど促進
+          // 王家の縁戚（婚姻で結ばれた王朝）どうしは戦を厭う（血は水よりも濃い）。
+          const kin = !!(ka.royalTies && ka.royalTies[b]);
+          if (kin) warP *= CP.marriageWarDamp;
           // 連合（敵の敵は味方）: 共通の敵と交戦中なら手を結びやすい。強大国が諸国を次々に攻めると
           //   その敵どうしが結束し、反覇権連合が創発する（一強の暴走を諸国が均衡で抑える）。
           if (ka.wars && kb.wars) { for (const e in ka.wars) { if (kb.wars[e]) { allyP += CP.coalitionAlly; break; } } }
@@ -3058,9 +3145,16 @@
           const truced = ka.truce && ka.truce[b] && ka.truce[b] > (this._tickN || 0);
           const bound = ka.suzerain === b || kb.suzerain === a;
           // 同盟上限に達していれば新たな同盟は結べない（同盟の乱立を防ぐ）。
-          const canAlly = this._count(ka.allies) < CP.maxAllies && this._count(kb.allies) < CP.maxAllies;
+          //   同盟には最低限の友好が要る（allyThreshold 未満の険悪な相手とは結ばない＝敵対国の偶発同盟を防ぐ）。
+          const canAlly = rel >= -CP.allyThreshold * 0.4 &&
+            this._count(ka.allies) < CP.maxAllies && this._count(kb.allies) < CP.maxAllies;
+          // 王家の婚姻: 友好・世襲・両君主健在・未縁組・非戦なら、王朝どうしが縁組で結ばれる。
+          const canMarry = !ka.wars[b] && !kin && rel >= CP.marriageRel &&
+            this._hereditary(ka) && this._hereditary(kb) &&
+            ka.rulerRef && ka.rulerRef.alive && kb.rulerRef && kb.rulerRef.alive;
           const r = this.rand();
           if (!truced && !bound && r < warP) this._declareWar(a, b);
+          else if (canMarry && r < warP + CP.marriageChance) this._royalMarriage(a, b);
           else if (canAlly && r < warP + allyP) this._formAlliance(a, b);
           else {
             // 平時のゆらぎ。異教は緊張（悪化寄り）、同教は親和（改善寄り）。
@@ -3234,7 +3328,7 @@
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
       facilities: newFacilities(),
       tools: parent.tools * 0.3,
-      relations: {}, borders: {}, wars: {}, allies: {}, truce: {}, vassals: {}, suzerain: 0,
+      relations: {}, borders: {}, wars: {}, allies: {}, truce: {}, vassals: {}, suzerain: 0, royalTies: {},
       tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
       // 言語: 独立した地方は母国の言葉を受け継ぎ、以後ゆるやかに方言として分岐していく。
       langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
