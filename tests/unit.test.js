@@ -683,6 +683,53 @@ test("CivSystem: 交易の禁輸 — 同盟国（宗主）と交戦中の相手�
   assert.equal(civ._embargoed(ka, kc), true, "宗主が交戦中の相手と禁輸されない");
 });
 
+test("CivSystem: 国策 — 情勢に応じて国が方針を選ぶ（危機→安寧・戦時→強兵）", () => {
+  const Game = loadCore({ mapWidth: 30, mapHeight: 30 });
+  const w = new Game.World(30, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(15, 15);
+  const k = civ.kingdoms[A];
+
+  // 危機（高不満＋飢饉）→ 安寧策（内政・不満鎮静に注力）。
+  k.unrest = 90; k.famine = true; k.wars = {}; k.humanCount = 5;
+  civ._chooseDoctrine(k);
+  assert.equal(k.doctrineKey, "calm", "危機で安寧策を選ばない: " + k.doctrineKey);
+  assert.ok(k.doctrine.unrest < 1, "安寧策の不満補正が抑制的でない");
+
+  // 戦時（複数交戦）→ 強兵策（軍事重視）。
+  k.unrest = 10; k.famine = false; k.wars = { 2: 1, 3: 1, 4: 1 };
+  civ._chooseDoctrine(k);
+  assert.equal(k.doctrineKey, "war", "戦時に強兵策を選ばない: " + k.doctrineKey);
+  assert.ok(k.doctrine.war > 1, "強兵策の war 補正が1以下");
+
+  // 国策は _eff に反映される（強兵策の実効 war は基準より高い）。
+  const before = { doctrine: k.doctrine }; const effWar = civ._eff(k, "war");
+  k.doctrine = null; const effWar0 = civ._eff(k, "war");
+  assert.ok(effWar > effWar0, "国策が _eff に反映されていない");
+});
+
+test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最も不忠な州が記録される", () => {
+  const Game = loadCore({ mapWidth: 80, mapHeight: 40 });
+  const w = new Game.World(80, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const k = civ.kingdoms[A];
+  // 首都(10,20) ＋ 近く豊かな州 ＋ 遠く痩せた州。
+  k.cities = [
+    { x: 10, y: 20, capital: true, level: 2, buildings: [] },
+    { x: 14, y: 20, capital: false, level: 2, buildings: [{}, {}, {}] },
+    { x: 72, y: 20, capital: false, level: 1, buildings: [] },
+  ];
+  k.unrest = 60;
+  for (let i = 0; i < 40; i++) civ._updateProvinces(k); // 忠誠を収束させる
+  const near = k.cities[1].loyalty, far = k.cities[2].loyalty;
+  assert.ok(near > far, "近く豊かな州の忠誠が遠方州より高くない: near=" + near.toFixed(2) + " far=" + far.toFixed(2));
+  assert.equal(k._worstProvIdx, 2, "最も不忠な州（遠方）が記録されていない: " + k._worstProvIdx);
+  assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
+});
+
 test("CivSystem: 宝物 — 伝説の遺物が国力を底上げし、征服で戦利品として受け継がれる", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40 });
   const w = new Game.World(40, 40);
