@@ -274,8 +274,17 @@
       row("時代", (info ? info.era : "")) +
       row("信仰", esc(k.religion) + (k.faith != null ? "（" + (k.faith >= 0.6 ? "篤い" : k.faith >= 0.35 ? "普通" : "希薄") + "）" : "")) +
       row("気質", esc(k.trait.name) + (k.ethos && k.ethos.name ? " ・ " + esc(k.ethos.name) : "")) +
+      (k.doctrineName ? row("国策", (k.doctrineEmoji ? k.doctrineEmoji + " " : "") + esc(k.doctrineName)) : "") +
       row("人口", String(k.humanCount) + " 人") +
       row("都市", String(k.cities.length) + " · 領土 " + k.tileCount) +
+      (function () {
+        // 地方（州）の忠誠。不忠な州は独立の火種（各領地の方針決定）。
+        if (!k.cities || k.cities.length < 2) return "";
+        let s = 0, n = 0, restless = 0;
+        for (let c = 1; c < k.cities.length; c++) { const l = k.cities[c].loyalty; if (typeof l === "number") { s += l; n++; if (l < 0.4) restless++; } }
+        if (!n) return "";
+        return row("地方", (k.cities.length - 1) + "州 · 忠誠 " + Math.round(s / n * 100) + "%" + (restless ? ' <span class="insp-tag bad">⚠ 不穏 ' + restless + "州</span>" : ""));
+      })() +
       (function () {
         // 街の発展: 建物の平均段階(普請で育つ)と整備度(状態)を集計して示す。
         let n = 0, lvlS = 0, condS = 0;

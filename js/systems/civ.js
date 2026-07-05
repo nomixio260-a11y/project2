@@ -302,6 +302,14 @@
     // 帝国の過伸長（版図が広がりすぎた国は遠隔地の統制を失い分裂する＝帝国の興亡）
     overstretchCities: 5, // この都市数を超えると過伸長で分裂しうる
     overstretchBase: 0.0035, // 過伸長による分裂の基準確率（都市1つ超過ごと・評価ごと）
+    // 地方の忠誠（各領地の方針決定）: 非首都都市（州）は忠誠(0..1)を持ち、首都からの距離・国の不満で
+    //   下がり、繁栄・名君・威信・安寧策の統治で上がる。忠誠が尽きた州は自ら独立を選ぶ（＝各領地が
+    //   留まるか離れるかを自分の状況で決める）。従来の「不満/過伸長で最遠都市が反乱」を州の忠誠に統合。
+    loyaltyStart: 0.75,   // 州の初期忠誠
+    loyaltyRange: 46,     // 求心力が届く距離（首都からこの距離で忠誠は大きく低下）
+    loyaltyRate: 0.06,    // 忠誠が目標へ近づく速さ／評価
+    secedeLoyalty: 0.34,  // これを下回った州は独立を試みる
+    secedeChance: 0.28,   // 忠誠崩壊した州が実際に独立する確率／評価（機が熟すのを待つ）
     // 外交
     diploInterval: 90,  // 外交を評価する間隔(ティック)
     warThreshold: -50,   // 関係がこれ以下で開戦しうる
@@ -543,6 +551,19 @@
     { name: "自由国家", trade: 1.15, tech: 1.1, ally: 1.15, unrest: 0.85 },
   ];
   function ethosName(e) { return e ? e.name : "—"; }
+
+  // 国策（ドクトリン）: 国是・政体が「持続的な気質」なのに対し、国策は情勢に応じて国が「その時
+  //   選ぶ方針」。人口圧・富・脅威・不満・技術などから毎評価スコアリングして最も適う一つを採る
+  //   （＝国の戦略的意思決定）。_eff に doctrine 補正として乗り、開戦・同盟・拡張・交易・技術・
+  //   不満のすべての振る舞いに一貫して効く。値は穏やか(0.6〜1.4)に抑え均衡を保つ。
+  const DOCTRINES = [
+    { key: "expand",  name: "拡張策", emoji: "🧭", mod: { expand: 1.4, war: 1.25, ally: 0.9, trade: 0.95, tech: 0.95, unrest: 1.05, faith: 1.0 } },
+    { key: "trade",   name: "富国策", emoji: "💰", mod: { trade: 1.4, ally: 1.2, war: 0.7, expand: 0.85, tech: 1.15, unrest: 0.95, faith: 1.0 } },
+    { key: "war",     name: "強兵策", emoji: "⚔", mod: { war: 1.35, ally: 1.15, expand: 1.1, trade: 0.9, tech: 1.05, unrest: 1.0, faith: 1.0 } },
+    { key: "calm",    name: "安寧策", emoji: "🕊", mod: { unrest: 0.7, war: 0.6, ally: 1.1, expand: 0.7, trade: 1.05, tech: 1.0, faith: 1.15 } },
+    { key: "culture", name: "文治策", emoji: "📜", mod: { tech: 1.35, trade: 1.15, faith: 1.05, war: 0.8, ally: 1.15, expand: 0.9, unrest: 0.85 } },
+  ];
+  const DOCTRINE_BY_KEY = {}; for (let i = 0; i < DOCTRINES.length; i++) DOCTRINE_BY_KEY[DOCTRINES[i].key] = DOCTRINES[i];
 
   // 個別の技術発見。tech 値が閾値 at を超えると獲得し、具体的な恩恵を得る。
   // 技術ツリー: 各技術は前提技術(req)と分野(field)を持つ。前提を満たし、かつ国の性格で
@@ -1262,7 +1283,51 @@
     const t = k.trait ? (k.trait[f] || 1) : 1;
     const g = k.govMod ? (k.govMod[f] || 1) : 1;
     const e = k.ethos ? (k.ethos[f] || 1) : 1; // 国是（持続的な国の気質）
-    return t * g * e;
+    const d = k.doctrine ? (k.doctrine[f] || 1) : 1; // 国策（情勢で選ぶ当面の方針）
+    return t * g * e * d;
+  };
+
+  // 国の性格（政体×国是×指導者）が分野 f にどれだけ傾くか（1 中立）。国策スコアの素地に使う。
+  CivSystem.prototype._charLean = function (k, f) {
+    const t = k.trait ? (k.trait[f] || 1) : 1;
+    const g = k.govMod ? (k.govMod[f] || 1) : 1;
+    const e = k.ethos ? (k.ethos[f] || 1) : 1;
+    return (t - 1) + (g - 1) + (e - 1); // 各補正の中立(1)からのずれの和
+  };
+
+  // 国策（ドクトリン）の意思決定: 情勢＋国の性格から最も適う方針を選ぶ。ヒステリシス付きで
+  //   現状の方針は多少の差では変えない（頻繁な方針転換を防ぐ）。選んだ方針はこの評価の
+  //   生産・外交・拡張すべてに _eff を通じて一貫して効く（＝国家の戦略的意思決定）。
+  CivSystem.prototype._chooseDoctrine = function (ka) {
+    const cap = this._capacity(ka);
+    const popPressure = ka.humanCount / Math.max(1, cap); // >1 で過密
+    const warCount = this._count(ka.wars);
+    const unrest = ka.unrest || 0;
+    const wealthRel = (ka.wealth || 0) / Math.max(24, (ka.tileCount || 0) * 0.6); // 富の相対
+    const techRel = (ka.tech || 0) / 130;                                          // 技術の相対
+    const stable = unrest < 32 && !ka.famine && (ka.plague || 0) <= 0;
+    // 素地は国の性格（政体×国是×指導者）の傾き＝国ごとに多様。そこへ強い情勢トリガーが乗って
+    //   方針が動く（危機→安寧、戦時→強兵、過密/若い国→拡張、富裕/沿岸→富国、成熟安定→文治）。
+    const BW = 0.9;               // 性格が方針選択へ与える重み（大きめ＝国ごとの個性が出る）
+    const young = ka.cities.length <= 2 && popPressure > 0.35 ? 0.55 : 0; // 若い国は伸びる余地に拡張的
+    const score = {
+      calm:    -0.15 + unrest / 26 + (ka.famine ? 1.5 : 0) + ((ka.plague || 0) > 0 ? 0.7 : 0) + (ka.warWeary || 0) * 0.8,
+      war:     this._charLean(ka, "war") * BW + warCount * 1.2,
+      expand:  this._charLean(ka, "expand") * BW + Math.max(0, popPressure - 0.55) * 2.2 + young,
+      trade:   this._charLean(ka, "trade") * BW + (ka._coastalNation ? 0.45 : 0) + Math.max(0, wealthRel - 0.5) + (ka.coin > 1 ? 0.25 : 0),
+      culture: this._charLean(ka, "tech") * BW + (stable ? 0.18 : 0) + Math.max(0, techRel - 0.6) * 1.2,
+    };
+    let bestKey = "culture", bestScore = -1e9;
+    for (const k in score) if (score[k] > bestScore) { bestScore = score[k]; bestKey = k; }
+    // ヒステリシス: 現方針が僅差なら維持（頻繁な転換を防ぐ）。
+    const curKey = ka.doctrineKey;
+    if (curKey && curKey !== bestKey && (score[curKey] || -1e9) > bestScore - 0.35) bestKey = curKey;
+    if (bestKey !== ka.doctrineKey) {
+      const doc = DOCTRINE_BY_KEY[bestKey];
+      ka.doctrineKey = bestKey; ka.doctrine = doc.mod; ka.doctrineName = doc.name; ka.doctrineEmoji = doc.emoji;
+      if (ka._doctrineInit) this._logEvent(doc.emoji + " " + ka.name + " が国策を「" + doc.name + "」に転じた");
+      ka._doctrineInit = 1;
+    }
   };
 
   // ka が b を「隣国」とみなすか（直近 borderWindow tick 以内に接触）。
@@ -2548,6 +2613,9 @@
       if (this._fireNear) { this._fireDamageBuildings(ka, this.world); this._recountFacilities(ka); }
       const fac = ka.facilities;
       const res = ka.res || { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
+      // 国策（ドクトリン）の意思決定: 情勢からこの評価の方針を選ぶ。以後の生産・技術・拡張・外交は
+      //   _eff を通じてこの方針の補正を受ける（＝国家の戦略が振る舞い全体に一貫して反映される）。
+      this._chooseDoctrine(ka);
       // 交易の集計を新たな評価期間に向けて減衰・初期化（このあとペア処理で再集計）。
       ka.tradeVol = (ka.tradeVol || 0) * 0.5; if (ka.tradeVol < 0.01) ka.tradeVol = 0; // (|| 0) で未初期化国の NaN を防ぐ
       // 交易相手はこの評価のペア処理で再集計するが、文化伝播・言語/信仰の関係補正はペア処理で
@@ -2805,21 +2873,29 @@
       // 開拓: 人口と領土に余裕がある国は、辺境に新たな街や村を興して国土を広げる。
       this._expandSettlement(ka);
 
-      // 反乱: 不満が高く、複数都市を持つ国は地方が独立しうる。
+      // 地方の忠誠（各領地の方針決定）: 各州の忠誠を情勢から更新し、最も不忠な州を記録する。
+      this._updateProvinces(ka);
+      const worstIdx = ka._worstProvIdx, worstLoy = ka._worstProvLoy;
+      // 反乱: 不満が高く複数都市を持つ国は、最も不忠な地方が独立する（どの州が離れるかは忠誠が決める）。
       if (ka.unrest > 80 && ka.cities.length >= 2 &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < 0.18) {
-        this._rebellion(ka);
+        this._rebellion(ka, worstIdx);
+      }
+      // 地方の離反: 忠誠の尽きた州は、国が乱れていなくても自ら独立を選ぶ（遠く顧みられぬ辺境の分離）。
+      else if (worstIdx >= 1 && worstLoy < CP.secedeLoyalty &&
+          this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < CP.secedeChance) {
+        this._rebellion(ka, worstIdx);
+        this._logEvent("🏴 " + ka.name + " の地方が忠誠を失い独立した");
       }
       // 帝国の過伸長: 版図が広く都市が多い国ほど、遠隔の地方は中央の統制から外れて独立しやすい
-      //   （統治の限界・地方分権・継承の綻び）。活力ある名君の国・文化的威信の高い国は結束を保ち、
-      //   不満が高い国はいっそう崩れやすい。これにより巨大帝国も永遠ではなく、興亡が繰り返される。
+      //   （統治の限界・地方分権・継承の綻び）。活力ある名君・文化的威信の高い国は結束を保つ。
       else if (ka.cities.length >= CP.overstretchCities &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms) {
         const cohesion = 0.5 + 0.5 * (ka.fortune == null ? 0.5 : ka.fortune) +
           (ka.figure ? 0.15 : 0) + Math.min(0.2, (ka.renown || 0) * 0.02) - (ka.unrest || 0) / 300;
         const p = CP.overstretchBase * (ka.cities.length - CP.overstretchCities + 1) / Math.max(0.4, cohesion);
         if (this.rand() < p) {
-          this._rebellion(ka);
+          this._rebellion(ka, worstIdx);
           this._logEvent("🏴 " + ka.name + " の版図が広がりすぎ、辺境の地方が独立した");
         }
       }
@@ -2973,15 +3049,45 @@
   };
 
   // 反乱: 最も首都から遠い地方都市が独立し、周辺領土と住民を奪って新国家になる。
-  CivSystem.prototype._rebellion = function (parent) {
+  // 各領地（州）の忠誠を情勢から更新し、忠誠の尽きた最も不忠な州を独立させる（各領地の方針決定）。
+  //   忠誠は首都からの距離・国の不満で下がり、州の繁栄・名君・文化的威信・安寧策の統治で上がる。
+  //   遠く痩せ細り顧みられぬ地方は離れ、豊かで善政の届く近国は留まる――地方分権と帝国の綻びが創発。
+  //   最も不忠な州の index と忠誠を ka._worstProvIdx / ka._worstProvLoy に記録する（独立はしない）。
+  CivSystem.prototype._updateProvinces = function (ka) {
+    ka._worstProvIdx = -1; ka._worstProvLoy = 2;
+    const cities = ka.cities;
+    if (!cities || cities.length < 2) return;
+    const cap = cities[0];
+    const rate = CP.loyaltyRate;
+    const rulerBonus = (ka.rulerRef && ka.rulerRef.alive) ? Math.min(0.15, (ka.rulerRef.prestige || 0) * 0.02) : 0;
+    const renownBonus = Math.min(0.1, (ka.renown || 0) * 0.01);
+    const calmBonus = ka.doctrineKey === "calm" ? 0.12 : 0;       // 安寧策は統治に注力し求心力を高める
+    const unrestPen = (ka.unrest || 0) / 250;                     // 国の不満は地方の忠誠を蝕む（最大 -0.4）
+    for (let c = 1; c < cities.length; c++) {
+      const city = cities[c];
+      if (city.loyalty == null) city.loyalty = CP.loyaltyStart;
+      const dx = city.x - cap.x, dy = city.y - cap.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const distPen = Math.min(0.55, dist / CP.loyaltyRange * 0.55);        // 遠いほど求心力が届かない
+      const prosperity = Math.min(0.2, ((city.level || 1) - 1) * 0.09 + (city.buildings ? city.buildings.length : 0) * 0.008);
+      const target = clamp01(0.9 - distPen - unrestPen + prosperity + rulerBonus + renownBonus + calmBonus);
+      city.loyalty += (target - city.loyalty) * rate;
+      if (city.loyalty < ka._worstProvLoy) { ka._worstProvLoy = city.loyalty; ka._worstProvIdx = c; }
+    }
+  };
+
+  CivSystem.prototype._rebellion = function (parent, forcedIdx) {
     if (parent.cities.length < 2) return;
     const cap = parent.cities[0];
-    // 独立する都市（首都から最も遠い非首都都市）。
-    let idx = -1, bd = -1;
-    for (let c = 1; c < parent.cities.length; c++) {
-      const dx = parent.cities[c].x - cap.x, dy = parent.cities[c].y - cap.y;
-      const d = dx * dx + dy * dy;
-      if (d > bd) { bd = d; idx = c; }
+    // 独立する都市: forcedIdx 指定があればその州（忠誠の尽きた地方）、無ければ首都から最も遠い非首都都市。
+    let idx = (forcedIdx != null && forcedIdx >= 1 && forcedIdx < parent.cities.length) ? forcedIdx : -1;
+    if (idx < 0) {
+      let bd = -1;
+      for (let c = 1; c < parent.cities.length; c++) {
+        const dx = parent.cities[c].x - cap.x, dy = parent.cities[c].y - cap.y;
+        const d = dx * dx + dy * dy;
+        if (d > bd) { bd = d; idx = c; }
+      }
     }
     if (idx < 0) return;
     const city = parent.cities[idx];
@@ -4737,6 +4843,7 @@
                 const wasCapital = c === 0;
                 other.cities.splice(c, 1);
                 captured.capital = false;
+                captured.loyalty = 0.3; // 占領された都市は不忠から始まる（被征服民は容易には従わない）
                 k.cities.push(captured);
                 // 都市の劫掠: 攻略された都市は半ば破壊され、いくつもの建物が瓦礫と化す（戦争の傷跡）。
                 if (captured.buildings) {
