@@ -609,6 +609,33 @@
       // 胴（王国色）。
       ctx.fillStyle = body;
       ctx.fillRect(sx - 2 * uu, sy - 2 * uu + ob, 4 * uu, 3 * uu);
+      // 役割の装い（胴に重ねる。国色の上に職掌を示す衣で、役割が姿で見分けられる）。
+      if (!isChild) {
+        const ry = sy - 2 * uu + ob;
+        switch (person.role) {
+          case 6: // 神官: 白い法衣（胴を覆い、裾が長く垂れる）
+            ctx.fillStyle = "rgba(236,233,224,0.82)";
+            ctx.fillRect(sx - 2 * uu, ry, 4 * uu, 3 * uu);
+            ctx.fillRect(sx - 2 * uu, ry + 3 * uu, 4 * uu, uu); // 裾
+            break;
+          case 3: { // 兵士: 具足（金属の胸当てと左肩の照り。装備段階で輝きが増す）
+            const g0 = person.gear || 0;
+            const arm = g0 >= 4 ? "#e8eef4" : g0 >= 3 ? "#cdd6df" : g0 >= 2 ? "#c9a24a" : "#8b8f96";
+            ctx.fillStyle = arm; ctx.fillRect(sx - 2 * uu, ry, 4 * uu, uu); // 肩当て
+            ctx.fillStyle = "rgba(255,255,255,0.22)"; ctx.fillRect(sx - 2 * uu, ry, uu, 3 * uu); // 左の照り
+            break;
+          }
+          case 4: // 鍛冶/坑夫: 煤けた革の前掛け
+            ctx.fillStyle = "#5a3f28"; ctx.fillRect(sx - uu, ry + uu, 2 * uu, 2 * uu);
+            break;
+          case 5: // 商人: 金の帯と巾着（実りある商いの証）
+            ctx.fillStyle = "#c9a24a"; ctx.fillRect(sx - 2 * uu, ry + 2 * uu, 4 * uu, Math.max(1, uu * 0.7) | 0 || 1);
+            break;
+          case 1: // 農民: 生成りの前掛け
+            ctx.fillStyle = "rgba(212,198,152,0.72)"; ctx.fillRect(sx - uu, ry + uu, 2 * uu, 2 * uu);
+            break;
+        }
+      }
       // 腕（肌・歩行で前後に振る＝脚と逆）。
       ctx.fillStyle = skin;
       ctx.fillRect(sx - 3 * uu - sw, sy - 2 * uu + ob, uu, 2 * uu);
@@ -622,12 +649,30 @@
       // 目（向き側に1ドット）。
       ctx.fillStyle = "#2a1c10";
       ctx.fillRect(sx + (fd > 0 ? uu : -2 * uu), sy - 4 * uu + ob, uu, uu);
-      // 役割の帽子（子供は被らない）。
+      // 役割の被り物（子供は被らない）。兵は兜、神官は頭巾、他は職掌の帽子で役割が一目で分かる。
       if (!isChild) {
-        const hat = ROLE_HAT[person.role];
-        if (hat) {
-          ctx.fillStyle = hat;
-          ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, uu);
+        if (person.role === 3) {
+          // 兵士: 金属の兜（装備段階で輝きが増し、頂に鶏冠、面頬の陰）。
+          const g0 = person.gear || 0;
+          const helm = g0 >= 4 ? "#e8eef4" : g0 >= 3 ? "#c9d0d8" : g0 >= 2 ? "#c9a24a" : "#9aa0a8";
+          ctx.fillStyle = helm;
+          ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, 2 * uu); // 兜の鉢
+          ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, uu, 2 * uu); // 左の照り
+          ctx.fillStyle = "rgba(0,0,0,0.28)"; ctx.fillRect(sx - 2 * uu, sy - 4 * uu + ob, 4 * uu, Math.max(1, uu * 0.5) | 0 || 1); // 面頬の陰
+        } else if (person.role === 6) {
+          // 神官: 頭巾（頭と両脇を覆う白い布）。
+          ctx.fillStyle = "#ece9e0";
+          ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, uu);       // 頭頂
+          ctx.fillRect(sx - 3 * uu, sy - 5 * uu + ob, uu, 2 * uu);       // 左の垂れ
+          ctx.fillRect(sx + 2 * uu, sy - 5 * uu + ob, uu, 2 * uu);       // 右の垂れ
+        } else {
+          const hat = ROLE_HAT[person.role];
+          if (hat) {
+            ctx.fillStyle = hat;
+            ctx.fillRect(sx - 2 * uu, sy - 6 * uu + ob, 4 * uu, uu);
+            // 農民は麦わら帽のつば、建築家は工人帽のつばを少し広げる。
+            if (person.role === 1 || person.role === 2) ctx.fillRect(sx - 3 * uu, sy - 5 * uu + ob, 6 * uu, Math.max(1, uu * 0.5) | 0 || 1);
+          }
         }
       }
       // 将（その国で最も武名ある兵）には軍旗を掲げる（軍を率いる者が一目で分かる）。
