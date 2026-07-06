@@ -131,256 +131,291 @@
   };
 
   // ===== 建物 =====
+  // 光は左上から。屋根・壁は明部(R/W)と陰部(r/s)に分け、軒(d)と土台(o)で立体感を出す。
   const HOUSE = [
-    "...OO...",
-    "..ORRO..",
-    ".ORRRRO.",
-    "ORRRRRRO",
-    ".OWWWWO.",
-    ".OWDDWO.",
-    ".OWDDWO.",
-    ".OWWWWO.",
+    "..RRrr..",
+    ".RRrrdd.",
+    "RRrrrddd",
+    "oWWWwsso",
+    "oWbWwbso",
+    "oWWWwsso",
+    "oWDDwsso",
+    "oWDDwsso",
+    ".oooooo.",
   ];
   const HOUSE_PAL = {
-    O: [60, 40, 28],     // 輪郭
-    R: [150, 66, 50],    // 屋根（赤茶）
-    W: [206, 184, 140],  // 壁
+    o: [54, 36, 26],     // 土台・梁
+    R: [182, 92, 68], r: [150, 66, 50], d: [104, 44, 34], // 屋根（明・中・軒陰）
+    W: [222, 200, 152], w: [196, 174, 130], s: [150, 130, 96], // 壁（明・中・陰）
+    b: [120, 150, 172], // 窓
     D: [74, 51, 36],     // 戸口
   };
+  // 石造の主城（銃眼・塔身・門）。国の中枢としてひときわ高くそびえる。
   const KEEP = [
-    "O.O.O.O.",
-    "OOOOOOOO",
-    ".KKKKKK.",
-    ".KKBBKK.",
-    ".KKBBKK.",
-    ".KKKKKK.",
-    ".KKBBKK.",
-    ".KKDDKK.",
-    ".KKKKKK.",
+    "o.o.o.o.",
+    "oooooooo",
+    ".LKKKKs.",
+    ".LKbbKs.",
+    ".LKKKKs.",
+    ".LKbbKs.",
+    ".LKKKKs.",
+    ".LKbbKs.",
+    ".LKDDKs.",
+    ".LKKKKs.",
+    ".oooooo.",
   ];
   const KEEP_PAL = {
-    O: [70, 70, 62],
-    K: [150, 150, 138],  // 石壁
-    B: [58, 86, 120],    // 窓
+    o: [60, 60, 52],
+    L: [178, 178, 164], K: [150, 150, 138], s: [108, 108, 98], // 石壁（明・中・陰）
+    b: [58, 86, 120],    // 窓
     D: [40, 30, 22],     // 門
   };
 
-  // 石器時代の竪穴/茅葺き小屋。
+  // 石器時代の竪穴/茅葺き小屋（丸みのある茅屋根）。
   const HUT = [
     "........",
-    "...OO...",
-    "..OTTO..",
-    ".OTTTTO.",
-    "OTTTTTTO",
-    "OWWDDWWO",
-    "OWWDDWWO",
-    ".OOOOOO.",
+    "...dd...",
+    "..dTTd..",
+    ".dTLTLd.",
+    "dTTLTTLd",
+    "oWWDDWso",
+    "oWWDDWso",
+    ".oooooo.",
   ];
   const HUT_PAL = {
-    O: [50, 36, 22], T: [156, 123, 74], W: [122, 92, 58], D: [58, 38, 22],
+    o: [50, 36, 22], d: [92, 64, 36], T: [156, 123, 74], L: [188, 152, 98], // 茅（陰・中・明）
+    W: [130, 98, 60], s: [96, 72, 44], D: [58, 38, 22],
   };
-  // 古典・中世の石造邸宅（2階建て）。
+  // 古典・中世の石造邸宅（2階建て・青灰の瓦屋根・並ぶ窓）。
   const MANOR = [
-    "..OOOO..",
-    ".ORRRRO.",
-    "ORRRRRRO",
-    "OWBWWBWO",
-    "OWWWWWWO",
-    "OWBWWBWO",
-    "OWWDDWWO",
-    "OOOOOOOO",
+    ".RRRRRd.",
+    "RRRRRRdd",
+    "oWbWWbso",
+    "oWWWWWso",
+    "oWbWWbso",
+    "oWWWWWso",
+    "oWbWWbso",
+    "oWWDDWso",
+    "oWWDDWso",
+    ".oooooo.",
   ];
   const MANOR_PAL = {
-    O: [54, 54, 48], R: [91, 107, 128], W: [184, 180, 164], B: [58, 85, 112], D: [74, 51, 36],
+    o: [54, 54, 48], R: [110, 126, 148], d: [70, 84, 104], // 瓦（明・陰）
+    W: [198, 194, 178], s: [150, 146, 132], b: [58, 85, 112], D: [74, 51, 36],
   };
-  // 神殿（列柱）。
+  // 神殿（切妻の破風・溝彫りの列柱・基壇）。白亜の聖域。
   const TEMPLE = [
-    "...OO...",
-    "..OPPO..",
-    ".OPPPPO.",
-    "OPPPPPPO",
-    "OC.CC.CO",
-    "OC.CC.CO",
-    "OCCCCCCO",
-    "OOOOOOOO",
+    "...pp...",
+    "..pPPd..",
+    ".pPPPdd.",
+    "pPPPPPdp",
+    "oLLLLLLo",
+    "CICICICI",
+    "CICICICI",
+    "CICICICI",
+    "oLLLLLLo",
+    ".oooooo.",
   ];
   const TEMPLE_PAL = {
-    O: [96, 92, 78], P: [224, 220, 200], C: [206, 202, 184],
+    o: [120, 116, 100], p: [224, 220, 200], P: [238, 234, 216], d: [168, 164, 146], // 破風
+    L: [212, 208, 190], C: [216, 212, 194], I: [150, 146, 132], // 楣・柱・柱間の陰
   };
 
-  // 農場（赤い納屋＋作物）。
+  // 農場（赤い納屋＋干し草の妻壁＋畝の作物）。
   const FARM = [
-    "..OOOO..",
-    ".ORRRRO.",
-    "ORRRRRRO",
-    "OWWWWWWO",
-    "OWGGGGWO",
-    "OWGDDGWO",
-    "OWGDDGWO",
-    "OOOOOOOO",
+    "..RRrr..",
+    ".RRrrdd.",
+    "RRrrrddd",
+    "oWWWwsso",
+    "oWhhwsso",
+    "oWDDwsso",
+    "gGgGgGgG",
+    "GgGgGgGg",
+    "kkkkkkkk",
   ];
   const FARM_PAL = {
-    O: [60, 40, 28], R: [150, 66, 50], W: [206, 184, 140], G: [120, 160, 70], D: [74, 51, 36],
+    o: [60, 40, 28], R: [168, 74, 56], r: [150, 66, 50], d: [104, 44, 34],
+    W: [210, 188, 144], w: [182, 160, 118], s: [138, 118, 84], h: [190, 158, 92], D: [74, 51, 36],
+    g: [116, 154, 68], G: [150, 190, 90], k: [92, 72, 46], // 畝
   };
-  // 鍛冶場（石造の工房＋炉の火＋煙突）。
+  // 鍛冶場（石壁の工房＋煙突＋赤く燃える炉）。
   const SMITHY = [
-    "...O....",
-    "..OO....",
-    ".OWWWWO.",
-    "OWWWWWWO",
-    "OWWFFWWO",
-    "OWWFFWWO",
-    "OWDDWWWO",
-    "OOOOOOOO",
+    "..o.....",
+    ".oCo....",
+    ".oCo....",
+    "oWWWWWso",
+    "oWFFWwso",
+    "oWFFWwso",
+    "oWDDWwso",
+    "oWWWWwso",
+    ".oooooo.",
   ];
   const SMITHY_PAL = {
-    O: [48, 44, 40], W: [120, 116, 110], F: [240, 150, 40], D: [44, 32, 22],
+    o: [48, 44, 40], C: [72, 68, 62], W: [132, 128, 120], w: [110, 106, 98], s: [88, 84, 78],
+    F: [246, 152, 46], D: [44, 32, 22],
   };
-  // 市場（縞模様の天幕＋商品）。
+  // 市場（紅白の縞天幕＋台の商品）。
   const MARKET = [
-    "........",
-    "OOOOOOOO",
-    "OYBYBYBO",
-    "OYBYBYBO",
-    ".O.WW.O.",
-    ".O.WW.O.",
-    ".OGGGGO.",
-    ".OOOOOO.",
+    ".oooooo.",
+    "oYBYBYBo",
+    "oYBYBYBo",
+    "osssssso",
+    ".o.ww.o.",
+    ".oGGGGo.",
+    ".oPPPPo.",
+    ".oooooo.",
   ];
   const MARKET_PAL = {
-    O: [80, 60, 40], Y: [230, 210, 120], B: [200, 90, 70], W: [184, 162, 120], G: [150, 120, 80],
+    o: [80, 60, 40], Y: [238, 218, 130], B: [206, 94, 74], s: [150, 110, 80], // 天幕陰
+    w: [186, 164, 122], G: [150, 120, 80], P: [122, 152, 92], // 支柱・台・青物
   };
-  // 兵舎（旗の立つ石造の砦小屋）。
+  // 兵舎（軍旗のはためく石造の武具庫＋盾）。
   const BARRACKS = [
     "...F....",
-    "...F....",
-    ".OOOOOO.",
-    "OKKKKKKO",
-    "OKBBKKKO",
-    "OKKKKKKO",
-    "OKKDDKKO",
-    "OOOOOOOO",
+    "...FF...",
+    "..FFo...",
+    ".oooooo.",
+    "oLKKKKso",
+    "oLKSSKso",
+    "oLKKKKso",
+    "oLKDDKso",
+    "oLKKKKso",
+    ".oooooo.",
   ];
   const BARRACKS_PAL = {
-    O: [70, 66, 60], K: [140, 135, 120], B: [58, 70, 90], D: [40, 30, 22], F: [200, 70, 60],
+    o: [70, 66, 60], L: [162, 156, 140], K: [138, 133, 118], s: [104, 100, 88],
+    S: [190, 122, 60], D: [40, 30, 22], F: [206, 72, 60], // 盾・門・旗
   };
-  // 穀倉（円錐茅葺きのサイロ＋穀物）。
+  // 穀倉（円錐茅葺きのサイロ＋実った穀物）。
   const GRANARY = [
-    "...OO...",
-    "..OYYO..",
-    ".OYYYYO.",
-    ".OWWWWO.",
-    ".OWGGWO.",
-    ".OWGGWO.",
-    ".OWWWWO.",
-    ".OOOOOO.",
+    "...dd...",
+    "..dTTd..",
+    ".dTLLTd.",
+    ".TLLLLT.",
+    ".oWWWWo.",
+    ".oWGGWo.",
+    ".oWGGWo.",
+    ".oWWWWo.",
+    ".oooooo.",
   ];
   const GRANARY_PAL = {
-    O: [60, 44, 28], Y: [180, 150, 90], W: [200, 180, 140], G: [230, 200, 110],
+    o: [70, 52, 30], d: [120, 92, 50], T: [180, 150, 90], L: [208, 180, 112], // 茅屋根
+    W: [202, 182, 142], G: [238, 208, 118], // 壁・穀物
   };
 
-  // 鉱山（岩肌の坑口＋支柱＋トロッコ）。
+  // 鉱山（岩肌の坑口＋木の支保工＋鉱石を積むトロッコ）。
   const MINE = [
-    "OOOOOOOO",
-    "OKKKKKKO",
-    "OKWTTWKO",
-    "OKTBBTKO",
-    "OKTBBTKO",
-    "OKTBBTKO",
-    "O.RCCR.O",
-    "OOOOOOOO",
+    "KKKKKKKK",
+    "KkkkkkkK",
+    "KkWTTWkK",
+    "KkTBBTkK",
+    "KkTBBTkK",
+    "KkTBBTkK",
+    "KoRCCRoK",
+    "KooooooK",
+    "KKKKKKKK",
   ];
   const MINE_PAL = {
-    O: [44, 40, 36], K: [104, 98, 90], W: [78, 64, 44], T: [92, 74, 50], B: [26, 22, 20], R: [60, 50, 40], C: [150, 120, 70],
+    K: [52, 48, 44], k: [104, 98, 90], W: [86, 70, 48], T: [120, 96, 62], // 岩・支柱
+    B: [24, 20, 18], o: [44, 40, 36], R: [70, 58, 44], C: [170, 134, 76], // 坑道・鉱石
   };
 
-  // 大記念碑（金色の大尖塔。国の誇りのランドマーク）。
+  // 大記念碑（黄金の大尖塔。国の誇りとして高々とそびえるランドマーク）。
   const WONDER = [
-    "...OO...",
-    "...GG...",
-    "...GG...",
-    "...GG...",
-    "..GGGG..",
-    "..GWWG..",
-    ".GGGGGG.",
-    ".GWGGWG.",
-    "GGGGGGGG",
-    "OOOOOOOO",
+    "...Gg...",
+    "...Gg...",
+    "..GLgg..",
+    "..GLgg..",
+    "..GLgg..",
+    ".GLLLgg.",
+    ".GLLLgg.",
+    "GLLLLLgg",
+    "GLLLLLGg",
+    "oGGGGGGo",
+    ".oooooo.",
   ];
   const WONDER_PAL = {
-    G: [228, 202, 110], W: [122, 92, 40], O: [86, 72, 44],
+    G: [232, 206, 116], L: [248, 232, 168], g: [176, 140, 66], o: [92, 76, 46], // 明・稜線・陰・台
   };
 
-  // 学院（青い丸屋根の学び舎＋列柱）。知の府。
+  // 学院（青の丸屋根の学び舎＋溝彫りの列柱）。知の府。
   const ACADEMY = [
     "...DD...",
     "..DBBD..",
-    ".DBBBBD.",
-    "OWWWWWWO",
-    "OC.CC.CO",
-    "OC.CC.CO",
-    "OCCCCCCO",
-    "OOOOOOOO",
+    ".DBLBBD.",
+    ".DBLBBD.",
+    "oWWWWWWo",
+    "CICICICI",
+    "CICICICI",
+    "CICICICI",
+    "oWWWWWWo",
+    ".oooooo.",
   ];
   const ACADEMY_PAL = {
-    O: [70, 78, 96], W: [206, 210, 224], C: [170, 184, 210], B: [86, 150, 210], D: [54, 96, 150],
+    o: [70, 78, 96], W: [210, 214, 228], C: [178, 190, 214], I: [130, 140, 162], // 楣・柱・柱間陰
+    B: [86, 150, 210], L: [150, 196, 236], D: [54, 96, 150], // 丸屋根（中・照り・陰）
   };
-  // 港（桟橋＋停泊する帆船＋波）。沿岸の漁と海上交易。
+  // 港（桟橋＋帆を張って停泊する船＋さざ波）。沿岸の漁と海上交易。
   const HARBOR = [
-    "....M...",
-    "....M...",
-    "..SSSS..",
-    ".OHHHHO.",
-    "OHHHHHHO",
+    "...M....",
+    "..SMs...",
+    "..SSSs..",
+    ".oHHHHo.",
+    "oHHHHHHo",
     "BBBBBBBB",
-    "wBwwBwBw",
+    "wWwwWwWw",
     "wwwwwwww",
+    "wWwwwWww",
   ];
   const HARBOR_PAL = {
-    O: [70, 52, 34], H: [122, 90, 56], B: [86, 64, 42], S: [236, 232, 218], M: [80, 60, 40], w: [60, 110, 150],
+    o: [70, 52, 34], H: [128, 94, 58], B: [92, 68, 44], // 船体・桟橋
+    S: [238, 234, 220], s: [186, 182, 168], M: [80, 60, 40], // 帆（明・陰）・帆柱
+    w: [58, 108, 150], W: [92, 150, 196], // 波（陰・照り）
   };
-  // 酒場（茶色い切妻屋根＋掛け看板＋灯のともる窓）。娯楽と憩い。
+  // 酒場（切妻屋根＋張り出した看板＋灯のともる窓）。娯楽と憩い。
   const TAVERN = [
-    "..OOOO..",
-    ".ORRRRO.",
-    "ORRRRRRO",
-    "OWFWWFWO",
-    "OWWWWWWS",
-    "OWFWWDWS",
-    "OWWWWDWO",
-    "OOOOOOOO",
+    "..RRrr..",
+    ".RRrrdd.",
+    "RRrrrddd",
+    "oWFWWFso",
+    "oWWWWWsS",
+    "oWFWWDsS",
+    "oWWWWDso",
+    "oWWWWWso",
+    ".oooooo.",
   ];
   const TAVERN_PAL = {
-    O: [54, 38, 26], R: [150, 80, 46], W: [196, 168, 120], F: [240, 200, 110], D: [86, 56, 32], S: [120, 90, 50],
+    o: [54, 38, 26], R: [172, 92, 54], r: [150, 80, 46], d: [100, 58, 34],
+    W: [200, 172, 124], s: [150, 126, 88], F: [244, 208, 122], D: [92, 60, 36], S: [120, 90, 50], // 灯窓・戸・看板
   };
 
-  // 水道（石造アーチの上に水路。清潔な水を都市へ運ぶ）。
+  // 水道（石造アーチの上を水路が渡る。清潔な水を都市へ運ぶ）。
   const AQUEDUCT = [
     "wwwwwwww",
-    "SSSSSSSS",
-    "SLLSLLSL",
+    "LLLLLLLL",
+    "LSSLLSSL",
     "SAASAASA",
     "SAASAASA",
-    "SSSSSSSS",
+    "sAAsAAsA",
     "SAASAASA",
-    "SSSSSSSS",
+    "ssssssss",
   ];
   const AQUEDUCT_PAL = {
-    S: [172, 164, 150], L: [198, 192, 180], A: [66, 60, 52], w: [92, 158, 208],
+    S: [180, 172, 158], L: [204, 198, 184], s: [132, 126, 114], A: [70, 64, 56], w: [92, 158, 208],
   };
   // 城壁（銃眼つきの石垣と門。都市を攻囲から守る）。
   const WALLS = [
-    "S.S.S.S.",
-    "SSSSSSSS",
-    "SLSSLSSL",
+    "L.L.L.L.",
+    "LSLSLSLS",
+    "LSSLLSSL",
     "SSGGGGSS",
     "SSGDDGSS",
-    "SSGDDGSS",
-    "SSGDDGSS",
-    "SSSSSSSS",
+    "sSGDDGSs",
+    "sSGDDGSs",
+    "ssssssss",
   ];
   const WALLS_PAL = {
-    S: [150, 145, 132], L: [178, 172, 158], G: [104, 82, 54], D: [40, 36, 30],
+    L: [180, 174, 160], S: [152, 147, 134], s: [116, 112, 102], G: [110, 86, 56], D: [40, 36, 30],
   };
 
   const _b = {};
