@@ -461,9 +461,10 @@
         // 仔は小さく、成長で大人サイズへ（生まれて 140 ティックで一人前）。
         const age = e.age ? e.age[i] : 999;
         const grow = age < 140 ? (0.5 + 0.5 * (age / 140)) : 1;
-        // 種別で実寸が違う: 草食(鹿)は人よりやや大きく、肉食(狼)は人より小さい。
-        const species = type === SP.PREDATOR ? 0.66 : 0.96;
-        const dh = Math.max(5, scale * species * gene * grow);
+        // 種別で実寸が違う: 草食(鹿)は人と同程度の背丈、肉食(狼)はより低い。
+        //   人物の縮小に合わせ、動物も現実的な対比に保つ（鹿≈人の肩丈、狼≈人の腰丈）。
+        const species = type === SP.PREDATOR ? 0.46 : 0.68;
+        const dh = Math.max(4, scale * species * gene * grow);
         // 歩行: 脚の2コマ切替＋上下のバウンドで「動いてる感」を出す。
         const ph = moving ? t * 7 + i * 0.9 : 0;
         const frame = moving && Math.sin(ph) > 0 ? 1 : 0;
@@ -499,7 +500,9 @@
     const people = civ.people;
     ctx.imageSmoothingEnabled = false;
     const detailed = scale >= 5; // 近景は人型、遠景は簡易点
-    const u = Math.max(1, Math.round(scale * 0.085)); // ドット単位（人物は世界に対し小さめ）
+    // ドット単位。人物は建物に対し現実的に小さく（家の高さの約1/4、城砦の約1/6）、
+    //   都市が「人の集う大きな構造物」として実感できる対比にする。
+    const u = Math.max(1, Math.round(scale * 0.065));
     const t = this._t;
     // 夜は休む人々が建物に入る（＝描かれない）。日暮れに人が家へ入り、街に灯がともる様子を
     //   見せる手がかり。動いている者（旅人・移住・出兵）と航海者・野は引き続き描く。
@@ -1227,7 +1230,8 @@
     const ctx = this.ctx, W = world.width, terr = world.terrain, T = Game.TERRAIN;
     const range = camera.visibleTileRange();
     const xb = Math.min(range.x1, W - 1), yb = Math.min(range.y1, world.height - 1); // 末端で範囲外参照を避ける
-    const u = Math.max(1, scale * 0.13);
+    // 木は人の背丈を超える高さに（人・建物との対比を現実的に保つ）。
+    const u = Math.max(1, scale * 0.2);
     const tt0 = this._t;
     // 風: ゆるやかに強弱する突風（全体の風速）。木ごとに位相をずらして波打つように揺れる。
     const gust = 0.7 + 0.3 * Math.sin(tt0 * 0.5);
@@ -1607,8 +1611,9 @@
         // 近景: 人間が建てた実際の建物を描く。
         const bs = city.buildings;
         if (bs && bs.length) {
-          // 建物は人物より明確に大きく（家で約2タイル幅を基準に、種別で増減）。
-          const size = Math.max(10, scale * 1.6);
+          // 建物は人物よりはるかに大きく（家で約2タイル幅・人の背丈の約4倍を基準に、種別で増減）。
+          //   城砦・神殿・記念碑はさらに大きく、人が構造物を見上げる現実的な対比になる。
+          const size = Math.max(12, scale * 2.0);
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
             const img = sprites.building(bd.t);
@@ -1740,8 +1745,9 @@
         }
         if (city.capital) {
           // 国旗（砦の上）: 布が根元から旗先へうねって翻る。旗竿に翻る旗で首都が一目で分かる。
+          //   砦が高くそびえるようになったため、旗もその頂に合わせて高く掲げる。
           const fs = Math.max(2, scale * 0.5);
-          const fy = sy - Math.max(10, scale * 1.6);
+          const fy = sy - (detailed ? Math.max(14, scale * 4.1) : Math.max(10, scale * 1.6));
           ctx.fillStyle = "#3a2716"; ctx.fillRect((sx - fs * 0.5) | 0, (fy - fs * 0.6) | 0, Math.max(1, fs * 0.3) | 0, (fs * 2) | 0); // 旗竿
           const fcol = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
           const fx1 = sx - fs * 0.2, segw = fs / 4;
