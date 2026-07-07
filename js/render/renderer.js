@@ -860,6 +860,20 @@
         ctx.beginPath();
         ctx.arc(sx, sy, rad, 0, Math.PI * 2);
         ctx.fill();
+        // 蛍火: 夜の集落のまわりを、いくつかの淡い光がふわふわと漂いまたたく（夜の生命感）。
+        if (scale >= 6) {
+          const t = this._t;
+          const n = city.capital ? 6 : 3;
+          for (let f = 0; f < n; f++) {
+            const seed = id * 13 + c * 7 + f * 3.1;
+            const fx = sx + Math.sin(t * 0.7 + seed) * rad * 1.4 + Math.cos(t * 0.4 + seed * 1.7) * rad * 0.5;
+            const fy = sy + Math.cos(t * 0.6 + seed * 1.3) * rad * 1.1 + Math.sin(t * 0.9 + seed) * rad * 0.4;
+            const tw = 0.5 + 0.5 * Math.sin(t * 3.5 + seed * 2.2);
+            const fsz = Math.max(1, scale * 0.1) | 0;
+            ctx.fillStyle = "rgba(210,255,150," + (0.7 * tw * glow).toFixed(3) + ")";
+            ctx.fillRect(fx | 0, fy | 0, fsz, fsz);
+          }
+        }
       }
     }
     ctx.restore();
@@ -1188,6 +1202,15 @@
         const yo2 = (Math.sin(ph + 2.1) * 0.5 + 0.5) * scale * 0.7;
         ctx.fillStyle = "rgba(190,225,245," + (a * 0.7).toFixed(3) + ")";
         ctx.fillRect(sx + scale * 0.3, sy0 + yo2, scale * 0.5, Math.max(1, scale * 0.08));
+        // 陽光のきらめき: 水面のあちこちで反射がまたたく（点在してチカチカと輝く）。
+        const spk = Math.sin(t * 2.6 + tx * 1.7 + ty * 2.3);
+        if (spk > 0.9) {
+          const gs = Math.max(1, scale * 0.16) | 0;
+          const gx = (sx + scale * (0.3 + 0.4 * ((tx * 7 + ty * 3) % 5) / 5)) | 0;
+          const gy = (sy0 + scale * (0.2 + 0.5 * ((tx * 3 + ty * 5) % 5) / 5)) | 0;
+          ctx.fillStyle = "rgba(245,252,255," + ((spk - 0.9) * 6).toFixed(2) + ")";
+          ctx.fillRect(gx, gy, gs, gs);
+        }
         if (++drawn >= CAP) break;
       }
     }
@@ -1205,7 +1228,10 @@
     const range = camera.visibleTileRange();
     const xb = Math.min(range.x1, W - 1), yb = Math.min(range.y1, world.height - 1); // 末端で範囲外参照を避ける
     const u = Math.max(1, scale * 0.13);
-    const sway = Math.sin(this._t * 1.6) * scale * 0.04; // そよ風
+    const tt0 = this._t;
+    // 風: ゆるやかに強弱する突風（全体の風速）。木ごとに位相をずらして波打つように揺れる。
+    const gust = 0.7 + 0.3 * Math.sin(tt0 * 0.5);
+    const detail = scale >= 9; // 十分近ければ落ち葉・梢の細部まで
     let drawn = 0; const CAP = 3600;
     for (let ty = range.y0; ty <= yb && drawn < CAP; ty++) {
       for (let tx = range.x0; tx <= xb; tx++) {
@@ -1218,14 +1244,30 @@
         const cy = camera.worldToScreenY((ty + 0.92) * tile) + jy;
         const jungle = tt === T.JUNGLE;
         const sz = u * (jungle ? 1.5 : 1.2) * (0.82 + ((hsh >> 16) % 100) / 100 * 0.4);
+        // 木ごとに位相と揺れ幅が異なる（風が林を渡っていくように梢がうねる）。
+        const ph = tt0 * 1.7 + (hsh % 360) * 0.0175 + tx * 0.35;
+        const sway = Math.sin(ph) * scale * 0.055 * gust * (jungle ? 1.25 : 1);
         ctx.fillStyle = "rgba(0,0,0,0.16)"; ctx.fillRect((cx - sz * 0.6) | 0, cy | 0, (sz * 1.2) | 0, Math.max(1, sz * 0.3) | 0); // 影
-        ctx.fillStyle = "#5a3f24"; ctx.fillRect((cx - sz * 0.16) | 0, (cy - sz * 1.05) | 0, Math.max(1, sz * 0.34) | 0, (sz * 1.05) | 0); // 幹
-        const topx = cx + sway * (jungle ? 1.2 : 1);
+        // 幹も梢の揺れにつれて根元からわずかにしなる。
+        ctx.fillStyle = "#5a3f24"; ctx.fillRect((cx - sz * 0.16 + sway * 0.3) | 0, (cy - sz * 1.05) | 0, Math.max(1, sz * 0.34) | 0, (sz * 1.05) | 0); // 幹
+        const topx = cx + sway;
         ctx.fillStyle = jungle ? "#2f6b34" : "#3f7e3c"; // 梢（風で揺れる）
         ctx.fillRect((topx - sz * 0.9) | 0, (cy - sz * 2.0) | 0, (sz * 1.8) | 0, (sz * 1.1) | 0);
         ctx.fillRect((topx - sz * 0.6) | 0, (cy - sz * 2.5) | 0, (sz * 1.2) | 0, (sz * 0.7) | 0);
-        ctx.fillStyle = jungle ? "#3f8746" : "#56a04e"; // 陽の当たる面
+        // 陽の当たる面（そよぐたびに木漏れ日がちらつく）。
+        const shimmer = 0.5 + 0.5 * Math.sin(ph * 1.3 + 1.2);
+        ctx.fillStyle = jungle
+          ? (shimmer > 0.6 ? "#4a976f" : "#3f8746")
+          : (shimmer > 0.6 ? "#6cb85e" : "#56a04e");
         ctx.fillRect((topx - sz * 0.5) | 0, (cy - sz * 2.35) | 0, (sz * 0.75) | 0, (sz * 0.55) | 0);
+        // 落ち葉: 強い風の折り、時おり一葉が舞い落ちる（木ごとにまれ・接写のみ）。
+        if (detail && ((hsh >> 20) & 7) === 0) {
+          const lf = (tt0 * 0.4 + (hsh % 100) * 0.06) % 1;
+          const lx = topx + Math.sin(lf * 6.28 + i) * sz * 1.4;
+          const ly = cy - sz * 2.0 + lf * sz * 2.6;
+          ctx.fillStyle = jungle ? "rgba(180,150,70,0.7)" : "rgba(200,140,60,0.75)";
+          ctx.fillRect(lx | 0, ly | 0, Math.max(1, sz * 0.22) | 0, Math.max(1, sz * 0.22) | 0);
+        }
         if (++drawn >= CAP) break;
       }
     }
@@ -1526,6 +1568,9 @@
     const sprites = Game.sprites;
     const detailed = scale >= 3 && sprites; // 近景は建物、遠景は色点
     const t = this._t; // 煙・旗のなびきなどのアニメ用
+    // 夜の度合い（酒場の灯・窓明かりを夜ほど暖かく強める）。
+    const nightAmt = (Game.lighting && Game.state.clock && !(Game.config.settings && Game.config.settings.dayNight === false))
+      ? Game.lighting(Game.state.clock).darkness : 0;
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
@@ -1611,11 +1656,67 @@
               }
             } else if (lvl >= 3 && scale >= 5 && (bd.t === 4 || bd.t === 7 || bd.t === 11 || bd.t === 12)) {
               // 最高段階の公共建築（神殿・市・記念碑・学院）には風になびく小旗を立て、発展を示す。
+              //   旗は根元から旗先へ波が伝わるように、細切りにして翻らせる（布のうねり）。
               const fs = Math.max(1.5, scale * 0.22);
-              const wv = Math.round(Math.sin(t * 4 + bi) * fs * 0.4);
-              ctx.fillStyle = "#6b4a2a"; ctx.fillRect((bx - fs * 0.1) | 0, (by - bh - fs * 2) | 0, Math.max(1, fs * 0.3) | 0, (fs * 2) | 0); // 旗竿
-              ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
-              ctx.fillRect((bx + fs * 0.2) | 0, (by - bh - fs * 2 + wv) | 0, fs, fs * 0.7);
+              const poleX = (bx - fs * 0.1) | 0, poleTop = (by - bh - fs * 2) | 0;
+              ctx.fillStyle = "#6b4a2a"; ctx.fillRect(poleX, poleTop, Math.max(1, fs * 0.3) | 0, (fs * 2) | 0); // 旗竿
+              const fcol = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
+              const fx1 = bx + fs * 0.2, segw = fs / 3;
+              for (let fsg = 0; fsg < 3; fsg++) {
+                const wv = Math.round(Math.sin(t * 4 + bi + fsg * 0.9) * fs * 0.34 * (0.4 + 0.3 * fsg)); // 旗先ほど大きくうねる
+                ctx.fillStyle = fcol;
+                ctx.fillRect((fx1 + fsg * segw) | 0, (poleTop + wv) | 0, Math.max(1, segw + 1) | 0, (fs * 0.7) | 0);
+              }
+            }
+            // 生きた建物: 炉の火・作物のそよぎ・記念碑の輝き・灯のまたたきを添え、街が「営んでいる」様を描く。
+            if (scale >= 5 && cond > 0.35) {
+              if (bd.t === 6) {
+                // 鍛冶場: 炉の火が明滅し、火花が舞い上がる（鍛造の営み）。
+                const flick = 0.55 + 0.45 * Math.sin(t * 9 + bi * 2.3) * Math.sin(t * 13 + bi);
+                const fgx = bx, fgy = by - bh * 0.42;
+                ctx.save(); ctx.globalCompositeOperation = "lighter";
+                const g = ctx.createRadialGradient(fgx, fgy, 0, fgx, fgy, bw * 0.42);
+                g.addColorStop(0, "rgba(255,150,40," + (0.5 * flick).toFixed(3) + ")");
+                g.addColorStop(1, "rgba(255,120,20,0)");
+                ctx.fillStyle = g; ctx.beginPath(); ctx.arc(fgx, fgy, bw * 0.42, 0, Math.PI * 2); ctx.fill();
+                for (let s = 0; s < 2; s++) {
+                  const sp = (t * 1.6 + bi + s * 0.5) % 1;
+                  const spx = (fgx + Math.sin(t * 6 + s * 3 + bi) * bw * 0.14) | 0;
+                  const spy = (fgy - sp * bh * 0.55) | 0;
+                  const ss = Math.max(1, bw * 0.06) | 0;
+                  ctx.fillStyle = "rgba(255," + ((190 - sp * 130) | 0) + ",60," + ((1 - sp) * 0.9).toFixed(2) + ")";
+                  ctx.fillRect(spx, spy, ss, ss);
+                }
+                ctx.restore();
+              } else if (bd.t === 5) {
+                // 農場: 手前の畝の作物が風にそよぐ（実りの営み）。
+                const cy0 = by - bh * 0.06;
+                ctx.lineWidth = Math.max(1, bw * 0.05);
+                for (let cbl = 0; cbl < 5; cbl++) {
+                  const bxp = bx - bw * 0.4 + cbl * bw * 0.2;
+                  const bend = Math.sin(t * 2.2 + cbl * 0.9 + bi) * bw * 0.09;
+                  ctx.strokeStyle = cbl % 2 ? "#7fae4a" : "#9ac85e";
+                  ctx.beginPath(); ctx.moveTo(bxp, cy0); ctx.lineTo(bxp + bend, cy0 - bh * 0.22); ctx.stroke();
+                }
+              } else if (bd.t === 11) {
+                // 大記念碑: 黄金が陽に輝き、頂に光がまたたく（国の誇り）。
+                const gl = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * 2 + bi));
+                ctx.save(); ctx.globalCompositeOperation = "lighter";
+                ctx.fillStyle = "rgba(255,230,140," + (0.22 * gl).toFixed(3) + ")";
+                ctx.fillRect((bx - bw * 0.18) | 0, (by - bh) | 0, (bw * 0.36) | 0, bh | 0);
+                const tw = 0.5 + 0.5 * Math.sin(t * 5 + bi);
+                const ts = Math.max(1, bw * 0.12) | 0;
+                ctx.fillStyle = "rgba(255,248,205," + tw.toFixed(2) + ")";
+                ctx.fillRect((bx - ts * 0.5) | 0, (by - bh - ts) | 0, ts, ts);
+                ctx.restore();
+              } else if (bd.t === 14) {
+                // 酒場: 灯窓が蝋燭のようにまたたく（夜ほど暖かい憩いの灯）。
+                const flick = 0.6 + 0.4 * Math.sin(t * 7 + bi * 1.7) * Math.sin(t * 11 + bi);
+                ctx.save(); ctx.globalCompositeOperation = "lighter";
+                ctx.fillStyle = "rgba(255,190,90," + ((0.16 + 0.28 * nightAmt) * flick).toFixed(3) + ")";
+                ctx.fillRect((bx - bw * 0.34) | 0, (by - bh * 0.62) | 0, (bw * 0.68) | 0, (bh * 0.34) | 0);
+                ctx.restore();
+              }
             }
             // 鉱山(MINE=10): 採掘の現場を建物の手前に描く。わきにズリ山(残土)とトロッコ。
             if (bd.t === 10 && scale >= 5) {
@@ -1638,15 +1739,18 @@
           }
         }
         if (city.capital) {
-          // 国旗（砦の上）: 風になびく。旗竿に翻る旗で首都が一目で分かる。
+          // 国旗（砦の上）: 布が根元から旗先へうねって翻る。旗竿に翻る旗で首都が一目で分かる。
           const fs = Math.max(2, scale * 0.5);
           const fy = sy - Math.max(10, scale * 1.6);
-          const wv = Math.round(Math.sin(t * 3.5 + id) * fs * 0.35);
           ctx.fillStyle = "#3a2716"; ctx.fillRect((sx - fs * 0.5) | 0, (fy - fs * 0.6) | 0, Math.max(1, fs * 0.3) | 0, (fs * 2) | 0); // 旗竿
-          ctx.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
-          ctx.fillRect((sx - fs * 0.2) | 0, (fy - fs * 0.6 + wv) | 0, fs, fs * 0.8);
-          ctx.fillStyle = "rgba(255,255,255,0.45)";
-          ctx.fillRect((sx - fs * 0.2) | 0, (fy - fs * 0.6 + wv) | 0, fs, Math.max(1, fs * 0.25) | 0);
+          const fcol = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
+          const fx1 = sx - fs * 0.2, segw = fs / 4;
+          for (let fsg = 0; fsg < 4; fsg++) {
+            const wv = Math.round(Math.sin(t * 3.5 + id + fsg * 0.85) * fs * 0.3 * (0.35 + 0.25 * fsg)); // 旗先ほど大きく翻る
+            const segy = (fy - fs * 0.6 + wv) | 0, segX = (fx1 + fsg * segw) | 0, sw = Math.max(1, segw + 1) | 0;
+            ctx.fillStyle = fcol; ctx.fillRect(segX, segy, sw, (fs * 0.8) | 0);
+            ctx.fillStyle = "rgba(255,255,255,0.42)"; ctx.fillRect(segX, segy, sw, Math.max(1, fs * 0.25) | 0); // 上辺の照り
+          }
         }
       }
     }
