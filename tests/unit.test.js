@@ -730,6 +730,42 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 街づくり — 地方の方針が建物の優先を定め、専門都市が育つ", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 30 });
+  const w = new Game.World(40, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(20, 15);
+  const k = civ.kingdoms[A];
+  const B = Game.BUILDING;
+  // 辺境防衛の州: 兵舎→（青銅があれば）城壁を優先。
+  const frontier = { x: 30, y: 15, stance: "frontier" };
+  assert.equal(civ._stanceWant(k, frontier, {}, 4, false), B.BARRACKS, "辺境が兵舎を優先しない");
+  k.techBits = { bronze: true };
+  const hasB = {}; hasB[B.BARRACKS] = 1;
+  assert.equal(civ._stanceWant(k, frontier, hasB, 6, false), B.WALLS, "辺境が城壁を築かない");
+  // 穀倉の州: 農場を重ね、倉を建てる。
+  const granary = { x: 30, y: 15, stance: "granary" };
+  const has1 = {}; has1[B.FARM] = 1;
+  assert.equal(civ._stanceWant(k, granary, has1, 4, false), B.FARM, "穀倉が農場を重ねない");
+  const has2 = {}; has2[B.FARM] = 2;
+  assert.equal(civ._stanceWant(k, granary, has2, 4, false), B.GRANARY, "穀倉が倉を建てない");
+  // 交易港の州: 港を最優先（沿岸のみ）。
+  const port = { x: 30, y: 15, stance: "port" };
+  assert.equal(civ._stanceWant(k, port, {}, 3, true), B.HARBOR, "港の州が港を建てない");
+  assert.notEqual(civ._stanceWant(k, port, {}, 3, false), B.HARBOR, "内陸なのに港を建てる");
+  // 鉱山の州: 工房を早く。中枢の州: 神殿→学院。
+  const mine = { x: 30, y: 15, stance: "mine" };
+  assert.equal(civ._stanceWant(k, mine, {}, 3, false), B.SMITHY, "鉱山の州が工房を建てない");
+  const core = { x: 30, y: 15, stance: "core" };
+  assert.equal(civ._stanceWant(k, core, {}, 6, false), B.TEMPLE, "中枢が神殿を建てない");
+  k.techBits.writing = true;
+  const hasT = {}; hasT[B.TEMPLE] = 1;
+  assert.equal(civ._stanceWant(k, core, hasT, 8, false), B.ACADEMY, "中枢が学院を建てない");
+  // 首都（方針なし）は専門化せず汎用に委ねる。
+  assert.equal(civ._stanceWant(k, { x: 20, y: 15 }, {}, 6, false), null, "方針の無い都市が専門化してしまう");
+});
+
 test("CivSystem: 自由意志 — 自らの意志で天職を選び、より良き生を求めて旅立つ", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 30 });
   const w = new Game.World(40, 30);

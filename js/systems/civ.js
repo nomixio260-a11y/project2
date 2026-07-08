@@ -4772,8 +4772,12 @@
     const n = bs.length;
     let want;
     const coastal = this._coastal(world, city.x, city.y); // 沿岸都市か（港を建てられる）
+    // 地方の方針が街づくりを定める: 州は自らの役割（辺境防衛・穀倉・交易港・鉱山・中枢）に
+    //   適う建物を優先して建て、国の中に個性ある専門都市が育つ（方針→街並みの因果）。
+    const sw = this._stanceWant(k, city, has, n, coastal);
     if (!has[BUILDING.FARM] && n >= 1) want = BUILDING.FARM;               // まず食料生産
     else if (dwell < 2) want = tier;                                       // 最低限の住居
+    else if (sw != null) want = sw;                                        // 州の方針に沿う専門化
     else if (coastal && !has[BUILDING.HARBOR] && n >= 3) want = BUILDING.HARBOR; // 港（沿岸の漁・海上交易）
     else if (!has[BUILDING.SMITHY] && n >= 3) want = BUILDING.SMITHY;      // 工房（道具・武具）
     else if (!has[BUILDING.GRANARY] && n >= 4) want = BUILDING.GRANARY;    // 倉（食料安全）
@@ -4797,6 +4801,35 @@
       bs.push(mkBuilding(spot.x, spot.y, want));
       city.level = 1 + ((bs.length / 3) | 0);
     }
+  };
+
+  // 地方の方針に適う建物（未充足なら返す。無ければ null＝汎用の優先順位に委ねる）。
+  //   辺境は守りを、穀倉は農を、港は海運を、鉱山は工房を、中枢は学と信仰を厚くする。
+  //   首都には方針が無いため常に汎用（万能の都）＝地方だけが専門化する。
+  CivSystem.prototype._stanceWant = function (k, city, has, n, coastal) {
+    switch (city.stance) {
+      case "frontier": // 辺境防衛: 兵舎と城壁を早くから固める
+        if (!has[BUILDING.BARRACKS] && n >= 3) return BUILDING.BARRACKS;
+        if (!has[BUILDING.WALLS] && has[BUILDING.BARRACKS] && n >= 5 && hasTech(k, "bronze")) return BUILDING.WALLS;
+        break;
+      case "granary": // 穀倉: 農場を重ね、倉で蓄える
+        if ((has[BUILDING.FARM] || 0) < 2 && n >= 3) return BUILDING.FARM;
+        if (!has[BUILDING.GRANARY] && n >= 3) return BUILDING.GRANARY;
+        break;
+      case "port": // 交易港: 港を最優先に、市で商いを厚く
+        if (coastal && !has[BUILDING.HARBOR] && n >= 2) return BUILDING.HARBOR;
+        if (!has[BUILDING.MARKET] && n >= 3) return BUILDING.MARKET;
+        break;
+      case "mine": // 鉱山: 工房を早く、大きくなれば二軒目
+        if (!has[BUILDING.SMITHY] && n >= 2) return BUILDING.SMITHY;
+        if ((has[BUILDING.SMITHY] || 0) < 2 && n >= 8) return BUILDING.SMITHY;
+        break;
+      case "core": // 中枢: 神殿と学院で統治と知を支える
+        if (!has[BUILDING.TEMPLE] && n >= 5) return BUILDING.TEMPLE;
+        if (!has[BUILDING.ACADEMY] && n >= 7 && hasTech(k, "writing")) return BUILDING.ACADEMY;
+        break;
+    }
+    return null;
   };
 
   // 建立する大建造物の種類を国の性格・立地から選ぶ（神権は大聖堂、商都・沿岸は大灯台、
@@ -4948,11 +4981,13 @@
         if (fert && fert[i] < 0.2 && !nearWater) continue; // 痩せ地は不可（灌漑地は許容）
       }
       // 当たり判定: 既存建物の占有域と重ならない（敷地が触れ合わない最小間隔を確保）。
-      let ok = true, nearest = 1e9;
+      //   併せて同種の建物への近さも測る（職住の区画＝同業は寄り集まる）。
+      let ok = true, nearest = 1e9, sameNear = 1e9;
       for (let b = 0; b < bs.length; b++) {
         const dx = bs[b].x - x, dy = bs[b].y - y, d = Math.sqrt(dx * dx + dy * dy);
         if (d < wr + footR(bs[b].t) + 0.2) { ok = false; break; } // 占有域が重なる→不可
         if (d < nearest) nearest = d;
+        if (bs[b].t === wt && d < sameNear) sameNear = d;
       }
       if (!ok) continue;
       // スコア: 適度な間隔＋用途に合う立地（肥沃な耕地・水辺の灌漑・中心寄りの公共・住みよい地形）。
@@ -4960,6 +4995,19 @@
       if (isFarm && fert) score += fert[i] * 6;                       // 肥沃な土地を厚く優先
       if (isFarm && nearWater) score += 2.5;                          // 水辺は灌漑できて好適
       if (isCivic) score += (maxR - Math.hypot(x - city.x, y - city.y)) * 0.5; // 中心に集う
+      // 区画（地区）: 同種の建物の近く（隣接はせず少し離れて）を好む。工房は工房街に、
+      //   住居は住宅地に、畑は畑どうしに寄り、街に「地区」の構造が生まれる。
+      if (sameNear < 5) score += (5 - sameNear) * 0.45;
+      // 通り: 住居・公共は中心から偶数マスの格子に乗る位置を好み、家並みが通りに沿って
+      //   整列する（碁盤の目の素朴な都市計画。完全な格子ではなく緩い秩序）。
+      if (isCivic) {
+        const gdx = Math.abs(x - city.x) % 2, gdy = Math.abs(y - city.y) % 2;
+        if (gdx === 0 && gdy === 0) score += 1.1;
+        else if (gdx === 0 || gdy === 0) score += 0.45;
+      }
+      // 広場: 市・神殿・学院・酒場（人の集う公共建築）は中心のすぐそば＝広場のまわりを最も好む。
+      if ((wt === BUILDING.MARKET || wt === BUILDING.TEMPLE || wt === BUILDING.ACADEMY || wt === BUILDING.TAVERN) &&
+          Math.hypot(x - city.x, y - city.y) < 3.5) score += 1.4;
       if (t === T.GRASS || t === T.SAVANNA) score += 0.6;            // 住みよい平地
       else if (t === T.SAND || t === T.HILL || t === T.TUNDRA || t === T.DESERT) score -= 0.5;
       if (score > bestScore) { bestScore = score; best = { x: x, y: y }; }
@@ -5427,6 +5475,7 @@
 
   Game.CivSystem = CivSystem;
   Game.ROLE = ROLE;
+  Game.BUILDING = BUILDING; // 建物種別（renderer・テストが参照）
   Game.ROLE_NAMES = ["開拓者", "農民", "建築家", "兵士", "鍛冶", "商人", "神官"];
   Game.WONDER_KINDS = WONDER_KINDS;
   Game.eraOf = eraOf; // 技術→時代名（ホバー説明・UI用）
