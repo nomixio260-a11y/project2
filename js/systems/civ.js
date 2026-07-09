@@ -121,7 +121,9 @@
     // 領土の現実化（実効支配・自然国境）: 国土は「面で塗った所有」ではなく「都市から実効支配が
     //   届く範囲」。険しい地形は領有しにくく（山脈・湿地・砂漠が自然国境になる）、支配の薄い辺境は
     //   ゆらぎ、荒野は維持できず野に還る。街道は支配を沿線へ伸ばす（道が権力を運ぶ）。
-    frontierFlux: 0.03,  // 支配限界ぎわ（実効支配の薄い縁）のタイルが走査ごとに手放される確率（帯16に合わせ較正）
+    frontierFlux: 0.003, // 支配限界ぎわ（実効支配の薄い縁）のタイルが走査ごとに手放される確率。
+                         //   全域走査は 4320/(H/帯16)≒年576回なので、0.003 ≒ 年1.7回のゆらぎ
+                         //   （従来の 0.03 は年17回＝国境が明滅し、開拓者が奪還に往復するループを生んでいた）
     wildUpkeep: 0.05,    // 荒野（山・砂漠・ツンドラ・湿地・雪原）の領有が走査ごとに野に還る確率
     roadControlExt: 1.35,// 街道上のタイルへの実効支配半径の伸び（道が統治を運ぶ）
     // 資源の現実化: 鉱脈（鉱石・宝石・金）は有限。領有され採掘されるほど涸れ、掘り尽くされると消える。
@@ -2100,8 +2102,9 @@
             const ctl = this._controlOf(k, x, y, i);
             if (ctl === 0) { // 支配限界を超えた辺境を手放す
               owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
-            } else if (isWildTerrain(terr[i]) && this.rand() < CP.wildUpkeep) {
+            } else if (isWildTerrain(terr[i]) && !(world.road && world.road[i]) && this.rand() < CP.wildUpkeep) {
               // 荒野の維持限界: 山・砂漠・湿地は駐留も徴税も続かず、実効支配が野に還る。
+              //   ただし街道の通る峠・回廊は道が支配を支え、保持される（山道の現実）。
               owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
             } else if (ctl === 1 && this.rand() < CP.frontierFlux) {
               // 辺境のゆらぎ: 支配の薄い縁は統治が揺らぎ、国境線が生き物のように脈動する。
@@ -4805,7 +4808,8 @@
     }
     if (h.role === ROLE.EXPLORER) {
       this._maybeFoundTown(h, k); // 遠地で新集落
-      const t = this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow) { return ow === 0 && tile.isLand(terr); });
+      // 領有でき保持もできる土地だけを目指す（実らぬ土地への往復ループを防ぐ）。
+      const t = this._expandTarget(h, k, world);
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 4; return; }
       // 近くに未開の陸が無い → 海を越える植民を試みる（時代1以降・沿岸・確率）。
       // 航海術を持つ国は積極的に海へ進出する。
@@ -5296,13 +5300,26 @@
         const nx = cx + dx;
         if (nx < 0 || nx >= W) continue;
         const ni = ny * W + nx;
-        if (pred(world.terrain[ni], world.owner[ni])) {
+        if (pred(world.terrain[ni], world.owner[ni], nx, ny, ni)) {
           const d = dx * dx + dy * dy;
           if (d > 0 && d < bd) { bd = d; bx = nx; by = ny; }
         }
       }
     }
     return bx < 0 ? null : { x: bx, y: by };
+  };
+
+  // 開拓者が目指すべき「実際に領有でき、保持もできる」未開地を探す。
+  //   従来は「無主の陸地なら何でも」目指したため、(1)険しくて領有できない土地へ永遠に
+  //   歩き続ける、(2)荒野を確保→維持できず野に還る→また確保、(3)支配圏外を確保→手放す
+  //   →また向かう、というループが起きていた。目標を「領有可能・荒野でない・支配圏内」に
+  //   限ることで、開拓は実を結ぶ土地にだけ向かう（実らぬ拡張の徒労を断つ）。
+  CivSystem.prototype._expandTarget = function (h, k, world) {
+    const self = this;
+    return this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow, x, y, i) {
+      return ow === 0 && tile.isLand(terr) && !isWildTerrain(terr) &&
+        self._claimable(terr, i) && self._controlOf(k, x, y, i) > 0;
+    });
   };
 
   CivSystem.prototype._tryReproduce = function (h, k) {
