@@ -118,6 +118,12 @@
     controlRadius: 28,   // 都市が支配を及ぼす半径（これを超える辺境は手放す）
     controlPerLevel: 3,  // 都市の発展度1あたりの支配半径の増分
     maintainBand: 32,    // 領土メンテのローリング走査の行数/ティック
+    // 領土の現実化（実効支配・自然国境）: 国土は「面で塗った所有」ではなく「都市から実効支配が
+    //   届く範囲」。険しい地形は領有しにくく（山脈・湿地・砂漠が自然国境になる）、支配の薄い辺境は
+    //   ゆらぎ、荒野は維持できず野に還る。街道は支配を沿線へ伸ばす（道が権力を運ぶ）。
+    frontierFlux: 0.02,  // 支配限界ぎわ（実効支配の薄い縁）のタイルが走査ごとに手放される確率
+    wildUpkeep: 0.05,    // 荒野（山・砂漠・ツンドラ・湿地・雪原）の領有が走査ごとに野に還る確率
+    roadControlExt: 1.35,// 街道上のタイルへの実効支配半径の伸び（道が統治を運ぶ）
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
@@ -1933,15 +1939,53 @@
     if ((tN % CP.diploInterval) === 0) this._diplomacy();
   };
 
-  // 都市 c 群のいずれかの支配圏内に (x,y) があるか。
-  CivSystem.prototype._withinControl = function (k, x, y) {
-    const cities = k.cities;
-    for (let c = 0; c < cities.length; c++) {
-      const r = CP.controlRadius + (cities[c].level || 1) * CP.controlPerLevel;
-      const dx = cities[c].x - x, dy = cities[c].y - y;
-      if (dx * dx + dy * dy <= r * r) return true;
+  // 地形の領有しやすさ（0..100）。険しい土地は実効支配が及びにくく、山脈・湿地・砂漠が
+  //   おのずと国境になる（自然国境）。タイルごとの決定的ハッシュと比べて領有可否を定めるため、
+  //   同じ山でも「越えられる峠」が一定の場所に生まれ、世界ごとに固有の地政が刻まれる。
+  function terrainHold(t) {
+    const T = Game.TERRAIN;
+    switch (t) {
+      case T.GRASS: case T.SAVANNA: return 100; // 実り豊かな平地は統治の中心
+      case T.FOREST: return 62;                 // 森は開拓しつつ領有できる
+      case T.HILL: return 55;                   // 丘陵はやや険しい
+      case T.SAND: return 48;                   // 砂浜・砂地
+      case T.JUNGLE: return 38;                 // 密林は統治が届きにくい
+      case T.TUNDRA: return 28;
+      case T.DESERT: return 24;                 // 荒漠は点在の支配のみ
+      case T.SWAMP: return 20;                  // 湿地はほぼ野のまま
+      case T.SNOW: return 16;
+      case T.MOUNTAIN: return 10;               // 山岳はごく僅かな峠だけが領有される
+      default: return 70;                       // 焼け地など
     }
-    return false;
+  }
+  // タイル i の地形 t を領有できるか（決定的。世界ごとに固定の「越えられる場所」が定まる）。
+  CivSystem.prototype._claimable = function (t, i) {
+    return (((i * 2654435761) >>> 0) % 100) < terrainHold(t);
+  };
+  // 荒野（実効支配を維持しにくい地形）か。
+  function isWildTerrain(t) {
+    const T = Game.TERRAIN;
+    return t === T.MOUNTAIN || t === T.DESERT || t === T.TUNDRA || t === T.SWAMP || t === T.SNOW;
+  }
+
+  // 都市 c 群からの実効支配の度合い。0=圏外, 1=辺境（支配の薄い縁）, 2=中核。
+  //   街道の上は支配半径が伸びる（道が統治・軍・徴税を運ぶ＝権力の通り道）。
+  CivSystem.prototype._controlOf = function (k, x, y, i) {
+    const cities = k.cities;
+    const world = this.world;
+    const roadExt = (world && world.road && world.road[i]) ? CP.roadControlExt : 1;
+    let best = 1e9;
+    for (let c = 0; c < cities.length; c++) {
+      const r = (CP.controlRadius + (cities[c].level || 1) * CP.controlPerLevel) * roadExt;
+      const dx = cities[c].x - x, dy = cities[c].y - y;
+      const dn = (dx * dx + dy * dy) / (r * r); // 正規化距離^2（1で限界）
+      if (dn < best) best = dn;
+    }
+    return best > 1 ? 0 : best > 0.66 ? 1 : 2; // 0.66^0.5≈0.81 ⇒ 半径の外側2割が「辺境」
+  };
+  // 都市 c 群のいずれかの支配圏内に (x,y) があるか（互換用）。
+  CivSystem.prototype._withinControl = function (k, x, y) {
+    return this._controlOf(k, x, y, y * this.world.width + x) > 0;
   };
 
   // 未開の陸地 (x,y) が単一国に囲まれていればその国IDを返す（飛び地の穴埋め用）。
@@ -1962,9 +2006,11 @@
     return landN >= 3 && p > 0 ? p : 0;
   };
 
-  // 領土メンテ: ローリング走査で支配圏外の辺境を手放し、亡霊領土を消し、飛び地を埋める。
+  // 領土メンテ: ローリング走査で実効支配を評価する。圏外の辺境は手放し、支配の薄い縁は
+  //   ゆらぎ、荒野は維持できず野に還る。亡霊領土を消し、飛び地（耕せる土地のみ）を埋める。
+  //   これにより国土は「都市と街道が実際に統治する範囲」として絶えず呼吸する。
   CivSystem.prototype._maintainTerritory = function (world) {
-    const W = world.width, H = world.height, owner = world.owner;
+    const W = world.width, H = world.height, owner = world.owner, terr = world.terrain;
     const ks = this.kingdoms;
     const rndr = this.renderer;
     const y0 = this._tcursor;
@@ -1977,14 +2023,27 @@
           const k = ks[o];
           if (!k || !k.alive) { // 滅亡国の亡霊領土を消す
             owner[i] = 0; if (rndr) rndr.markTerritoryDirty(x, y);
-          } else if (!tile.isLand(world.terrain[i])) { // 陸でなくなった領土を手放す（改変・洪水で水没したタイル）
+          } else if (!tile.isLand(terr[i])) { // 陸でなくなった領土を手放す（改変・洪水で水没したタイル）
             owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
-          } else if (!this._withinControl(k, x, y)) { // 支配限界を超えた辺境を手放す
-            owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
+          } else {
+            const ctl = this._controlOf(k, x, y, i);
+            if (ctl === 0) { // 支配限界を超えた辺境を手放す
+              owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
+            } else if (isWildTerrain(terr[i]) && this.rand() < CP.wildUpkeep) {
+              // 荒野の維持限界: 山・砂漠・湿地は駐留も徴税も続かず、実効支配が野に還る。
+              owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
+            } else if (ctl === 1 && this.rand() < CP.frontierFlux) {
+              // 辺境のゆらぎ: 支配の薄い縁は統治が揺らぎ、国境線が生き物のように脈動する。
+              owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
+            }
           }
-        } else if (tile.isLand(world.terrain[i])) {
-          const fill = this._enclaveOwner(world, x, y); // 単一国に囲まれた飛び地を吸収
-          if (fill > 0) { owner[i] = fill; ks[fill].tileCount++; if (rndr) rndr.markTerritoryDirty(x, y); }
+        } else if (tile.isLand(terr[i])) {
+          // 単一国に囲まれた飛び地を吸収する。ただし荒野は囲まれても野のまま残る
+          //   （山塊・湿地は国土の中の未開地として残る＝現実の国土の姿）。
+          if (!isWildTerrain(terr[i])) {
+            const fill = this._enclaveOwner(world, x, y);
+            if (fill > 0) { owner[i] = fill; ks[fill].tileCount++; if (rndr) rndr.markTerritoryDirty(x, y); }
+          }
         }
       }
     }
@@ -3870,6 +3929,8 @@
 
   // 自国領に地続きの未開地のみ確保する（足下が自国領のときだけ周囲へ拡張）。
   // これにより領土は都市から連続した塊として広がる（斑点・飛び地を防ぐ）。
+  // 自然国境: 険しい地形（山・湿地・砂漠…）は領有できる場所が限られ（terrainHold）、
+  //   国境はおのずと山脈・川・湿地に沿う。渡れる「峠」は世界ごとに一定の場所に定まる。
   CivSystem.prototype._claimNeighbors = function (h, k, world) {
     const W = world.width, H = world.height, owner = world.owner, id = k.id;
     const cx = h.x | 0, cy = h.y | 0;
@@ -3883,6 +3944,7 @@
       if (!tile.isLand(world.terrain[ni])) continue;
       const o = owner[ni];
       if (o === 0) {
+        if (!this._claimable(world.terrain[ni], ni)) continue; // 険しい土地は領有が及ばない
         owner[ni] = id; k.tileCount++;
         if (this.renderer) this.renderer.markTerritoryDirty(x, y);
       } else if (o !== id) {

@@ -730,6 +730,63 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 領土の現実化 — 自然国境・荒野の維持限界・辺境のゆらぎ・街道の支配", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
+  const T = Game.TERRAIN;
+  const w = new Game.World(60, 40);
+  w.terrain.fill(T.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+
+  // 自然国境: 草原は常に領有できる。山岳はごく一部（峠）しか領有できない。
+  let grassOk = 0, mountainOk = 0;
+  for (let i = 0; i < 400; i++) {
+    if (civ._claimable(T.GRASS, i)) grassOk++;
+    if (civ._claimable(T.MOUNTAIN, i)) mountainOk++;
+  }
+  assert.equal(grassOk, 400, "草原が常に領有できない");
+  assert.ok(mountainOk < 80, "山岳が領有されすぎる: " + mountainOk + "/400");
+  assert.ok(mountainOk > 0, "峠が一つも無い（山脈が完全に不通になる）");
+
+  const A = civ.foundAt(30, 20);
+  const k = civ.kingdoms[A];
+
+  // 荒野の維持限界: 支配圏内でも山岳の領有は野に還る（rand を 0 に固定して確実に発火）。
+  const mi = 22 * 60 + 30; // 都市の近く
+  w.terrain[mi] = T.MOUNTAIN;
+  w.owner[mi] = A; k.tileCount++;
+  const gi = 21 * 60 + 30; // 同じく近くの草原（中核＝維持される）
+  w.owner[gi] = A; k.tileCount++;
+  civ.rand = function () { return 0; };
+  civ._tcursor = 0;
+  for (let b = 0; b < 4; b++) civ._maintainTerritory(w); // 全域を走査
+  assert.equal(w.owner[mi], 0, "支配圏内の山岳が野に還らない");
+  assert.equal(w.owner[gi], A, "中核の草原まで手放してしまう");
+
+  // 飛び地の穴埋め: 草原は埋まるが、荒野（山）は囲まれても野のまま。
+  const ei = 20 * 60 + 32, wi = 20 * 60 + 28;
+  w.terrain[ei] = T.GRASS; w.terrain[wi] = T.MOUNTAIN;
+  w.owner[ei] = 0; w.owner[wi] = 0;
+  // 双方の4近傍を自国領に。
+  for (const [tx, ty] of [[31, 20], [33, 20], [32, 19], [32, 21], [27, 20], [29, 20], [28, 19], [28, 21]]) {
+    const ii = ty * 60 + tx; if (w.owner[ii] !== A) { w.owner[ii] = A; k.tileCount++; }
+    w.terrain[ii] = T.GRASS;
+  }
+  civ.rand = function () { return 0.99; }; // ゆらぎ・荒野還りは発火させない
+  civ._tcursor = 0;
+  for (let b = 0; b < 4; b++) civ._maintainTerritory(w);
+  assert.equal(w.owner[ei], A, "草原の飛び地が埋まらない");
+  assert.equal(w.owner[wi], 0, "山の飛び地まで領有してしまう（荒野は野のまま残るべき）");
+
+  // 街道の支配: 素の支配半径の外でも、街道の上なら実効支配が届く。
+  const k2 = { cities: [{ x: 5, y: 20, level: 1 }] }; // 端寄りの都市（半径 28+3=31）
+  const far = 5 + 35; // 素の半径の少し外（地図内）
+  const fi = 20 * 60 + far;
+  w.terrain[fi] = T.GRASS;
+  assert.equal(civ._controlOf(k2, far, 20, fi), 0, "素の半径外なのに支配が届いている");
+  w.road[fi] = 1;
+  assert.ok(civ._controlOf(k2, far, 20, fi) > 0, "街道の上なのに支配が届かない");
+});
+
 test("CivSystem: 街づくり — 地方の方針が建物の優先を定め、専門都市が育つ", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 30 });
   const w = new Game.World(40, 30);
