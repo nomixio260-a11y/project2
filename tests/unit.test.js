@@ -730,6 +730,56 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 政治の柔軟性 — 不可侵条約・朝貢要求・国是の進化", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
+  const w = new Game.World(60, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const B = civ.foundAt(40, 20);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+
+  // 不可侵条約: 双方に期限つきで結ばれ、関係が改善する。
+  const rel0 = ka.relations[B] || 0;
+  civ._signPact(A, B);
+  assert.ok(ka.pacts[B] > civ._tickN, "条約が ka に記録されない");
+  assert.ok(kb.pacts[A] > civ._tickN, "条約が kb に記録されない");
+  assert.ok((ka.relations[B] || 0) > rel0, "条約で関係が改善しない");
+  // 開戦は条約を破る。
+  civ._declareWar(A, B);
+  assert.ok(!ka.pacts[B], "開戦しても条約が残る");
+  delete ka.wars[B]; delete kb.wars[A]; // 後始末
+
+  // 朝貢要求: 気概の無い弱国は屈して富を差し出し、実質の不可侵が敷かれる。
+  ka.wealth = 100; kb.wealth = 100;
+  kb.trait = { name: "温厚", war: 0.4, ally: 1.8, trade: 1.1, tech: 1.0, unrest: 0.7, faith: 1.0 };
+  kb.govMod = { war: 1 }; kb.ethos = { name: "隠逸国家", war: 0.8 };
+  civ.rand = function () { return 0.99; }; // defiance 判定を必ず「屈服」側に（rand >= defiance が偽になるよう大きく）
+  const res = civ._demandTribute(A, B);
+  assert.equal(res, "paid", "弱腰の国が屈しない: " + res);
+  assert.ok(kb.wealth < 100 && ka.wealth > 100, "貢納で富が動かない");
+  assert.ok(ka.pacts[B] > civ._tickN, "貢納後の実質不可侵が敷かれない");
+  // 気骨ある国は退ける（rand を小さく＝defiance 判定を通す。開戦ロールは 0.44 で回避不可のため両様を許容）。
+  delete ka.pacts[B]; delete kb.pacts[A];
+  kb.trait = { name: "好戦的", war: 1.9, ally: 0.5, trade: 0.8, tech: 1.0, unrest: 1.1, faith: 1.0 };
+  civ.rand = function () { return 0.44; };
+  const res2 = civ._demandTribute(A, B);
+  assert.ok(res2 === "refused" || res2 === "war", "気骨ある国が屈してしまう: " + res2);
+  delete ka.wars[B]; delete kb.wars[A];
+
+  // 国是の進化: 商いに栄える国は、時とともに通商国家へと変わる。
+  ka.ethos = { name: "武断国家", war: 1.25 };
+  ka.tradeVol = 20; ka.coin = 5; ka.wars = {};
+  civ.rand = function () { return 0; }; // 進化判定を必ず通す
+  ka._ethosT = 0;
+  for (let i = 0; i < 8; i++) civ._ethosEvolve(ka); // interval=8 で1回発火
+  assert.equal(ka.ethos.name, "通商国家", "商いに栄える国の国是が進化しない: " + ka.ethos.name);
+  // ヒステリシス: 既に通商国家なら変わらない。
+  const e0 = ka.ethos;
+  for (let i = 0; i < 8; i++) civ._ethosEvolve(ka);
+  assert.equal(ka.ethos, e0, "同じ国是へ再進化している");
+});
+
 test("CivSystem: 自治区 — 不忠の遠隔州に自治を認めて繋ぎ止め、貢献半減と忠誠回復を得る", () => {
   const Game = loadCore({ mapWidth: 100, mapHeight: 40 });
   const w = new Game.World(100, 40);

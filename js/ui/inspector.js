@@ -392,8 +392,15 @@
         return parts.length ? row("革新", esc(parts.join(" "))) : "";
       })() +
       ((k.renown || 0) >= 0.5 ? row("威信", "🏛 文化的威信 " + Math.round(k.renown)) : "") +
-      (info && (info.wars.length || info.allies.length)
-        ? row("外交", (info.wars.length ? "⚔" + info.wars.length + " " : "") + (info.allies.length ? "🤝" + info.allies.length : "")) : "") +
+      (function () {
+        // 外交の概況: 交戦・同盟に加え、不可侵条約（有効期限内）も示す。
+        const wars = info ? info.wars.length : 0, allies = info ? info.allies.length : 0;
+        let pacts = 0;
+        const tN = civ._tickN || 0;
+        if (k.pacts) for (const p in k.pacts) { const kp = civ.kingdoms[+p]; if (kp && kp.alive && k.pacts[p] > tN) pacts++; }
+        if (!wars && !allies && !pacts) return "";
+        return row("外交", (wars ? "⚔" + wars + " " : "") + (allies ? "🤝" + allies + " " : "") + (pacts ? "📜" + pacts : ""));
+      })() +
       (function () {
         const suz = k.suzerain && civ.kingdoms[k.suzerain] && civ.kingdoms[k.suzerain].alive ? civ.kingdoms[k.suzerain] : null;
         let vn = 0; if (k.vassals) for (const v in k.vassals) { const kv = civ.kingdoms[+v]; if (kv && kv.alive) vn++; }
