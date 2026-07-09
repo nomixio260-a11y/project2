@@ -117,11 +117,11 @@
     expandChance: 0.16,  // 国が評価ごとに新たな開拓地を興そうとする確率（人口・領土に余裕がある時）
     controlRadius: 28,   // 都市が支配を及ぼす半径（これを超える辺境は手放す）
     controlPerLevel: 3,  // 都市の発展度1あたりの支配半径の増分
-    maintainBand: 32,    // 領土メンテのローリング走査の行数/ティック
+    maintainBand: 16,    // 領土メンテのローリング走査の行数/ティック（帯を細くして毎ティックの負荷を半減）
     // 領土の現実化（実効支配・自然国境）: 国土は「面で塗った所有」ではなく「都市から実効支配が
     //   届く範囲」。険しい地形は領有しにくく（山脈・湿地・砂漠が自然国境になる）、支配の薄い辺境は
     //   ゆらぎ、荒野は維持できず野に還る。街道は支配を沿線へ伸ばす（道が権力を運ぶ）。
-    frontierFlux: 0.02,  // 支配限界ぎわ（実効支配の薄い縁）のタイルが走査ごとに手放される確率
+    frontierFlux: 0.03,  // 支配限界ぎわ（実効支配の薄い縁）のタイルが走査ごとに手放される確率（帯16に合わせ較正）
     wildUpkeep: 0.05,    // 荒野（山・砂漠・ツンドラ・湿地・雪原）の領有が走査ごとに野に還る確率
     roadControlExt: 1.35,// 街道上のタイルへの実効支配半径の伸び（道が統治を運ぶ）
     socialRise: 0.003,
@@ -348,6 +348,16 @@
     provToolsEach: 0.05,  // 鉱山の州1つが武具生産へ与える寄与
     provTechEach: 0.04,   // 中枢の州1つが技術へ与える寄与
     provBonusCap: 0.22,   // 地方の方針が生む国全体の底上げの上限（各分野ごと）
+    // 自治区（領地経営）: 忠誠の薄れた遠隔の州に、国は自治を認めて繋ぎ止めうる。自治区は
+    //   中央への貢献（方針の底上げ）が半減する代わりに忠誠が回復し、総督の野心も和らぐ。
+    //   安寧策・共和制・都市国家は自治に寛容で、帝国・君主制は渋り、直轄へ戻したがる。
+    //   「離反か弾圧か」の二択に「自治を認めて共存する」という現実の領地経営の道が加わる。
+    autonomyLoyalty: 0.45,      // これ未満の忠誠で自治付与を検討する
+    autonomyGrant: 0.1,         // 条件を満たした評価ごとの自治付与の基準確率
+    autonomyCalm: 0.16,         // 自治が忠誠目標へ与える上乗せ（自ら治める民は離反の理由を失う）
+    autonomyYield: 0.5,         // 自治区の方針底上げの係数（中央の取り分が減る＝自治の代価）
+    autonomyRevoke: 0.78,       // 忠誠がこれを超えた自治区は直轄へ戻りうる
+    autonomyRevokeChance: 0.06, // 直轄復帰の確率/評価（帝国・君主制は2倍＝中央集権の性）
     // 継承危機の分裂: 世襲の断絶・簒奪で王統が揺れた時、大きく不安定な国では最も不忠で野心的な
     //   総督が機に乗じて一斉に独立を図る（王朝崩壊＝群雄割拠の引き金）。
     crisisFragmentUnrest: 60, // これ以上の不満なら継承危機時に地方が離反しうる
@@ -1214,14 +1224,12 @@
     if (!world.inBounds(x, y)) return false;
     if (!tile.isLand(world.getTerrain(x, y))) return false;
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return false;
-    const h = {
-      x: x + 0.5, y: y + 0.5, hx: 0, hy: 0,
-      kid: 0, clan: 0,
-      age: 0, food: 0.9,
-      role: ROLE.EXPLORER, state: 0,
-      gx: x, gy: y, work: null, gear: 0,
-      repro: CP.reproCooldown, social: 0, alive: true,
-    };
+    const h = blankPerson();
+    h.x = x + 0.5; h.y = y + 0.5;
+    h.food = 0.9;
+    h.role = ROLE.EXPLORER;
+    h.gx = x; h.gy = y;
+    h.repro = CP.reproCooldown;
     this._endow(h);
     this.people.push(h);
     return true;
@@ -1453,6 +1461,37 @@
 
   // 人に内面と社会的アイデンティティを授ける（個性＋固有名・名声・人間関係・文化）。
   // 親(pa,pb)があれば性格・文化を遺伝する。
+  // 人物オブジェクトの雛形。生涯で使う全フィールドを固定の順序で最初に宣言し、V8 の隠れクラスを
+  //   全生成経路で一本化する（後からのプロパティ追加が生む形状分裂＝メガモルフィックICは、毎ティック
+  //   全人物に触れる本作の最大のボトルネックだった）。値は後から代入してよいが、キーの追加はここに限る。
+  function blankPerson() {
+    return {
+      // 位置・目標・所属（最もホットな読み書き）
+      x: 0, y: 0, hx: 0, hy: 0, gx: 0, gy: 0,
+      kid: 0, clan: 0, age: 0, food: 0, role: 0, state: 0,
+      repro: 0, social: 0, alive: true,
+      home: null, farm: null, work: null, gear: 0,
+      sailing: null, sea: 0, mining: false, pack: 0,
+      // 内面（endow が設定）
+      dili: undefined, brave: undefined, wit: undefined, vigor: undefined, creat: undefined,
+      synSafe: undefined, synFood: undefined, synSoc: undefined, aspire: 0,
+      fear: 0, anger: 0, joy: 0, sight: 5, skill: 0, mood: 0.6, mind: 0,
+      // 素性・血統・縁（_endow が設定）
+      pid: undefined, race: undefined, name: undefined, momId: 0, dadId: 0, gen: 1,
+      sur: undefined, prestige: 0, partner: null, bonds: null, _mom: null,
+      culture: undefined, skinCol: undefined, hairCol: undefined, build: 1,
+      lx: undefined, ly: undefined, life: null,
+      // 記憶・戦闘・住まい
+      memFoods: null, memDanger: null, _enemy: null,
+      hbx: 0, hby: 0, _sheltered: false, _homeDay: -1,
+      // 名声・創造・伝記
+      _famed: false, _chronicled: false, invention: undefined, masterwork: undefined,
+      _hadChild: 0, _choseWay: 0,
+      // 描画専用（renderer が使う。未使用でも形状安定のため宣言）
+      look: undefined, _px: 0, _py: 0, _mv: 0,
+    };
+  }
+
   CivSystem.prototype._endow = function (h, pa, pb) {
     if (h.dili === undefined) endow(h, this.rand, pa, pb); // 性格・練度・機嫌
     if (h.pid === undefined) {
@@ -1518,20 +1557,14 @@
     if (this.people.length + this._births.length >= Game.config.sim.maxPeople) return null;
     if (k.humanCount >= CP.perKingdomCap) return null;
     const home = this._nearestCity(k, x, y);
-    const h = {
-      x: x, y: y, hx: 0, hy: 0,
-      kid: k.id, clan: clan,
-      age: 0, food: food,
-      role: role, state: 0,
-      gx: x, gy: y,        // 現在の目標タイル
-      home: home,          // 所属する町（定住の拠点）
-      farm: null,          // 農民の耕作地
-      work: null,          // 専門職の職場（施設座標）
-      gear: 0,             // 装備・道具の段階（0=素手）
-      repro: CP.reproCooldown,
-      social: 0,
-      alive: true,
-    };
+    const h = blankPerson();
+    h.x = x; h.y = y;
+    h.kid = k.id; h.clan = clan;
+    h.food = food;
+    h.role = role;
+    h.gx = x; h.gy = y;   // 現在の目標タイル
+    h.home = home;        // 所属する町（定住の拠点）
+    h.repro = CP.reproCooldown;
     this._endow(h, pa, pb); // 個性・固有名・名声・人間関係・文化（親があれば遺伝）
     // 言語: 親が無い建国者・新住民は国の言葉を（個体差つきで）話す。
     if (h.lx == null) {
@@ -1702,6 +1735,9 @@
     const r2 = radius * radius;
     const people = this.people, next = this._next, head = this._head;
     const cap = maxVisit || 0;
+    // 結果オブジェクトは使い回す（毎呼び出しの割り当てを避けGC負荷を抑える。
+    //   呼び手は返り値を同期的に読み切る前提＝入れ子で保持しない）。
+    const res = this._scanRes || (this._scanRes = { count: 0, count2: 0, best: null });
     let count = 0, count2 = 0, best = null, bestD = r2, visited = 0;
     for (let gy = cy - r; gy <= cy + r; gy++) {
       if (gy < 0 || gy >= gh) continue;
@@ -1717,14 +1753,15 @@
               const m = want(o, d);
               if (m === 1) count++;
               else if (m === 2) { count2++; if (d < bestD) { bestD = d; best = o; } }
-              if (cap && ++visited >= cap) return { count: count, count2: count2, best: best };
+              if (cap && ++visited >= cap) { gy = cy + r + 1; gx = cx + r + 1; break; }
             }
           }
           i = next[i];
         }
       }
     }
-    return { count: count, count2: count2, best: best };
+    res.count = count; res.count2 = count2; res.best = best;
+    return res;
   };
 
   CivSystem.prototype.tick = function (world) {
@@ -3188,8 +3225,10 @@
         this._rebellion(ka, worstIdx);
       }
       // 地方の離反: 忠誠の尽きた州は、国が乱れていなくても自ら独立を選ぶ（遠く顧みられぬ辺境の分離）。
+      //   自治区は自ら治める術を既に得ており、独立へ踏み切りにくい（自治＝分離の安全弁）。
       else if (worstIdx >= 1 && worstLoy < CP.secedeLoyalty &&
-          this.kingdoms.length - 1 < Game.config.sim.maxKingdoms && this.rand() < CP.secedeChance) {
+          this.kingdoms.length - 1 < Game.config.sim.maxKingdoms &&
+          this.rand() < CP.secedeChance * (ka.cities[worstIdx] && ka.cities[worstIdx].autonomous ? 0.35 : 1)) {
         this._rebellion(ka, worstIdx);
         this._logEvent("🏴 " + ka.name + " の地方が忠誠を失い独立した");
       }
@@ -3396,11 +3435,32 @@
       // --- 地方の方針（立地・情勢から州が選ぶ役割）: 忠誠と国の底上げに効く ---
       const st = this._provinceStance(ka, city, dist);
       city.stance = st.key; city.stanceName = st.name; city.stanceEmoji = st.emoji;
-      bFood += st.food; bTrade += st.trade; bMil += st.mil; bTools += st.tools; bTech += st.tech;
+      // 自治区は中央への貢献が半減する（自治の代価。領地経営のトレードオフ）。
+      const yld = city.autonomous ? CP.autonomyYield : 1;
+      bFood += st.food * yld; bTrade += st.trade * yld; bMil += st.mil * yld; bTools += st.tools * yld; bTech += st.tech * yld;
       const distPen = Math.min(0.55, dist / CP.loyaltyRange * 0.55);        // 遠いほど求心力が届かない
       const prosperity = Math.min(0.2, ((city.level || 1) - 1) * 0.09 + (city.buildings ? city.buildings.length : 0) * 0.008);
-      const target = clamp01(0.9 - distPen - unrestPen + prosperity + rulerBonus + renownBonus + calmBonus + govBonus - ambPen + st.loyal);
+      const autonomyBonus = city.autonomous ? CP.autonomyCalm : 0;          // 自ら治める民は離反の理由を失う
+      const target = clamp01(0.9 - distPen - unrestPen + prosperity + rulerBonus + renownBonus + calmBonus + govBonus - ambPen + st.loyal + autonomyBonus);
       city.loyalty += (target - city.loyalty) * rate;
+      // --- 自治区の授受（領地経営の決断）: 不忠の遠隔州へは自治を、忠誠の戻った州は直轄へ ---
+      if (!city.autonomous) {
+        if (city.loyalty < CP.autonomyLoyalty && dist > CP.loyaltyRange * 0.35) {
+          let gc = CP.autonomyGrant;
+          if (ka.doctrineKey === "calm") gc *= 2;                                    // 安寧策は融和を選ぶ
+          if (ka.gov === "共和制" || ka.gov === "都市国家") gc *= 1.6;               // 分権的な政体は自治に寛容
+          else if (ka.gov === "帝国" || ka.gov === "君主制") gc *= 0.5;              // 中央集権は渋る
+          if (this.rand() < gc) {
+            city.autonomous = 1;
+            g.ambition = Math.max(0.1, g.ambition * 0.5); // 総督は自治で野心を満たす
+            this._logEvent("🏛 " + this.realmName(ka) + " が地方に自治を認めた（自治区）");
+          }
+        }
+      } else if (city.loyalty > CP.autonomyRevoke &&
+          this.rand() < CP.autonomyRevokeChance * ((ka.gov === "帝国" || ka.gov === "君主制") ? 2 : 1)) {
+        city.autonomous = 0; // 忠誠が篤く戻れば中央は統治を取り戻す
+        this._logEvent("🏛 " + this.realmName(ka) + " が自治区を直轄に復した");
+      }
       if (city.loyalty < CP.secedeLoyalty) restless++;
       // 独立の切迫度: 忠誠が低いほど、そして総督が野心的なほど機が熟す（人物駆動の独立）。
       const secedePush = (CP.secedeLoyalty - city.loyalty) + g.ambition * CP.govAmbSecede;
@@ -3907,12 +3967,12 @@
     h.repro = (h.aspire === 4 ? CP.reproCooldown / CP.aspireFamily : CP.reproCooldown);
     partner.repro = (partner.aspire === 4 ? CP.reproCooldown / CP.aspireFamily : CP.reproCooldown);
     h.food -= CP.reproCost; partner.food -= CP.reproCost;
-    const child = {
-      x: h.x, y: h.y, hx: 0, hy: 0,
-      kid: 0, clan: 0, age: 0, food: 0.7,
-      role: ROLE.EXPLORER, state: 0, gx: h.x | 0, gy: h.y | 0,
-      repro: CP.reproCooldown, social: 0, alive: true,
-    };
+    const child = blankPerson();
+    child.x = h.x; child.y = h.y;
+    child.food = 0.7;
+    child.role = ROLE.EXPLORER;
+    child.gx = h.x | 0; child.gy = h.y | 0;
+    child.repro = CP.reproCooldown;
     this._endow(child, h, partner); // 両親から個性・文化を遺伝
     this._bond(h, partner);         // 伴侶として結ばれる
     this._firstChild(h, partner, child);

@@ -297,12 +297,18 @@
       row("人口", String(k.humanCount) + " 人") +
       row("都市", String(k.cities.length) + " · 領土 " + k.tileCount) +
       (function () {
-        // 地方（州）の忠誠。不忠な州は独立の火種（各領地の方針決定）。
+        // 地方（州）の忠誠。不忠な州は独立の火種（各領地の方針決定）。自治区は融和の証。
         if (!k.cities || k.cities.length < 2) return "";
-        let s = 0, n = 0, restless = 0;
-        for (let c = 1; c < k.cities.length; c++) { const l = k.cities[c].loyalty; if (typeof l === "number") { s += l; n++; if (l < 0.4) restless++; } }
+        let s = 0, n = 0, restless = 0, auto = 0;
+        for (let c = 1; c < k.cities.length; c++) {
+          const city = k.cities[c], l = city.loyalty;
+          if (typeof l === "number") { s += l; n++; if (l < 0.4) restless++; }
+          if (city.autonomous) auto++;
+        }
         if (!n) return "";
-        return row("地方", (k.cities.length - 1) + "州 · 忠誠 " + Math.round(s / n * 100) + "%" + (restless ? ' <span class="insp-tag bad">⚠ 不穏 ' + restless + "州</span>" : ""));
+        return row("地方", (k.cities.length - 1) + "州 · 忠誠 " + Math.round(s / n * 100) + "%" +
+          (auto ? ' <span class="insp-tag">🏛 自治 ' + auto + "州</span>" : "") +
+          (restless ? ' <span class="insp-tag bad">⚠ 不穏 ' + restless + "州</span>" : ""));
       })() +
       (function () {
         // 地方の方針: 各州が立地・情勢から選んだ役割（辺境防衛・穀倉・交易港・鉱山・中枢…）を集計して示す。
