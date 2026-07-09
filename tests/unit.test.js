@@ -730,6 +730,47 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 自治区 — 不忠の遠隔州に自治を認めて繋ぎ止め、貢献半減と忠誠回復を得る", () => {
+  const Game = loadCore({ mapWidth: 100, mapHeight: 40 });
+  const w = new Game.World(100, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const k = civ.kingdoms[A];
+  k.doctrineKey = "calm"; // 安寧策＝自治に寛容
+  // 首都＋遠い辺境州（不忠）。
+  k.cities = [
+    { x: 10, y: 20, capital: true, level: 2, buildings: [] },
+    { x: 90, y: 20, capital: false, level: 2, buildings: [{}, {}], loyalty: 0.3 },
+  ];
+  // 付与判定を必ず通す。
+  civ.rand = function () { return 0; };
+  civ._updateProvinces(k);
+  assert.equal(k.cities[1].autonomous, 1, "不忠の遠隔州に自治が認められない");
+
+  // 自治区は方針の底上げが半減する（辺境防衛の軍事寄与で確認。付与後の評価で効く）。
+  civ.rand = function () { return 0.99; }; // 直轄復帰・再付与を発火させない
+  k.cities[1].loyalty = 0.3;
+  civ._updateProvinces(k);
+  const milAuto = k._provMil;
+  k.cities[1].autonomous = 0; k.cities[1].loyalty = 0.3;
+  civ._updateProvinces(k);
+  const milDirect = k._provMil;
+  assert.ok(milAuto < milDirect, "自治区の貢献が半減しない: auto=" + milAuto + " direct=" + milDirect);
+
+  // 自治は忠誠を回復させる（同条件で自治ありの忠誠目標が高い）。
+  const loyDirect = k.cities[1].loyalty;
+  k.cities[1].autonomous = 1; k.cities[1].loyalty = loyDirect;
+  civ._updateProvinces(k);
+  assert.ok(k.cities[1].loyalty > loyDirect, "自治が忠誠を回復させない");
+
+  // 直轄復帰: 忠誠が篤く戻れば中央は統治を取り戻す。
+  k.cities[1].loyalty = 0.9;
+  civ.rand = function () { return 0; };
+  civ._updateProvinces(k);
+  assert.equal(k.cities[1].autonomous, 0, "忠誠の戻った自治区が直轄に復さない");
+});
+
 test("CivSystem: 領土の現実化 — 自然国境・荒野の維持限界・辺境のゆらぎ・街道の支配", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const T = Game.TERRAIN;
