@@ -730,6 +730,34 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 資源の現実化 — 鉱脈は有限で掘り尽くされ、漁場は再生し涸れない", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 30 });
+  const w = new Game.World(40, 30);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(20, 15);
+  const k = civ.kingdoms[A];
+  // 領内に鉱石と漁場を置く。
+  const oi = 15 * 40 + 22, fi = 15 * 40 + 24;
+  w.owner[oi] = A; w.owner[fi] = A; k.tileCount += 2;
+  w.resource[oi] = Game.RESOURCE.ORE;
+  w.resourceList = [{ x: 22, y: 15, t: Game.RESOURCE.ORE }, { x: 24, y: 15, t: Game.RESOURCE.FISH }];
+  civ._tallyResources();
+  assert.equal(k.res.ore, 1, "鉱石が数えられない");
+  assert.ok(w.resourceList[0].amt > 0, "鉱脈に埋蔵量が振られない");
+  assert.equal(w.resourceList[1].amt, undefined, "漁場（再生資源）に埋蔵量が振られてしまう");
+  // 掘り尽くす: 埋蔵量ぶん評価を繰り返すと鉱脈が消え、漁場は残る。
+  const evals = Math.ceil(w.resourceList[0].amt / 0.55) + 2;
+  let logged = "";
+  civ._logEvent = function (m) { if (m.indexOf("掘り尽くされた") >= 0) logged = m; };
+  for (let i = 0; i < evals; i++) civ._tallyResources();
+  assert.equal(w.resourceList.length, 1, "掘り尽くした鉱脈が一覧から消えない");
+  assert.equal(w.resourceList[0].t, Game.RESOURCE.FISH, "漁場まで涸れてしまう");
+  assert.equal(w.resource[oi], 0, "鉱脈タイルの資源が消えない");
+  assert.equal(k.res.ore, 0, "涸れた鉱脈がまだ数えられている");
+  assert.ok(logged.length > 0, "枯渇が年代記に記されない");
+});
+
 test("CivSystem: 政治の柔軟性 — 不可侵条約・朝貢要求・国是の進化", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const w = new Game.World(60, 40);
@@ -2229,7 +2257,11 @@ test("CivSystem: 移住の因果 — 荒れた国の判定と、不遇からの�
   const everLeft = new Set();
   for (let t = 0; t < 1500; t++) {
     k.unrest = 90; k.famine = true;      // 慢性的な悪政と飢饉
-    for (const h of citizens) { if (h.kid === A && h.food < 0.5) h.food = 0.6; } // 餓死は防ぐ（離郷因子を分離）
+    for (const h of citizens) {
+      if (h.kid !== A) continue;
+      if (h.food < 0.5) h.food = 0.6;    // 餓死は防ぐ（離郷因子を分離）
+      if (h.mood > 0.2) h.mood = 0.2;    // 慢性的な不幸を固定（機嫌の力学でなく「不遇→離郷」の判断を検査する）
+    }
     civ.tick(w);
     for (const h of citizens) { if (h.alive && h.kid === 0) everLeft.add(h); }
     if (everLeft.size >= 3) break;
