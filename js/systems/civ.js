@@ -124,6 +124,10 @@
     frontierFlux: 0.03,  // 支配限界ぎわ（実効支配の薄い縁）のタイルが走査ごとに手放される確率（帯16に合わせ較正）
     wildUpkeep: 0.05,    // 荒野（山・砂漠・ツンドラ・湿地・雪原）の領有が走査ごとに野に還る確率
     roadControlExt: 1.35,// 街道上のタイルへの実効支配半径の伸び（道が統治を運ぶ）
+    // 資源の現実化: 鉱脈（鉱石・宝石・金）は有限。領有され採掘されるほど涸れ、掘り尽くされると消える。
+    resDepositMin: 240,   // 鉱脈の埋蔵量の下限（外交評価≈48回/年 × 0.55 ≒ 26/年 → 約9〜20年で枯渇）
+    resDepositRange: 280, // 埋蔵量の幅（鉱脈ごとに決定的ハッシュで固有）
+    resDepleteRate: 0.55, // 領有された鉱脈が評価ごとに減る量（採掘の速さ）
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
@@ -1657,6 +1661,23 @@
       if (o === 0) continue;
       const k = ks[o];
       if (!k || !k.alive || !k.res) continue;
+      // 資源の現実化: 鉱脈（鉱石・宝石・金）は有限の埋蔵量を持ち、領有され採掘されるほど涸れて
+      //   やがて掘り尽くされる（枯渇→鉱山町の衰退→新鉱脈の探索という現実の資源経済）。
+      //   漁場・馬・香辛料・塩・木材は再生する営みで涸れない（フロー資源）。
+      if (r.t === 1 || r.t === 3 || r.t === 4) {
+        if (r.amt === undefined) {
+          // 埋蔵量は鉱脈ごとに固有（決定的ハッシュ）。豊かな鉱脈も貧しい鉱脈もある。
+          const hsh = (((y * W + x) * 2654435761) >>> 0) % 1000;
+          r.amt = CP.resDepositMin + (hsh / 1000) * CP.resDepositRange;
+        }
+        r.amt -= CP.resDepleteRate;
+        if (r.amt <= 0) {
+          r._dead = true;
+          if (world.resource) world.resource[y * W + x] = 0;
+          this._logEvent("⛏ " + k.name + " の" + (Game.RESOURCE_NAMES[r.t] || "資源") + "の鉱脈が掘り尽くされた");
+          continue; // 涸れた鉱脈はもう数えない
+        }
+      }
       if (r.t === 1) k.res.ore++;
       else if (r.t === 2) k.res.fish++;
       else if (r.t === 4) k.res.gold++;
@@ -1666,6 +1687,8 @@
       else if (r.t === 8) k.res.timber++;
       else k.res.gems++;
     }
+    // 掘り尽くされた鉱脈を一覧から除く（描画・集計から消える）。
+    for (let i = list.length - 1; i >= 0; i--) if (list[i]._dead) list.splice(i, 1);
   };
 
   // (x,y) に最も近い k の都市座標 {x,y} を返す。
@@ -4760,11 +4783,24 @@
         return ow !== 0 && ow !== h.kid && self._atWar(h.kid, ow);
       });
       if (t) { h.gx = t.x; h.gy = t.y; h.state = 5; return; }
+      // 軍団の集結: 戦時、将（最も武名ある兵）が健在なら、離れた兵はまずその旗下へ集まる。
+      //   従来は各兵が個別に敵都市へ流れ込み「軍隊」にならなかったが、これで兵は将の軍旗の
+      //   もとに軍団を成し、まとまって進軍する（将が倒れれば軍団は散り、新たな将を待つ）。
+      const gen = k._genRef;
+      if (gen && gen !== h && gen.alive && gen.kid === h.kid && this._count(k.wars) > 0) {
+        const gdx = gen.x - h.x, gdy = gen.y - h.y;
+        if (gdx * gdx + gdy * gdy > 64) { // 将から8タイル超なら旗下へ（各兵は将の周囲に散開して布陣）
+          const px = h.pid || 0;
+          h.gx = Game.utils.clamp((gen.x + (px % 7) - 3) | 0, 0, world.width - 1);
+          h.gy = Game.utils.clamp((gen.y + (((px / 7) | 0) % 7) - 3) | 0, 0, world.height - 1);
+          h.state = 5; return;
+        }
+      }
       // 近くに前線が無ければ、交戦国の最寄りの都市へ進軍する（攻囲・征服を目指す＝軍が集結）。
       const ec = this._nearestEnemyCity(h);
       if (ec) { h.gx = ec.x; h.gy = ec.y; h.state = 5; return; }
-      // 平時は領内を広く警邏（外周寄りを巡回）。
-      this._ringGoal(h, world, hcx, hcy, CP.tether * 0.4, CP.tether);
+      // 平時は領内を広く警邏（外周寄りを巡回）。行き先までは歩き切る（ぐるぐる防止）。
+      if (!this._keepGoal(h)) this._ringGoal(h, world, hcx, hcy, CP.tether * 0.4, CP.tether);
       h.state = 5; return;
     }
     if (h.role === ROLE.EXPLORER) {
@@ -4783,7 +4819,7 @@
           return;
         }
       }
-      this._ringGoal(h, world, hcx, hcy, 4, CP.tether); // 未開地が無ければ領内を広く移動
+      if (!this._keepGoal(h)) this._ringGoal(h, world, hcx, hcy, 4, CP.tether); // 未開地が無ければ領内を広く移動（歩き切ってから次へ）
       h.state = 4; return;
     }
     if (h.role === ROLE.BUILDER) {
@@ -4794,8 +4830,8 @@
       } else {
         this._maybeFoundTown(h, k);
       }
-      // 工事現場（町なか）をうろつく。
-      this._ringGoal(h, world, hcx, hcy, 0, 5);
+      // 工事現場（町なか）をうろつく（行き先までは歩き切る）。
+      if (!this._keepGoal(h)) this._ringGoal(h, world, hcx, hcy, 0, 5);
       h.state = 6; return;
     }
     // 専門職（鍛冶・商人・神官）: 対応する施設へ出勤して働く。職場のある町に定住する
@@ -4813,10 +4849,10 @@
       if (h.work) {
         h.home = { x: h.work.x, y: h.work.y }; // 職場の都市に通勤定住
         if (this.rand() < 0.7) { h.gx = h.work.x; h.gy = h.work.y; } // 出勤
-        else { this._ringGoal(h, world, h.work.x, h.work.y, 0, 4); }  // 職場周辺
+        else if (!this._keepGoal(h)) { this._ringGoal(h, world, h.work.x, h.work.y, 0, 4); }  // 職場周辺（歩き切る）
       } else {
         // 職場がまだ無ければ町なかで待機（やがて建築家が施設を建てる）。
-        this._ringGoal(h, world, hcx, hcy, 0, 5);
+        if (!this._keepGoal(h)) this._ringGoal(h, world, hcx, hcy, 0, 5);
       }
       h.state = 12; return;
     }
@@ -5231,6 +5267,14 @@
     return best;
   };
 
+  // 迷歩の目標を保つ: まだ目的地に着いていなければ true（＝新たな目標を選び直さない）。
+  //   毎思考ごとの目標の再抽選が方向転換の千鳥足（ぐるぐる）を生んでいたため、
+  //   人は一度選んだ行き先へ「歩き切って」から次の行き先を選ぶ（目的のある歩み）。
+  CivSystem.prototype._keepGoal = function (h) {
+    const dx = h.gx + 0.5 - h.x, dy = h.gy + 0.5 - h.y;
+    return (dx * dx + dy * dy) > 2.25; // 目的地まで1.5タイル超なら継続
+  };
+
   // (cx,cy) を中心とした [minR,maxR] のリング内のランダムな点を目標にする。
   // 役割ごとの行動圏に人々を散らし、絶えず動かすためのもの。
   CivSystem.prototype._ringGoal = function (h, world, cx, cy, minR, maxR) {
@@ -5338,13 +5382,17 @@
     // 街道の上では速く移動できる（交通インフラの効果）。
     if (world.road && world.road[(h.y | 0) * W + (h.x | 0)]) speed *= 1.5;
     if (dist < 0.6) {
-      // 目標到達 → 直前の向きを保ちつつ緩やかに彷徨う（カクつき防止）。
-      dux = (h.hx || 0) * 6 + (this.rand() - 0.5) * 0.5;
-      duy = (h.hy || 0) * 6 + (this.rand() - 0.5) * 0.5;
-      speed *= 0.45;
-    } else {
-      dux /= dist; duy /= dist;
+      // 目標到達 → 減速してその場に立ち止まる。従来は前の向きに歩き続けて目標の周りを
+      //   回り続けており（慣性との合成で円軌道になる）、これが「同じ所をぐるぐる回る」
+      //   問題の正体だった。静止しても renderer の呼吸・仕草が生を保つ。
+      h.hx = (h.hx || 0) * 0.5; h.hy = (h.hy || 0) * 0.5;
+      if (Math.abs(h.hx) + Math.abs(h.hy) < 0.02) { h.hx = 0; h.hy = 0; return; }
+      const nxp2 = Math.max(0, Math.min(W - 1, h.x + h.hx));
+      const nyp2 = Math.max(0, Math.min(H - 1, h.y + h.hy));
+      if (tile.isLand(world.terrain[(nyp2 | 0) * W + (nxp2 | 0)])) { h.x = nxp2; h.y = nyp2; }
+      return;
     }
+    dux /= dist; duy /= dist;
     // 慣性: 直前の進行方向と混ぜて滑らかに曲がる。
     const hx0 = h.hx || 0, hy0 = h.hy || 0;
     const pl = Math.sqrt(hx0 * hx0 + hy0 * hy0);
@@ -5470,15 +5518,15 @@
         world.fertility[ti] = f > 1 ? 1 : f;
         practice(h); // 耕すたびに腕が上がる
       }
-      // 道具の支給（在庫があれば）。
-      if (!h.gear && this.rand() < CP.equipChance) h.gear = this._equipTier(k);
+      // 道具の支給（武具庫の在庫から実際に一つ持ち出す＝兵站。在庫が無ければ素手のまま）。
+      if (!h.gear && k.tools >= 1 && this.rand() < CP.equipChance) { h.gear = this._equipTier(k); k.tools -= 1; }
       return;
     }
     // 鍛冶: 鍛冶場で道具・武具を生産する（人口を上限に飽和）。熟練の職人ほど多く打つ。
     if (h.role === ROLE.SMITH) {
       if (this._atWork(h)) {
         if (k.tools < k.humanCount) k.tools += CP.toolRate * (1 + k.tech * 0.002) * ability(h);
-        if (!h.gear) h.gear = this._equipTier(k);
+        if (!h.gear && k.tools >= 1) { h.gear = this._equipTier(k); k.tools -= 1; } // 自ら打った中から一つ帯びる
         practice(h);
       }
       return;
@@ -5487,7 +5535,7 @@
     if (h.role === ROLE.MERCHANT) {
       if (this._atWork(h)) {
         k.wealth += CP.marketRate * this._eff(k, "trade") * ability(h);
-        if (!h.gear) h.gear = this._equipTier(k);
+        if (!h.gear && k.tools >= 1) { h.gear = this._equipTier(k); k.tools -= 1; }
         practice(h);
       }
       return;
@@ -5496,14 +5544,14 @@
     if (h.role === ROLE.PRIEST) {
       if (this._atWork(h)) {
         if (k.unrest > 0) k.unrest = Math.max(0, k.unrest - CP.templeCalm * this._eff(k, "faith") * ability(h));
-        if (!h.gear) h.gear = this._equipTier(k);
+        if (!h.gear && k.tools >= 1) { h.gear = this._equipTier(k); k.tools -= 1; }
         practice(h);
       }
       return;
     }
     if (h.role === ROLE.SOLDIER) {
-      // 武具の支給（在庫があれば）。
-      if (!h.gear && this.rand() < CP.equipChance) h.gear = this._equipTier(k);
+      // 武具の支給（武具庫の在庫から実際に一つ持ち出す＝兵站。在庫が尽きた貧しい軍は素手で戦う）。
+      if (!h.gear && k.tools >= 1 && this.rand() < CP.equipChance) { h.gear = this._equipTier(k); k.tools -= 1; }
       // 補給線: 自国の都市網から遠く離れて戦う軍は補給が細り、打撃も征服力も落ちる。
       //   近くで守る側は常に補給が届くので、過伸長した攻め手はここで自然に鈍る。
       const supplyMul = this._supply(h, k, ti);
@@ -5529,7 +5577,12 @@
             (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF * rally * supplyMul;
           practice(h); // 実戦で武を磨く
           // 戦死: 倒れた兵は亡骸として戦場に残る（演出ではなく実際の死の跡）。
-          if (e.food <= 0) { e.food = 0; e.alive = false; this._addMark(e.x, e.y, "corpse"); h.prestige = (h.prestige || 0) + 1.2; k._kills = (k._kills || 0) + 1; }
+          //   倒した敵の武具は戦場で拾われ、勝者の武具庫へ半分ほど還る（戦利品の回収＝現実の兵站）。
+          if (e.food <= 0) {
+            e.food = 0; e.alive = false; this._addMark(e.x, e.y, "corpse");
+            if (e.gear) { k.tools += 0.5; e.gear = 0; }
+            h.prestige = (h.prestige || 0) + 1.2; k._kills = (k._kills || 0) + 1;
+          }
         } else if (d2 < CP.rangeR * CP.rangeR) {
           // 遠戦: 弓（基本）と銃（火薬以降）で射かける。放たれた弾が飛び、命中すれば損害。
           const gun = hasTech(k, "gunpowder");

@@ -1065,23 +1065,41 @@
     const range = camera.visibleTileRange();
     const x0 = range.x0, x1 = range.x1, y0 = range.y0, y1 = range.y1;
     const H = world.height, road = world.road;
-    const edge = "rgba(52,40,26,0.6)";         // 路肩（暗い縁）
-    const surf = "rgba(198,174,124,0.9)";      // 路面（明るい土）
+    // 時代で進化する道: 法典（土木を組織する社会）を得た国の領内は石畳の街道、それ以外は土の道。
+    //   同じ一本道でも先進国の区間だけ石畳になり、道が文明の到達を物語る。
+    const civ = Game.state.civ;
+    const owner = world.owner;
+    const stoneK = []; // kingdom id → 石畳か（フレーム内キャッシュ）
+    function isStone(i) {
+      const o = owner ? owner[i] : 0;
+      if (!o) return false;
+      if (stoneK[o] === undefined) {
+        const k = civ && civ.kingdoms[o];
+        stoneK[o] = !!(k && k.alive && k.techBits && k.techBits.law);
+      }
+      return stoneK[o];
+    }
+    const edgeDirt = "rgba(52,40,26,0.6)";      // 土道の路肩（暗い縁）
+    const surfDirt = "rgba(198,174,124,0.9)";   // 土道の路面
+    const edgeStone = "rgba(58,56,50,0.7)";     // 石畳の縁石
+    const surfStone = "rgba(172,166,152,0.95)"; // 石畳の路面
     // 実際の道幅（タイルより細い帯）。隣接する街道タイルへ「スポーク」を伸ばして繋ぐことで、
     //   四角の羅列ではなく曲がり・十字路のある連続した一本道に見せる。
     const cw = Math.max(2, scale * 0.42);      // 路面の幅
     const ew = cw + Math.max(2, scale * 0.16); // 路肩込みの幅
     const reach = Math.ceil(scale * 0.5) + 1;  // 隣タイルへ伸ばす長さ（途切れ防止）
     const hasRoad = function (tx, ty) { return tx >= 0 && ty >= 0 && tx < W && ty < H && road && road[ty * W + tx]; };
+    const isWater = Game.tile.isWater, terr = world.terrain;
     ctx.save();
     // 2層: まず暗い路肩（太）、次に明るい路面（細）。各層で中央ノード＋隣接方向スポークを描く。
     for (let pass = 0; pass < 2; pass++) {
       const wdt = pass === 0 ? ew : cw, half = wdt * 0.5;
-      ctx.fillStyle = pass === 0 ? edge : surf;
       for (let n = 0; n < list.length; n++) {
         const i = list[n];
         const tx = i % W, ty = (i / W) | 0;
         if (tx < x0 - 1 || tx > x1 + 1 || ty < y0 - 1 || ty > y1 + 1) continue;
+        const stone = isStone(i);
+        ctx.fillStyle = pass === 0 ? (stone ? edgeStone : edgeDirt) : (stone ? surfStone : surfDirt);
         const cx = camera.worldToScreenX((tx + 0.5) * tile);
         const cy = camera.worldToScreenY((ty + 0.5) * tile);
         ctx.fillRect((cx - half) | 0, (cy - half) | 0, wdt | 0, wdt | 0); // 中央ノード
@@ -1089,6 +1107,60 @@
         if (hasRoad(tx - 1, ty)) ctx.fillRect((cx - reach) | 0, (cy - half) | 0, reach, wdt | 0); // 西へ
         if (hasRoad(tx, ty + 1)) ctx.fillRect((cx - half) | 0, cy | 0, wdt | 0, reach); // 南へ
         if (hasRoad(tx, ty - 1)) ctx.fillRect((cx - half) | 0, (cy - reach) | 0, wdt | 0, reach); // 北へ
+        // 木橋: 道が川・水路で途切れる所（1〜2タイルの水の切れ目の先に道が続く）には橋を渡す。
+        //   街道が川を「渡っている」ことが見え、水辺が交通の要衝になる。
+        if (pass === 1) {
+          for (const [dx0, dy0] of [[1, 0], [0, 1]]) {
+            for (let gap = 1; gap <= 2; gap++) {
+              const bx2 = tx + dx0 * (gap + 1), by2 = ty + dy0 * (gap + 1);
+              if (!hasRoad(bx2, by2)) continue;
+              let allWater = true;
+              for (let g = 1; g <= gap; g++) {
+                const gi = (ty + dy0 * g) * W + (tx + dx0 * g);
+                if (!isWater(terr[gi])) { allWater = false; break; }
+              }
+              if (!allWater) continue;
+              // 橋板（濃い木の帯）と欄干（両側の細線）を水面に渡す。
+              const bx = camera.worldToScreenX((tx + 0.5 + dx0 * 0.5) * tile);
+              const by = camera.worldToScreenY((ty + 0.5 + dy0 * 0.5) * tile);
+              const blen = scale * (gap + 1);
+              const bw2 = cw * 0.92;
+              ctx.fillStyle = "rgba(96,68,40,0.95)"; // 橋板
+              if (dx0) {
+                ctx.fillRect(bx | 0, (by - bw2 * 0.5) | 0, blen | 0, bw2 | 0);
+                ctx.fillStyle = "rgba(60,42,26,0.9)"; // 欄干
+                ctx.fillRect(bx | 0, (by - bw2 * 0.5) | 0, blen | 0, Math.max(1, bw2 * 0.18) | 0);
+                ctx.fillRect(bx | 0, (by + bw2 * 0.5 - Math.max(1, bw2 * 0.18)) | 0, blen | 0, Math.max(1, bw2 * 0.18) | 0);
+              } else {
+                ctx.fillRect((bx - bw2 * 0.5) | 0, by | 0, bw2 | 0, blen | 0);
+                ctx.fillStyle = "rgba(60,42,26,0.9)";
+                ctx.fillRect((bx - bw2 * 0.5) | 0, by | 0, Math.max(1, bw2 * 0.18) | 0, blen | 0);
+                ctx.fillRect((bx + bw2 * 0.5 - Math.max(1, bw2 * 0.18)) | 0, by | 0, Math.max(1, bw2 * 0.18) | 0, blen | 0);
+              }
+              break; // この向きの橋は一本で十分
+            }
+          }
+        }
+      }
+    }
+    // 石畳の目地: 石の街道は近景で敷石の継ぎ目が見える（濃い横線を等間隔に刻む）。
+    if (scale >= 7) {
+      ctx.fillStyle = "rgba(120,114,102,0.5)";
+      const jw = Math.max(1, (cw * 0.1) | 0);
+      for (let n = 0; n < list.length; n++) {
+        const i = list[n];
+        const tx = i % W, ty = (i / W) | 0;
+        if (tx < x0 || tx > x1 || ty < y0 || ty > y1 || !isStone(i)) continue;
+        const cx = camera.worldToScreenX((tx + 0.5) * tile) | 0;
+        const cy = camera.worldToScreenY((ty + 0.5) * tile) | 0;
+        const horiz = hasRoad(tx + 1, ty) || hasRoad(tx - 1, ty);
+        if (horiz) { // 東西の道: 縦の目地を2本
+          ctx.fillRect((cx - scale * 0.25) | 0, (cy - cw * 0.5) | 0, jw, cw | 0);
+          ctx.fillRect((cx + scale * 0.25) | 0, (cy - cw * 0.5) | 0, jw, cw | 0);
+        } else { // 南北の道: 横の目地を2本
+          ctx.fillRect((cx - cw * 0.5) | 0, (cy - scale * 0.25) | 0, cw | 0, jw);
+          ctx.fillRect((cx - cw * 0.5) | 0, (cy + scale * 0.25) | 0, cw | 0, jw);
+        }
       }
     }
     // 轍(わだち): 荷車が刻んだ2本の平行な溝を、道の走る向きに沿って刻む（近景のみ）。
@@ -1100,6 +1172,7 @@
         const i = list[n];
         const tx = i % W, ty = (i / W) | 0;
         if (tx < x0 || tx > x1 || ty < y0 || ty > y1) continue;
+        if (isStone(i)) continue; // 轍は土の道だけに刻まれる（石畳は目地で表現）
         const cx = camera.worldToScreenX((tx + 0.5) * tile) | 0;
         const cy = camera.worldToScreenY((ty + 0.5) * tile) | 0;
         const horiz = hasRoad(tx + 1, ty) || hasRoad(tx - 1, ty);
