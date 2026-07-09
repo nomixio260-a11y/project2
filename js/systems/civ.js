@@ -380,6 +380,16 @@
     marriageWarDamp: 0.3,// 縁戚どうしの開戦確率に掛かる係数（血縁は戦を厭う）
     unionMaxCities: 2,   // これ以下の小国が断絶したとき、縁戚の王家が平和的に継承（同君連合）
     unionChance: 0.6,    // 縁戚を持つ小国が断絶したとき同君連合が成る確率
+    // 政治の柔軟性: 戦争と同盟の間に「条約」と「恫喝」の外交を置く（白か黒かの二択を脱する）。
+    pactRel: 8,          // 不可侵条約を結び得る最低の関係（親しくはないが敵意もない間柄）
+    pactChance: 0.05,    // 条件を満たす隣国どうしが条約を結ぶ確率／評価
+    pactDuration: 3600,  // 不可侵条約の期間(tick)。期限が切れれば再び緊張が戻りうる
+    tributeRatio: 1.9,   // 軍事力比がこれ以上なら朝貢を要求できる（開戦の decisiveRatio 手前の恫喝）
+    tributeChance: 0.07, // 条件下で恫喝が起きる確率／評価
+    tributeFracDemand: 0.22, // 要求される富の割合（屈すれば戦わずに富が流れる）
+    // 国是の進化: 国の永続的な性格（国是）も、長く続く生き方によって変わりうる（柔軟な国体）。
+    ethosEvolveInterval: 8, // 国是の進化を検討する評価間隔（外交評価の回数に1度）
+    ethosEvolveChance: 0.05,// 生き方と国是が食い違い続けた時に国是が変わる確率
     // 力の均衡（勢力均衡の外交）: 弱国は格上へ単独では戦を仕掛けにくく（抑止）、共通の敵を持つ国
     //   どうしは手を結びやすい（連合）。強大国の一強を諸国が連合で抑える均衡政治が創発する。
     deterMin: 0.35,      // 相対戦力が最小のとき warP に掛かる下限係数（格上への無謀な開戦を抑止）
@@ -1174,6 +1184,7 @@
       wars: {},      // 交戦中の id → 開戦 tick
       allies: {},    // 同盟中の id → true
       truce: {},     // 休戦中の id → 解除 tick（この間は再戦しない）
+      pacts: {},     // 不可侵条約の id → 失効 tick（同盟と休戦の間の「中間の外交」）
       vassals: {},   // 属国の id → true（朝貢を受け、戦に従える）
       suzerain: 0,   // 宗主国の id（0=独立）
       royalTies: {}, // 王家の婚姻で結ばれた他国 id → 成婚 tick（縁戚。戦を避け、断絶時に継承しうる）
@@ -2208,6 +2219,9 @@
   CivSystem.prototype._declareWar = function (a, b) {
     const ka = this.kingdoms[a], kb = this.kingdoms[b];
     if (ka && kb) this._logEvent("⚔ " + ka.name + " が " + kb.name + " に宣戦布告");
+    // 開戦は条約を破る（他経路＝反乱・連合参戦などで始まる戦のため、残った条約は破棄する）。
+    if (ka && ka.pacts) delete ka.pacts[b];
+    if (kb && kb.pacts) delete kb.pacts[a];
     this._engage(a, b);
     // 同盟への呼びかけ（ブロック戦争）: 双方の同盟国も参戦する。
     for (const c in ka.allies) { const ci = +c; if (ci !== b) this._engage(ci, b); }
@@ -2322,6 +2336,67 @@
     ka.allies[b] = true; kb.allies[a] = true;
     delete ka.wars[b]; delete kb.wars[a];
     this._setRel(a, b, 70);
+  };
+
+  // 不可侵条約: 親しくはないが敵意もない隣国どうしが、互いの安全のため戦を封じる約束を結ぶ。
+  //   同盟ほど深入りせず、休戦と違い戦の後始末でもない「中間の外交」＝政治の柔軟性。
+  CivSystem.prototype._signPact = function (a, b) {
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    const until = (this._tickN || 1) + CP.pactDuration;
+    if (!ka.pacts) ka.pacts = {};
+    if (!kb.pacts) kb.pacts = {};
+    ka.pacts[b] = until; kb.pacts[a] = until;
+    this._setRel(a, b, Math.min(100, (ka.relations[b] || 0) + 8));
+    this._logEvent("📜 " + this.realmName(ka) + " と " + this.realmName(kb) + " が不可侵条約を結んだ");
+  };
+
+  // 朝貢要求（恫喝外交）: 圧倒的に強い国は、戦わずして弱い隣国に貢納を迫る。弱国は屈して
+  //   富を差し出すか（戦は避くが屈辱で不満が募る）、退けて対決の道を選ぶ（関係が破れ開戦も）。
+  //   「開戦か沈黙か」しか無かった強国の圧力に、現実の強圧外交の柔軟な中間を与える。
+  //   返り値: "paid"（屈服）/ "refused"（拒絶）/ "war"（拒絶が即時開戦に発展）。
+  CivSystem.prototype._demandTribute = function (a, b) {
+    const ka = this.kingdoms[a], kb = this.kingdoms[b];
+    // 弱国の気骨: 好戦的な国民性・気概ある国是ほど屈しない。
+    const defiance = clamp01(0.45 + this._charLean(kb, "war") * 0.5);
+    if (this.rand() >= defiance) {
+      // 屈服: 富が流れ、屈辱が民に積もる。強国は当面満足し戦は起きない（実質の不可侵）。
+      const pay = Math.max(0, (kb.wealth || 0) * CP.tributeFracDemand);
+      kb.wealth -= pay; ka.wealth += pay;
+      kb.unrest = Math.min(100, (kb.unrest || 0) + 6); // 屈辱は国内に燻る
+      const until = (this._tickN || 1) + ((CP.pactDuration * 0.6) | 0);
+      if (!ka.pacts) ka.pacts = {}; if (!kb.pacts) kb.pacts = {};
+      ka.pacts[b] = until; kb.pacts[a] = until;
+      this._logEvent("💰 " + this.realmName(kb) + " は " + this.realmName(ka) + " の恫喝に屈し貢納した");
+      return "paid";
+    }
+    // 拒絶: 関係は破れ、しばしばそのまま戦火へ。
+    this._setRel(a, b, (ka.relations[b] || 0) - 18);
+    this._logEvent("✊ " + this.realmName(kb) + " は " + this.realmName(ka) + " の朝貢要求を退けた");
+    if (this.rand() < 0.45) { this._declareWar(a, b); return "war"; }
+    return "refused";
+  };
+
+  // 国是の進化: 国の永続的な性格（国是）も、長く続いた生き方が食い違えば変わりうる。
+  //   絶えぬ戦は国を武断へ、栄える商いは通商へ、篤い信仰は信仰国家へ、進んだ知は学究へと
+  //   ゆっくり形づくる（稀・ヒステリシス付き。政体・国策と並ぶ第三の可変な政治の層）。
+  CivSystem.prototype._ethosEvolve = function (ka) {
+    ka._ethosT = (ka._ethosT || 0) + 1;
+    if (ka._ethosT % CP.ethosEvolveInterval !== 0) return;
+    // いま生きている現実から、最もふさわしい国のかたちを見る。
+    let cand = null;
+    if (this._count(ka.wars) > 0 && (ka.warWeary || 0) > 0.35) cand = "武断国家";      // 絶えぬ戦
+    else if ((ka.tradeVol || 0) > 8 && (ka.coin || 0) > 1) cand = "通商国家";          // 栄える商い
+    else if ((ka.faith || 0) > 0.62) cand = "信仰国家";                                 // 篤い信仰
+    else if ((ka.tech || 0) > 260 && ka.innov && ka.innov[0] > 0.3) cand = "学究国家"; // 進んだ知
+    if (!cand || (ka.ethos && ka.ethos.name === cand)) return;
+    if (this.rand() >= CP.ethosEvolveChance) return;
+    for (let i = 0; i < NATION_ETHOS.length; i++) {
+      if (NATION_ETHOS[i].name === cand) {
+        ka.ethos = NATION_ETHOS[i];
+        this._logEvent("⚖ " + this.realmName(ka) + " の国のかたちが変わり、〈" + cand + "〉として知られるようになった");
+        return;
+      }
+    }
   };
 
   // 世襲の政体か（王家が代々継ぐ国＝婚姻外交が働く）。共和制・都市国家は選挙制で除く。
@@ -3183,6 +3258,9 @@
       }
       // 政体の内発的な変転（革命・帝政・改革・神権化）: 国自身の内情から政体が変わる。
       this._govEvolve(ka);
+      // 国是の進化: 長く続いた生き方（絶えぬ戦・栄える商い・篤い信仰・進んだ知）が国の
+      //   永続的な性格まで変える（政体・国策と並ぶ第三の可変な政治の層＝柔軟な国体）。
+      this._ethosEvolve(ka);
 
       // 疫病: 過密で技術・衛生（神殿）が乏しい国に発生し、社会を動揺させやがて収束する。
       if (ka.plague > 0) {
@@ -3368,9 +3446,19 @@
           // 連合（敵の敵は味方）: 共通の敵と交戦中なら手を結びやすい。強大国が諸国を次々に攻めると
           //   その敵どうしが結束し、反覇権連合が創発する（一強の暴走を諸国が均衡で抑える）。
           if (ka.wars && kb.wars) { for (const e in ka.wars) { if (kb.wars[e]) { allyP += CP.coalitionAlly; break; } } }
-          // 休戦中・従属関係（宗主と属国）とは開戦しない。
-          const truced = ka.truce && ka.truce[b] && ka.truce[b] > (this._tickN || 0);
+          // 休戦中・不可侵条約中・従属関係（宗主と属国）とは開戦しない。
+          const tN0 = this._tickN || 0;
+          const truced = ka.truce && ka.truce[b] && ka.truce[b] > tN0;
+          const pacted = ka.pacts && ka.pacts[b] && ka.pacts[b] > tN0;
           const bound = ka.suzerain === b || kb.suzerain === a;
+          // 朝貢要求（恫喝外交）: 圧倒的な力を持つ側は、開戦の前にまず貢納を迫りうる
+          //   （戦わずに従える強圧外交＝白か黒かの間の柔軟な選択肢）。
+          if (!truced && !pacted && !bound && !ka.allies[b] && neighbor && rel < 20) {
+            let demanded = false;
+            if (m1 >= m2 * CP.tributeRatio && this.rand() < CP.tributeChance) { this._demandTribute(a, b); demanded = true; }
+            else if (m2 >= m1 * CP.tributeRatio && this.rand() < CP.tributeChance) { this._demandTribute(b, a); demanded = true; }
+            if (demanded) continue; // この評価のこの二国は恫喝の帰結に従う（戦・条約は次評価から）
+          }
           // 同盟上限に達していれば新たな同盟は結べない（同盟の乱立を防ぐ）。
           //   同盟には最低限の友好が要る（allyThreshold 未満の険悪な相手とは結ばない＝敵対国の偶発同盟を防ぐ）。
           const canAlly = rel >= -CP.allyThreshold * 0.4 &&
@@ -3379,10 +3467,16 @@
           const canMarry = !ka.wars[b] && !kin && rel >= CP.marriageRel &&
             this._hereditary(ka) && this._hereditary(kb) &&
             ka.rulerRef && ka.rulerRef.alive && kb.rulerRef && kb.rulerRef.alive;
+          // 不可侵条約: 親しくはないが敵意もない緊張した隣国どうし（戦争疲れ・力の不均衡）は、
+          //   同盟の代わりに互いの安全を約す（中間の外交）。
+          const canPact = !pacted && !truced && !ka.wars[b] && !ka.allies[b] && neighbor &&
+            rel >= CP.pactRel && rel < CP.allyThreshold &&
+            ((ka.warWeary || 0) > 0.2 || (kb.warWeary || 0) > 0.2 || powerRatio < 0.35 || powerRatio > 0.65);
           const r = this.rand();
-          if (!truced && !bound && r < warP) this._declareWar(a, b);
+          if (!truced && !pacted && !bound && r < warP) this._declareWar(a, b);
           else if (canMarry && r < warP + CP.marriageChance) this._royalMarriage(a, b);
           else if (canAlly && r < warP + allyP) this._formAlliance(a, b);
+          else if (canPact && r < warP + allyP + CP.pactChance) this._signPact(a, b);
           else {
             // 平時のゆらぎ。異教は緊張（悪化寄り）、同教は親和（改善寄り）。
             // 国境を接さない国とは関係が徐々に中立へ薄れる。
@@ -3576,7 +3670,7 @@
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
       facilities: newFacilities(),
       tools: parent.tools * 0.3,
-      relations: {}, borders: {}, wars: {}, allies: {}, truce: {}, vassals: {}, suzerain: 0, royalTies: {},
+      relations: {}, borders: {}, wars: {}, allies: {}, truce: {}, pacts: {}, vassals: {}, suzerain: 0, royalTies: {},
       tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
       // 言語: 独立した地方は母国の言葉を受け継ぎ、以後ゆるやかに方言として分岐していく。
       langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
