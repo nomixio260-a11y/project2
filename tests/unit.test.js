@@ -730,6 +730,42 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 大工の修繕と領地ビュー — 傷んだ建物を職人が直し、州ごとに色分けできる", () => {
+  const Game = loadCore({ mapWidth: 80, mapHeight: 40 });
+  const w = new Game.World(80, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  const B = Game.BUILDING;
+
+  // _worstDamaged: 最も傷んだ建物（閾値未満）を選ぶ。
+  const city = k.cities[0];
+  city.buildings.push({ x: 21, y: 20, t: B.HOUSE, lvl: 1, cond: 0.5 });
+  city.buildings.push({ x: 22, y: 20, t: B.FARM, lvl: 1, cond: 0.3 });
+  const worst = civ._worstDamaged(city);
+  assert.ok(worst && worst.cond === 0.3, "最も傷んだ建物が選ばれない");
+
+  // 現場の修繕: 傷んだ建物のそばに立つ建築家が状態を回復させる。
+  const builder = { x: 22.4, y: 20.2, kid: A, role: Game.ROLE.BUILDER, alive: true, skill: 0.5, dili: 1, mood: 0.7, age: 1000 };
+  const c0 = 0.3;
+  for (let t = 0; t < 200; t++) civ._roleTick(builder, k, w, (20 * 80 + 22));
+  const target = city.buildings.find(function (b) { return b.t === B.FARM; });
+  assert.ok(target.cond > c0 + 0.1, "建築家が建物を修繕しない: " + target.cond.toFixed(3));
+
+  // 領地ビュー: 首都直轄圏は国色、別の州の圏は固有色、自治区は淡い色。
+  k.cities.push({ x: 60, y: 20, capital: false, level: 1, buildings: [] });
+  const capCol = civ.provinceColorAt(A, 21, 20); // 首都のそば
+  const provCol = civ.provinceColorAt(A, 59, 20); // 州都のそば
+  assert.deepEqual(capCol, k.color, "首都直轄圏が国色でない");
+  assert.notDeepEqual(provCol, k.color, "州が首都と同じ色になっている");
+  k.cities[1].autonomous = 1;
+  const autoCol = civ.provinceColorAt(A, 59, 20);
+  assert.ok(autoCol[0] > provCol[0] && autoCol[1] > provCol[1], "自治区が淡い色にならない");
+  // 凡例がある。
+  assert.ok(civ.viewLegend("province").length >= 2, "領地ビューの凡例が無い");
+});
+
 test("CivSystem: 廃都 — 国が滅んでも建物は残り、朽ちてゆき、新しい民が住み着けば甦る", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const w = new Game.World(60, 40);

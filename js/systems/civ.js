@@ -134,6 +134,10 @@
     ghostTownCap: 48,     // 世界に残る廃都の上限（超えた分は最古から静かに消える）
     ghostDecay: 0.0018,   // 廃屋の傷み／外交評価（年約48評価 → 通常建築で約11年、堅牢建築は約25年立ち続ける）
     ghostSettleR: 5,      // 新しい国がこの距離内に興れば廃都に住み着き、建物を受け継ぐ
+    // 大工の修繕: 建築家は傷んだ建物へ実際に足を運び、槌を振って直す（国全体の受動回復とは
+    //   別の、目に見える手当て）。戦時・飢饉で朽ちてゆく街を、职人が現場で食い止める。
+    repairSeekCond: 0.8,  // これ未満の状態の建物へ建築家が修繕に向かう
+    handRepair: 0.0022,   // そばに立つ建築家が1ティックに直す量（腕前で増減）
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
@@ -1111,11 +1115,36 @@
     return k.color; // nation（既定）
   };
 
+  // 領地（州）ビュー: タイルを「その国のどの都市の勢力圏か」で塗り分け、国の内側の
+  //   区分（首都直轄と各領地）を可視化する。首都圏は国色、各州は都市ごとに固有の色。
+  //   自治区は淡く（統治の緩さが色にも表れる）。
+  CivSystem.prototype.provinceColorAt = function (id, x, y) {
+    const k = this.kingdoms[id];
+    if (!k || !k.cities || !k.cities.length) return k ? k.color : null;
+    // 最寄りの都市＝この土地を治める領地。
+    let ci = 0, bd = 1e18;
+    for (let c = 0; c < k.cities.length; c++) {
+      const dx = k.cities[c].x - x, dy = k.cities[c].y - y, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; ci = c; }
+    }
+    if (ci === 0) return k.color; // 首都直轄圏は国色
+    const city = k.cities[ci];
+    // 州ごとの固有色（決定的）。自治区は白を混ぜて淡くする。
+    const c = hashColor("prov" + id + ":" + ci);
+    if (city.autonomous) return [(c[0] + 255) >> 1, (c[1] + 255) >> 1, (c[2] + 255) >> 1];
+    return c;
+  };
+
   // 現在のビューの凡例（UI用）: [{label, color}]。
   CivSystem.prototype.viewLegend = function (mode) {
     mode = mode || (Game.state && Game.state.mapView) || "nation";
     const out = [];
-    if (mode === "diplomacy") { out.push({ label: "同盟", color: [80, 210, 120] }); out.push({ label: "戦争", color: [230, 70, 60] }); out.push({ label: "従属（属国）", color: [200, 170, 70] }); }
+    if (mode === "province") {
+      out.push({ label: "首都直轄圏＝国の色", color: [150, 150, 150] });
+      out.push({ label: "各領地（州）＝固有の色", color: hashColor("prov-legend") });
+      out.push({ label: "自治区＝淡い色", color: [210, 210, 215] });
+    }
+    else if (mode === "diplomacy") { out.push({ label: "同盟", color: [80, 210, 120] }); out.push({ label: "戦争", color: [230, 70, 60] }); out.push({ label: "従属（属国）", color: [200, 170, 70] }); }
     else if (mode === "gov") for (let i = 0; i < GOV_TYPES.length; i++) out.push({ label: GOV_TYPES[i], color: GOV_COLORS[i] });
     else if (mode === "religion") for (let i = 0; i < RELIGIONS.length; i++) out.push({ label: RELIGIONS[i], color: REL_COLORS[i] });
     else if (mode === "era") for (let i = 0; i < ERAS.length; i++) out.push({ label: ERAS[i], color: ERA_COLORS[i] });
@@ -4865,7 +4894,12 @@
       // 町に居れば実際に建設・建て替え。遠地に出たら新集落を興す。
       if (hd2 < 36) {
         const city = this._cityAt(k, hcx, hcy);
-        if (city) { this._construct(k, city, world); practice(h); h.prestige = (h.prestige || 0) + 0.06; } // 普請で腕と名を上げる
+        if (city) {
+          this._construct(k, city, world); practice(h); h.prestige = (h.prestige || 0) + 0.06; // 普請で腕と名を上げる
+          // 修繕: 傷んだ建物があれば、うろつく代わりにそこへ向かう（現場で直す＝_roleTick が手当て）。
+          const dmg = this._worstDamaged(city);
+          if (dmg) { h.gx = dmg.x; h.gy = dmg.y; h.state = 6; return; }
+        }
       } else {
         this._maybeFoundTown(h, k);
       }
@@ -4913,6 +4947,19 @@
     if (this.rand() < 0.25) { h.gx = hcx; h.gy = hcy; } // 帰宅
     else { h.gx = h.farm.x; h.gy = h.farm.y; }          // 畑へ出勤
     h.state = 7;
+  };
+
+  // 都市で最も傷んだ建物（状態が repairSeekCond 未満）を返す。無ければ null。
+  //   建築家が「直しに行く先」を選ぶのに使う（朽ちるのを誰も直さない問題の解消）。
+  CivSystem.prototype._worstDamaged = function (city) {
+    const bs = city && city.buildings;
+    if (!bs) return null;
+    let worst = null, wc = CP.repairSeekCond;
+    for (let i = 0; i < bs.length; i++) {
+      const c = bs[i].cond == null ? 1 : bs[i].cond;
+      if (c < wc) { wc = c; worst = bs[i]; }
+    }
+    return worst;
   };
 
   // (x,y) が海に接する沿岸タイルか（4近傍に水）。
@@ -5573,6 +5620,28 @@
       }
       // 道具の支給（武具庫の在庫から実際に一つ持ち出す＝兵站。在庫が無ければ素手のまま）。
       if (!h.gear && k.tools >= 1 && this.rand() < CP.equipChance) { h.gear = this._equipTier(k); k.tools -= 1; }
+      return;
+    }
+    // 建築家: そばに傷んだ建物があれば手を入れて直す（現場の修繕。腕の良い职人ほど早い）。
+    //   国全体の受動回復と別に、戦時・飢饉で朽ちてゆく街を職人が実際に食い止める。
+    if (h.role === ROLE.BUILDER) {
+      let best = null, bc = 0.95;
+      for (let c = 0; c < k.cities.length; c++) {
+        const cc = k.cities[c];
+        const cdx = cc.x - h.x, cdy = cc.y - h.y;
+        if (cdx * cdx + cdy * cdy > 400) continue; // 遠い都市の建物は見ない（負荷減）
+        const bs = cc.buildings; if (!bs) continue;
+        for (let i = 0; i < bs.length; i++) {
+          const b = bs[i], cond = b.cond == null ? 1 : b.cond;
+          if (cond >= bc) continue;
+          const dx = b.x + 0.5 - h.x, dy = b.y + 0.5 - h.y;
+          if (dx * dx + dy * dy <= 3.5) { bc = cond; best = b; }
+        }
+      }
+      if (best) {
+        best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * ability(h));
+        practice(h); // 修繕も腕を磨く
+      }
       return;
     }
     // 鍛冶: 鍛冶場で道具・武具を生産する（人口を上限に飽和）。熟練の職人ほど多く打つ。

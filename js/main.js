@@ -181,6 +181,20 @@
     window.addEventListener("resize", handleResize);
     window.addEventListener("orientationchange", handleResize);
 
+    // 別ページ・別タブから戻った時の黒画面対策: ブラウザは非表示の間に canvas の中身
+    //   （特にオフスクリーンの地形・領土層）を破棄することがある。復帰したら実バッファを
+    //   確保し直し、地形と領土・国境の層を全て描き直す。
+    function restoreCanvases() {
+      renderer.resize();
+      camera.resize(renderer.cssW, renderer.cssH);
+      renderer.fullRedraw();                                   // 地形層
+      if (renderer.repaintTerritory) renderer.repaintTerritory(); // 領土・国境層
+    }
+    window.addEventListener("pageshow", function (e) { if (e.persisted) restoreCanvases(); }); // bfcache 復帰
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") restoreCanvases();
+    });
+
     seedLife();   // 起動時から世界に生命を満たす（最初から栄枯盛衰が進む）
     engine.start();
   }
