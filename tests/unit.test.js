@@ -780,10 +780,13 @@ test("CivSystem: 拡張ループの解消 — 開拓者は領有でき保持で�
   assert.ok(t, "草原の未開地が目標にならない");
   assert.ok(!(t.x === 20 && t.y === 20), "自分の足元を目標にしている");
 
-  // 周囲がすべて砂漠（陸だが荒野）だと目標なし（従来は確保→野に還る→再確保のループ）。
+  // 周囲がすべて砂漠でも、領有可能な（terrainHold を通る）タイルなら目標になる。
+  //   目標は必ず「領有可能」＝歩いても確保できない土地への永久行進は起きない。
   for (let y = 0; y < 40; y++) for (let x = 0; x < 80; x++) { if (w.owner[y * 80 + x] === 0) w.terrain[y * 80 + x] = T.DESERT; }
   t = civ._expandTarget(h, k, w);
-  assert.equal(t, null, "維持できない荒野を目標にしてしまう（往復ループの原因）");
+  if (t) {
+    assert.ok(civ._claimable(T.DESERT, t.y * 80 + t.x), "領有できない砂漠タイルを目標にしている（永久行進の原因）");
+  }
 
   // 支配圏の遥か外の草原は目標にしない（確保しても手放されるだけ＝徒労のループ）。
   w.terrain[20 * 80 + 78] = T.GRASS; // 都市(20,20)から58タイル先 ≫ 支配半径31
@@ -791,19 +794,19 @@ test("CivSystem: 拡張ループの解消 — 開拓者は領有でき保持で�
   t = civ._expandTarget(h2, k, w);
   assert.equal(t, null, "支配圏外の土地を目標にしてしまう（確保→喪失→再確保のループ）");
 
-  // 荒野の維持限界は街道の通る回廊を免除する（砂漠の道は保持される）。
+  // 一度確保した領土は、バイオームを問わず保持される（「山などに広げた領土が消える」の解消）。
+  //   支配圏内の砂漠・ツンドラは、道が有ろうと無かろうと野に還らない。
   const mi = 22 * 80 + 20; // (20,22) 都市の近くの砂漠
   w.terrain[mi] = T.DESERT;
   w.owner[mi] = A; k.tileCount++;
-  w.road[mi] = 1; // 街道の通る回廊
-  civ.rand = function () { return 0; }; // 荒野還り判定を必ず発火させる
+  const ti2 = 21 * 80 + 22; // ツンドラも同様
+  w.terrain[ti2] = T.TUNDRA;
+  w.owner[ti2] = A; k.tileCount++;
+  civ.rand = function () { return 0; }; // あらゆる確率判定を最大限発火させる
   civ._tcursor = 0;
-  for (let b = 0; b < 4; b++) civ._maintainTerritory(w);
-  assert.equal(w.owner[mi], A, "街道の通る砂漠の回廊まで野に還ってしまう");
-  w.road[mi] = 0;
-  civ._tcursor = 0;
-  for (let b = 0; b < 4; b++) civ._maintainTerritory(w);
-  assert.equal(w.owner[mi], 0, "道の無い砂漠が野に還らない");
+  for (let b = 0; b < 8; b++) civ._maintainTerritory(w);
+  assert.equal(w.owner[mi], A, "支配圏内の砂漠の領土が野に還ってしまう（報告された問題）");
+  assert.equal(w.owner[ti2], A, "支配圏内のツンドラの領土が野に還ってしまう（報告された問題）");
 });
 
 test("CivSystem: 資源の現実化 — 鉱脈は有限で掘り尽くされ、漁場は再生し涸れない", () => {
@@ -925,7 +928,7 @@ test("CivSystem: 自治区 — 不忠の遠隔州に自治を認めて繋ぎ止�
   assert.equal(k.cities[1].autonomous, 0, "忠誠の戻った自治区が直轄に復さない");
 });
 
-test("CivSystem: 領土の現実化 — 自然国境・荒野の維持限界・辺境のゆらぎ・街道の支配", () => {
+test("CivSystem: 領土の現実化 — 自然国境（領有の段階のみ）・街道の支配", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const T = Game.TERRAIN;
   const w = new Game.World(60, 40);
@@ -945,7 +948,8 @@ test("CivSystem: 領土の現実化 — 自然国境・荒野の維持限界・�
   const A = civ.foundAt(30, 20);
   const k = civ.kingdoms[A];
 
-  // 荒野の維持限界: 支配圏内でも山岳の領有は野に還る（rand を 0 に固定して確実に発火）。
+  // 山岳・雪は陸地でない（isLand=false）ため領土にならず、走査で整理される。
+  //   一方、陸地のバイオーム（砂漠等）は一度確保すれば保持される（別テストで検証）。
   const mi = 22 * 60 + 30; // 都市の近く
   w.terrain[mi] = T.MOUNTAIN;
   w.owner[mi] = A; k.tileCount++;
@@ -954,23 +958,23 @@ test("CivSystem: 領土の現実化 — 自然国境・荒野の維持限界・�
   civ.rand = function () { return 0; };
   civ._tcursor = 0;
   for (let b = 0; b < 4; b++) civ._maintainTerritory(w); // 全域を走査
-  assert.equal(w.owner[mi], 0, "支配圏内の山岳が野に還らない");
+  assert.equal(w.owner[mi], 0, "陸地でない山岳の領有が整理されない");
   assert.equal(w.owner[gi], A, "中核の草原まで手放してしまう");
 
-  // 飛び地の穴埋め: 草原は埋まるが、荒野（山）は囲まれても野のまま。
+  // 飛び地の穴埋め: 陸地（草原・砂漠とも）は埋まるが、山（陸地でない）は野のまま。
   const ei = 20 * 60 + 32, wi = 20 * 60 + 28;
-  w.terrain[ei] = T.GRASS; w.terrain[wi] = T.MOUNTAIN;
+  w.terrain[ei] = T.DESERT; w.terrain[wi] = T.MOUNTAIN;
   w.owner[ei] = 0; w.owner[wi] = 0;
   // 双方の4近傍を自国領に。
   for (const [tx, ty] of [[31, 20], [33, 20], [32, 19], [32, 21], [27, 20], [29, 20], [28, 19], [28, 21]]) {
     const ii = ty * 60 + tx; if (w.owner[ii] !== A) { w.owner[ii] = A; k.tileCount++; }
     w.terrain[ii] = T.GRASS;
   }
-  civ.rand = function () { return 0.99; }; // ゆらぎ・荒野還りは発火させない
+  civ.rand = function () { return 0.99; }; // ゆらぎは発火させない
   civ._tcursor = 0;
   for (let b = 0; b < 4; b++) civ._maintainTerritory(w);
-  assert.equal(w.owner[ei], A, "草原の飛び地が埋まらない");
-  assert.equal(w.owner[wi], 0, "山の飛び地まで領有してしまう（荒野は野のまま残るべき）");
+  assert.equal(w.owner[ei], A, "砂漠の飛び地が埋まらない（バイオームを問わず埋まるべき）");
+  assert.equal(w.owner[wi], 0, "山（陸地でない）の飛び地まで領有してしまう");
 
   // 街道の支配: 素の支配半径の外でも、街道の上なら実効支配が届く。
   const k2 = { cities: [{ x: 5, y: 20, level: 1 }] }; // 端寄りの都市（半径 28+3=31）

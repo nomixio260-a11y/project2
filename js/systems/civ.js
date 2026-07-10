@@ -119,12 +119,12 @@
     controlPerLevel: 3,  // 都市の発展度1あたりの支配半径の増分
     maintainBand: 16,    // 領土メンテのローリング走査の行数/ティック（帯を細くして毎ティックの負荷を半減）
     // 領土の現実化（実効支配・自然国境）: 国土は「面で塗った所有」ではなく「都市から実効支配が
-    //   届く範囲」。険しい地形は領有しにくく（山脈・湿地・砂漠が自然国境になる）、支配の薄い辺境は
-    //   ゆらぎ、荒野は維持できず野に還る。街道は支配を沿線へ伸ばす（道が権力を運ぶ）。
+    //   届く範囲」。険しい地形は「領有の段階で」まばらにしか広げられない（terrainHold＝山脈・湿地・
+    //   砂漠が自然国境になる）が、一度確保した領土はバイオームを問わず保持される——広げた領土が
+    //   地形を理由に消えることはない。街道は支配を沿線へ伸ばす（道が権力を運ぶ）。
     frontierFlux: 0.003, // 支配限界ぎわ（実効支配の薄い縁）のタイルが走査ごとに手放される確率。
                          //   全域走査は 4320/(H/帯16)≒年576回なので、0.003 ≒ 年1.7回のゆらぎ
                          //   （従来の 0.03 は年17回＝国境が明滅し、開拓者が奪還に往復するループを生んでいた）
-    wildUpkeep: 0.05,    // 荒野（山・砂漠・ツンドラ・湿地・雪原）の領有が走査ごとに野に還る確率
     roadControlExt: 1.35,// 街道上のタイルへの実効支配半径の伸び（道が統治を運ぶ）
     // 資源の現実化: 鉱脈（鉱石・宝石・金）は有限。領有され採掘されるほど涸れ、掘り尽くされると消える。
     resDepositMin: 240,   // 鉱脈の埋蔵量の下限（外交評価≈48回/年 × 0.55 ≒ 26/年 → 約9〜20年で枯渇）
@@ -2075,14 +2075,10 @@
     }
   }
   // タイル i の地形 t を領有できるか（決定的。世界ごとに固定の「越えられる場所」が定まる）。
+  //   自然国境は「領有の段階」でのみ働く——一度確保した領土はバイオームを問わず保持される。
   CivSystem.prototype._claimable = function (t, i) {
     return (((i * 2654435761) >>> 0) % 100) < terrainHold(t);
   };
-  // 荒野（実効支配を維持しにくい地形）か。
-  function isWildTerrain(t) {
-    const T = Game.TERRAIN;
-    return t === T.MOUNTAIN || t === T.DESERT || t === T.TUNDRA || t === T.SWAMP || t === T.SNOW;
-  }
 
   // 都市 c 群からの実効支配の度合い。0=圏外, 1=辺境（支配の薄い縁）, 2=中核。
   //   街道の上は支配半径が伸びる（道が統治・軍・徴税を運ぶ＝権力の通り道）。
@@ -2123,8 +2119,8 @@
   };
 
   // 領土メンテ: ローリング走査で実効支配を評価する。圏外の辺境は手放し、支配の薄い縁は
-  //   ゆらぎ、荒野は維持できず野に還る。亡霊領土を消し、飛び地（耕せる土地のみ）を埋める。
-  //   これにより国土は「都市と街道が実際に統治する範囲」として絶えず呼吸する。
+  //   ごく緩やかにゆらぐ。亡霊領土を消し、飛び地を埋める。一度確保した領土は（支配圏内に
+  //   ある限り）バイオームを問わず保持される——「広げた領土がなぜか消える」ことはない。
   CivSystem.prototype._maintainTerritory = function (world) {
     const W = world.width, H = world.height, owner = world.owner, terr = world.terrain;
     const ks = this.kingdoms;
@@ -2145,22 +2141,16 @@
             const ctl = this._controlOf(k, x, y, i);
             if (ctl === 0) { // 支配限界を超えた辺境を手放す
               owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
-            } else if (isWildTerrain(terr[i]) && !(world.road && world.road[i]) && this.rand() < CP.wildUpkeep) {
-              // 荒野の維持限界: 山・砂漠・湿地は駐留も徴税も続かず、実効支配が野に還る。
-              //   ただし街道の通る峠・回廊は道が支配を支え、保持される（山道の現実）。
-              owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
             } else if (ctl === 1 && this.rand() < CP.frontierFlux) {
               // 辺境のゆらぎ: 支配の薄い縁は統治が揺らぎ、国境線が生き物のように脈動する。
+              //   （どのバイオームでも同じ扱い。確保済みの領土が地形を理由に消えることはない）
               owner[i] = 0; k.tileCount--; if (rndr) rndr.markTerritoryDirty(x, y);
             }
           }
         } else if (tile.isLand(terr[i])) {
-          // 単一国に囲まれた飛び地を吸収する。ただし荒野は囲まれても野のまま残る
-          //   （山塊・湿地は国土の中の未開地として残る＝現実の国土の姿）。
-          if (!isWildTerrain(terr[i])) {
-            const fill = this._enclaveOwner(world, x, y);
-            if (fill > 0) { owner[i] = fill; ks[fill].tileCount++; if (rndr) rndr.markTerritoryDirty(x, y); }
-          }
+          // 単一国に囲まれた飛び地を吸収する（バイオームを問わず。国土に不自然な穴を残さない）。
+          const fill = this._enclaveOwner(world, x, y);
+          if (fill > 0) { owner[i] = fill; ks[fill].tileCount++; if (rndr) rndr.markTerritoryDirty(x, y); }
         }
       }
     }
@@ -5356,13 +5346,14 @@
 
   // 開拓者が目指すべき「実際に領有でき、保持もできる」未開地を探す。
   //   従来は「無主の陸地なら何でも」目指したため、(1)険しくて領有できない土地へ永遠に
-  //   歩き続ける、(2)荒野を確保→維持できず野に還る→また確保、(3)支配圏外を確保→手放す
-  //   →また向かう、というループが起きていた。目標を「領有可能・荒野でない・支配圏内」に
-  //   限ることで、開拓は実を結ぶ土地にだけ向かう（実らぬ拡張の徒労を断つ）。
+  //   歩き続ける、(2)支配圏外を確保→手放す→また向かう、というループが起きていた。
+  //   目標を「領有可能（terrainHold を通る）・支配圏内」に限ることで、開拓は実を結ぶ土地に
+  //   だけ向かう。砂漠・ツンドラ等の険しいバイオームも、領有可能な場所なら開拓してよい
+  //   （確保した領土は保持される）。
   CivSystem.prototype._expandTarget = function (h, k, world) {
     const self = this;
     return this._nearestTile(h, world, CP.seekRange + 1, function (terr, ow, x, y, i) {
-      return ow === 0 && tile.isLand(terr) && !isWildTerrain(terr) &&
+      return ow === 0 && tile.isLand(terr) &&
         self._claimable(terr, i) && self._controlOf(k, x, y, i) > 0;
     });
   };
