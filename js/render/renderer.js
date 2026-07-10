@@ -124,6 +124,12 @@
     bctx.fillRect(x, y, 1, 1);
   };
 
+  // タイルの領土色（地図ビュー対応）。領地ビューでは「その国のどの都市の勢力圏か」で塗り分ける。
+  function territoryTileColor(civ, id, x, y) {
+    if ((Game.state && Game.state.mapView) === "province" && civ.provinceColorAt) return civ.provinceColorAt(id, x, y);
+    return civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id);
+  }
+
   // 領土の dirty を territoryCanvas へ反映（所有者色 or クリア）。
   Renderer.prototype.flushTerritoryDirty = function () {
     if (this.territoryDirty.length === 0) return;
@@ -138,7 +144,7 @@
       if (id === 0 || !civ) {
         tctx.clearRect(x, y, 1, 1);
       } else {
-        const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
+        const c = territoryTileColor(civ, id, x, y);
         if (c) {
           tctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
           tctx.fillRect(x, y, 1, 1);
@@ -168,7 +174,7 @@
       for (let x = 0; x < W; x++) {
         const id = owner[y * W + x];
         if (id === 0) continue;
-        const c = (civ.viewColorOf ? civ.viewColorOf(id) : civ.colorOf(id));
+        const c = territoryTileColor(civ, id, x, y); // 領地ビューでは州ごとに塗り分け
         if (c) { tctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")"; tctx.fillRect(x, y, 1, 1); }
       }
     }
