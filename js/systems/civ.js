@@ -130,6 +130,10 @@
     resDepositMin: 240,   // 鉱脈の埋蔵量の下限（外交評価≈48回/年 × 0.55 ≒ 26/年 → 約9〜20年で枯渇）
     resDepositRange: 280, // 埋蔵量の幅（鉱脈ごとに決定的ハッシュで固有）
     resDepleteRate: 0.55, // 領有された鉱脈が評価ごとに減る量（採掘の速さ）
+    // 廃都: 滅んだ国の都市は建物ごと世界に残り、ゆっくり朽ちる（消滅の代わりの風化）。
+    ghostTownCap: 48,     // 世界に残る廃都の上限（超えた分は最古から静かに消える）
+    ghostDecay: 0.0018,   // 廃屋の傷み／外交評価（年約48評価 → 通常建築で約11年、堅牢建築は約25年立ち続ける）
+    ghostSettleR: 5,      // 新しい国がこの距離内に興れば廃都に住み着き、建物を受け継ぐ
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
@@ -948,6 +952,7 @@
     this._tcursor = 0; // 領土メンテ走査の行カーソル
     this.events = [];  // 年代記（世界の主要な出来事のログ）
     this.marks = [];   // 戦場の痕跡（戦死地点。時間で薄れて消える）
+    this.ghostTowns = []; // 廃都（滅んだ国の都市。建物は立ったまま残り、朽ちてゆき、再入植で甦る）
     this.statsHist = []; // 世界統計の履歴（人口・国数・領土の推移。概観パネル用）
     // 近傍探索グリッド。
     this._cap = Game.config.sim.maxPeople;
@@ -978,21 +983,35 @@
 
   // 滅んだ国 k の建物を廃墟として地に残す（都市ごと・砦や大建造物を優先して最大 ruinCap 棟）。
   //   これにより国家の消滅が一瞬の消去ではなく、倒れた都市の廃墟として画面に残る（歴史の痕跡）。
-  CivSystem.prototype._leaveRuins = function (k) {
+  // 国が滅んでも建物は消えない: 都市は「廃都」として世界にそのまま残る。建物は立ったまま
+  //   風雨で少しずつ朽ち（数年〜十数年）、崩れれば瓦礫になり、朽ち果てる前に新しい国が
+  //   そばに興れば民が住み着いて甦る。滅びた文明の姿が地図に残り続ける。
+  CivSystem.prototype._abandonCities = function (k) {
     if (!k.cities) return;
-    let placed = 0;
-    const CAP = CP.ruinCap || 22;
-    // 砦・大建造物・神殿など大きな建物を優先して廃墟化する（小屋より遺構が残りやすい）。
-    const prio = function (t) { return t === BUILDING.KEEP || t === BUILDING.WONDER || t === BUILDING.WALLS ? 0 : t === BUILDING.TEMPLE || t === BUILDING.MANOR || t === BUILDING.MARKET ? 1 : 2; };
-    for (let c = 0; c < k.cities.length && placed < CAP; c++) {
-      const bs = k.cities[c].buildings;
-      if (!bs || !bs.length) { // 建物情報が無い都市でも中心に廃墟を1つ残す
-        this._addMark(k.cities[c].x, k.cities[c].y, "ruin"); placed++; continue;
+    const gt = this.ghostTowns || (this.ghostTowns = []);
+    for (let c = 0; c < k.cities.length; c++) {
+      const city = k.cities[c];
+      if (!city.buildings || !city.buildings.length) continue;
+      gt.push({ x: city.x, y: city.y, from: k.name, buildings: city.buildings });
+      if (gt.length > CP.ghostTownCap) gt.shift(); // 上限: 最古の廃都から静かに歴史へ消える
+    }
+    k.cities = [];
+  };
+
+  // 廃都の風化（外交評価ごと）: 打ち捨てられた建物は少しずつ朽ち、崩れて瓦礫の跡を残す。
+  //   砦・大建造物・神殿など堅牢な建築は倍近く長く立ち続ける（遺跡として残る）。
+  CivSystem.prototype._decayGhostTowns = function () {
+    const gt = this.ghostTowns;
+    if (!gt || !gt.length) return;
+    const sturdy = function (t) { return t === BUILDING.KEEP || t === BUILDING.WONDER || t === BUILDING.WALLS || t === BUILDING.TEMPLE; };
+    for (let g = gt.length - 1; g >= 0; g--) {
+      const bs = gt[g].buildings;
+      for (let i = bs.length - 1; i >= 0; i--) {
+        const b = bs[i];
+        b.cond = (b.cond == null ? 1 : b.cond) - CP.ghostDecay * (sturdy(b.t) ? 0.45 : 1);
+        if (b.cond <= 0) { this._addMark(b.x, b.y, "rubble"); bs.splice(i, 1); }
       }
-      const order = bs.slice().sort(function (a, b) { return prio(a.t) - prio(b.t); });
-      for (let bi = 0; bi < order.length && placed < CAP; bi++) {
-        this._addMark(order[bi].x, order[bi].y, "ruin"); placed++;
-      }
+      if (!bs.length) gt.splice(g, 1); // すべて崩れた廃都は土に還る
     }
   };
 
@@ -1024,6 +1043,7 @@
     this._births.length = 0;
     this.events.length = 0;
     this.marks.length = 0;
+    if (this.ghostTowns) this.ghostTowns.length = 0;
     if (this.world) this.world.owner.fill(0);
   };
 
@@ -1220,6 +1240,29 @@
     this.kingdoms.push(k);
     world.owner[i] = id;
     if (this.renderer) this.renderer.markTerritoryDirty(x, y);
+    // 廃都への入植: 滅んだ文明の都市のそばに新しい国が興れば、残っていた建物に民が住み着き、
+    //   都市がそのまま甦る（建物は消えず、歴史が受け継がれる）。
+    const gt = this.ghostTowns;
+    if (gt && gt.length) {
+      const R2 = CP.ghostSettleR * CP.ghostSettleR;
+      for (let g = 0; g < gt.length; g++) {
+        const town = gt[g];
+        const dx = town.x - x, dy = town.y - y;
+        if (dx * dx + dy * dy > R2) continue;
+        const bs = k.cities[0].buildings;
+        for (let bi = 0; bi < town.buildings.length; bi++) {
+          const b = town.buildings[bi];
+          if (b.cond > 0.12 && !(b.x === x && b.y === y)) { // 崩れかけは受け継がず、跡地の砦とは重ねない
+            b.cond = Math.min(1, (b.cond || 1) + 0.25); // 住み着いた民が手を入れる
+            bs.push(b);
+          }
+        }
+        k.cities[0].level = 1 + ((bs.length / 3) | 0);
+        this._logEvent("🏚→🏠 " + k.name + " の民が廃都（" + town.from + "の跡）に住み着いた");
+        gt.splice(g, 1);
+        break;
+      }
+    }
     return k;
   };
 
@@ -3013,17 +3056,19 @@
     if (this._fuelEval % 3 === 1) this._tallyFuel();
     // 信仰の盟主を各宗教について定める（信徒国の結束・信仰の平和・表示に用いる）。
     this._computeFaithHeads();
+    // 廃都の風化（滅んだ国の建物はゆっくり朽ちる）。
+    this._decayGhostTowns();
 
     // --- 国家ごと: 経済(富・技術) と 社会(不満) ---
     for (let a = 1; a < ks.length; a++) {
       const ka = ks[a];
       if (!ka || !ka.alive) continue;
-      // 無人・無領土の国は消滅。滅んでも建物は「廃墟」として地に残る（一瞬で消えず、
-      //   倒れた文明の痕跡＝歴史として長く残る）。都市の建物跡に ruin マークを置く（総数に上限）。
+      // 無人・無領土の国は消滅。滅んでも建物は消えない——都市は「廃都」として立ったまま残り、
+      //   長い年月をかけて朽ちてゆく（新しい民が住み着けば甦る）。
       if (ka.humanCount <= 0 || ka.tileCount <= 0) {
         ka.alive = false;
-        this._leaveRuins(ka);
-        this._logEvent("☠ " + ka.name + " が滅亡した");
+        this._abandonCities(ka);
+        this._logEvent("☠ " + ka.name + " が滅亡した（都市は廃都として残る）");
         continue;
       }
       // 建物を維持（傷み・修復・倒壊）してから、機能建築の効果（実効重み）を集計する。

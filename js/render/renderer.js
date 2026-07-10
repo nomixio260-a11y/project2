@@ -1833,6 +1833,42 @@
         }
       }
     }
+
+    // 廃都: 滅んだ国の建物は立ったまま残る。旗も煙も無く、灰色に沈んだ静かな街並みが
+    //   風化しながら佇む（傷むほど暗く、ひび割れて見える）。
+    const gts = civ.ghostTowns;
+    if (gts && gts.length && detailed) {
+      const size = Math.max(12, scale * 2.0);
+      for (let g = 0; g < gts.length; g++) {
+        const town = gts[g];
+        if (town.x < range.x0 - 4 || town.x > range.x1 + 4 || town.y < range.y0 - 4 || town.y > range.y1 + 4) continue;
+        const bs = town.buildings;
+        for (let bi = 0; bi < bs.length; bi++) {
+          const bd = bs[bi];
+          const img = sprites.building(bd.t);
+          const lvl = bd.lvl || 1;
+          const cond = bd.cond == null ? 1 : bd.cond;
+          const bw = size * (BUILD_SIZE[bd.t] || 1) * (1 + (lvl - 1) * 0.18);
+          const bh = bw * (img.height / img.width);
+          const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
+          const by = camera.worldToScreenY((bd.y + 0.5) * tile);
+          ctx.fillStyle = "rgba(0,0,0,0.2)";
+          ctx.beginPath(); ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
+          // 廃屋の翳り: 生気のない灰の色に沈み、傷むほど暗い。
+          ctx.fillStyle = "rgba(70,72,70," + (0.32 + 0.4 * (1 - cond)).toFixed(2) + ")";
+          ctx.fillRect((bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
+          if (cond < 0.45 && scale >= 4) { // 崩れかけの亀裂
+            ctx.strokeStyle = "rgba(28,24,20,0.65)";
+            ctx.lineWidth = Math.max(1, scale * 0.06);
+            ctx.beginPath();
+            ctx.moveTo((bx - bw * 0.18) | 0, (by - bh * 0.8) | 0);
+            ctx.lineTo((bx + bw * 0.1) | 0, (by - bh * 0.3) | 0);
+            ctx.stroke();
+          }
+        }
+      }
+    }
     ctx.restore();
   };
 
