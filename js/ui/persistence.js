@@ -76,7 +76,7 @@
       v: VERSION, seed: Game.config.seed, mapWidth: world.width, mapHeight: world.height,
       world: w, entities: e, fire: fr, clock: clock,
       climate: st.climate ? { _wphase: st.climate._wphase, _dphase: st.climate._dphase, _epoch: st.climate._epoch } : null,
-      civ: { tickN: civ._tickN || 0, pidSeq: civ._pidSeq || 0, kingdoms: kingdoms, people: people },
+      civ: { tickN: civ._tickN || 0, pidSeq: civ._pidSeq || 0, kingdoms: kingdoms, people: people, ghostTowns: civ.ghostTowns || [] },
     };
   }
 
@@ -140,6 +140,7 @@
     civ.people = snap.civ.people;
     civ._tickN = snap.civ.tickN || 0;
     civ._pidSeq = snap.civ.pidSeq || 0;
+    civ.ghostTowns = snap.civ.ghostTowns || []; // 廃都（旧セーブは空＝互換）
     if (!civ._next || civ._next.length < civ.people.length) civ._next = new Int32Array(civ.people.length + 256);
     const pmap = {};
     for (let i = 0; i < civ.people.length; i++) { const p = civ.people[i]; if (p.pid) pmap[p.pid] = p; }

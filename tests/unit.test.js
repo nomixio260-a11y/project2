@@ -730,6 +730,41 @@ test("CivSystem: 地方の忠誠 — 遠く不遇な州は忠誠を失い、最�
   assert.ok(far < 0.55, "遠く不遇な州の忠誠が下がっていない: " + far.toFixed(2));
 });
 
+test("CivSystem: 廃都 — 国が滅んでも建物は残り、朽ちてゆき、新しい民が住み着けば甦る", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
+  const w = new Game.World(60, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  k.name = "アルデン";
+  // 建物のある都市を持たせて滅ぼす。
+  const B = Game.BUILDING;
+  k.cities[0].buildings.push({ x: 21, y: 20, t: B.HOUSE, lvl: 1, cond: 1 });
+  k.cities[0].buildings.push({ x: 22, y: 20, t: B.TEMPLE, lvl: 2, cond: 1 });
+  const nBuildings = k.cities[0].buildings.length;
+  civ._abandonCities(k);
+  k.alive = false;
+  assert.equal(civ.ghostTowns.length, 1, "滅んだ都市が廃都として残らない");
+  assert.equal(civ.ghostTowns[0].buildings.length, nBuildings, "建物が消えている");
+  assert.equal(civ.ghostTowns[0].from, "アルデン", "元の国名が伝わらない");
+
+  // 風化: 評価を重ねると傷み、家（普通の建築）は神殿（堅牢）より先に崩れる。
+  const house = civ.ghostTowns[0].buildings.find(function (b) { return b.t === B.HOUSE; });
+  const temple = civ.ghostTowns[0].buildings.find(function (b) { return b.t === B.TEMPLE; });
+  for (let i = 0; i < 40; i++) civ._decayGhostTowns();
+  assert.ok(house.cond < 1 && temple.cond < 1, "廃屋が風化しない");
+  assert.ok(temple.cond > house.cond, "堅牢な神殿が普通の家より先に朽ちる");
+
+  // 再入植: 廃都のそばに新しい国が興れば、建物を受け継いで甦る。
+  const kb = civ._newKingdom(21, 21);
+  assert.ok(kb, "新国家が興らない");
+  assert.equal(civ.ghostTowns.length, 0, "再入植後も廃都が残っている");
+  let inherited = 0;
+  for (const b of kb.cities[0].buildings) if (b.t === B.HOUSE || b.t === B.TEMPLE || (b.t === B.KEEP && !(b.x === 21 && b.y === 21))) inherited++;
+  assert.ok(inherited >= 2, "建物が受け継がれない: " + inherited);
+});
+
 test("CivSystem: 拡張ループの解消 — 開拓者は領有でき保持できる土地だけを目指す", () => {
   const Game = loadCore({ mapWidth: 80, mapHeight: 40 });
   const T = Game.TERRAIN;
