@@ -2657,6 +2657,66 @@ test("CivSystem: 建設工事 — 着工費・工期・完成、建設中の建�
   assert.ok(s2.need < s3.need, "木材が工期を縮めない: " + s2.need + " !< " + s3.need);
 });
 
+test("CivSystem: 国家開発計画 — 情勢が事業を選び、対象都市は青写真どおり同時2件で建つ", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 11 });
+  const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  if (w.fertility) w.fertility.fill(0.9);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  w.owner.fill(A);
+  const city = k.cities[0];
+  const B = Game.BUILDING;
+
+  // 事業の選択: 戦時は築城、飢えれば開墾、平時は都の造営。
+  k.wars = { 2: 1 };
+  assert.equal(civ._chooseDevProgram(k).key, "fortify", "戦時に築城を選ばない");
+  k.wars = {};
+  k.famine = true;
+  assert.equal(civ._chooseDevProgram(k).key, "granary", "飢饉に開墾事業を選ばない");
+  k.famine = false; k.food = 100;
+  const pk = civ._chooseDevProgram(k).key;
+  assert.ok(pk === "capital" || pk === "learning" || pk === "port", "平時の事業が選ばれない: " + pk);
+
+  // 立ち上げと投資: 国庫が潤えば一定間隔で事業が始まり、続く間は国庫から投資される。
+  k.wealth = 100; k._devT = 0; k.dev = null;
+  for (let i = 0; i < 10 && !k.dev; i++) civ._development(k);
+  assert.ok(k.dev, "国庫が潤っても開発計画が始まらない");
+  const w0 = k.wealth;
+  civ._development(k);
+  assert.ok(k.wealth < w0, "開発中に投資（国庫の支出）が無い");
+  // 期限が来れば事業は終わる。
+  k.dev.left = 1;
+  civ._development(k);
+  assert.equal(k.dev, null, "期限が来ても事業が終わらない");
+
+  // 青写真: 開発対象都市は事業の建物（開墾事業なら穀倉・農場）を最優先で、同時2件まで建てる。
+  city.buildings = [
+    { x: 20, y: 20, t: B.KEEP, lvl: 1, cond: 1 },
+    { x: 22, y: 20, t: B.FARM, lvl: 1, cond: 1 },
+    { x: 20, y: 22, t: B.HUT, lvl: 1, cond: 1 },
+    { x: 18, y: 20, t: B.HUT, lvl: 1, cond: 1 },
+  ];
+  k.dev = { x: city.x, y: city.y, key: "granary", left: 20 };
+  let ri = 0; const seq = [0.1, 0.35, 0.62, 0.81, 0.05, 0.47, 0.93, 0.22, 0.68, 0.14];
+  civ.rand = function () { return seq[ri++ % seq.length]; };
+  civ._construct(k, city, w);
+  const s1 = city.buildings[city.buildings.length - 1];
+  assert.ok(s1.site && s1.t === B.GRANARY, "開墾事業の都市が穀倉を建て始めない: t=" + s1.t + " site=" + s1.site);
+  // 2件目（青写真の残り＝2軒目の農場）も並行して着工できる。
+  let guard = 0;
+  while (civ._siteCount(city) < 2 && guard++ < 40) civ._construct(k, city, w);
+  assert.equal(civ._siteCount(city), 2, "開発対象都市が同時2件で建てられない");
+  // 3件目は始まらない（devSites=2 が上限）。
+  for (let i = 0; i < 10; i++) civ._construct(k, city, w);
+  assert.equal(civ._siteCount(city), 2, "開発の同時工事上限を超えている");
+  // 開発が終われば通常の1件上限に戻る（新規着工は増えない）。
+  k.dev = null;
+  for (let i = 0; i < 10; i++) civ._construct(k, city, w);
+  assert.equal(civ._siteCount(city), 2, "開発終了後も着工が増える");
+});
+
 test("CivSystem: 修繕優先 — 壊れかけの建物は新築・工事より先に直される", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 9 });
   const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
