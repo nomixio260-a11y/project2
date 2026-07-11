@@ -145,7 +145,9 @@
     // 大工の修繕: 建築家は傷んだ建物へ実際に足を運び、槌を振って直す（国全体の受動回復とは
     //   別の、目に見える手当て）。戦時・飢饉で朽ちてゆく街を、职人が現場で食い止める。
     repairSeekCond: 0.8,  // これ未満の状態の建物へ建築家が修繕に向かう
-    handRepair: 0.0022,   // そばに立つ建築家が1ティックに直す量（腕前で増減）
+    repairUrgent: 0.45,   // これ未満は「壊れかけ」＝新築・工事より修繕を優先する
+    handRepair: 0.003,    // そばに立つ建築家が1ティックに直す量（腕前で増減）
+    repairRange: 25,      // 自分の街が無事なら、この距離内の傷んだ街へ修繕に出向く
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
@@ -500,6 +502,10 @@
     sitePassive: 0.5,      // 1評価あたりの自然進捗（×維持の地力。村人総出の助勢）
     siteTimberCut: 0.8,    // 木材資源を持つ国の工期係数（材が揃えば早く建つ）
     siteCostMargin: 1.5,   // 着工に要する国庫の余裕（費用×この倍率が無ければ着工しない）
+    // 戦時の応急普請: 富める国は国庫で職人を雇い、戦の傷を直し続ける（貧しい国の街は荒れる）
+    warRepairMin: 30,      // この額を超える国庫があれば戦時も修繕を保てる
+    warRepairCost: 0.6,    // 応急普請の費用／評価（国庫から）
+    warRepairBoost: 0.05,  // 応急普請による修繕の上乗せ（荒廃の平衡点を引き上げる）
     // 交易と平和（経済的相互依存は戦争を抑える）
     tradePeace: 0.6,     // 主要交易相手とは開戦しにくい（相互依存）
     // 交易（取引）: 文明どうしが余剰と不足を交換し、双方が富む（比較優位）。
@@ -1436,9 +1442,15 @@
     const builders = (k.roleCount && k.roleCount[ROLE.BUILDER]) || 0;
     const wealthPerTile = k.wealth / Math.max(1, k.tileCount);
     const upkeep = Math.min(1, builders * 0.05 + Math.min(0.6, wealthPerTile * 0.6));
-    const repair = CP.buildRepair * (0.25 + upkeep);
+    let repair = CP.buildRepair * (0.25 + upkeep);
     // 平時で損耗源が無ければ建物は新築水準(1.0)へ収束する＝経済の基準を保つ。
     const stress = (atWar ? CP.buildWarDecay : 0) + (famine ? CP.buildFamineDecay : 0);
+    // 戦時・飢饉の応急普請: 国庫に余裕があれば金を費やして修繕を保つ（従来は損耗と修繕の
+    //   平衡点が cond≈0.5 に固定され、どれほど富んでも街が「壊れかけ」で荒れ続けた）。
+    if (stress > 0 && k.wealth > CP.warRepairMin) {
+      k.wealth -= CP.warRepairCost;
+      repair += CP.warRepairBoost;
+    }
     let ruined = 0;
     for (let c = 0; c < k.cities.length; c++) {
       const city = k.cities[c], bs = city.buildings;
@@ -4975,11 +4987,14 @@
         const city = this._cityAt(k, hcx, hcy);
         if (city) {
           this._construct(k, city, world); practice(h); h.prestige = (h.prestige || 0) + 0.06; // 普請で腕と名を上げる
-          // 現場へ: 工事中の建物があれば最優先で向かう（現場で建てる＝_roleTick が工事を進める）。
-          //   無ければ傷んだ建物へ（現場で直す）。
-          const site = this._siteOf(city);
-          const dmg = site || this._worstDamaged(city);
-          if (dmg) { h.gx = dmg.x; h.gy = dmg.y; h.state = 6; return; }
+          // 行き先の優先順: 壊れかけの建物（修繕が急務）＞ 建設現場 ＞ 軽い傷み。
+          //   現場ばかり追って修繕が永遠に後回しになるのを防ぐ（直すのが先）。
+          const dmg = this._worstDamaged(city);
+          const urgent = dmg && (dmg.cond == null ? 1 : dmg.cond) < CP.repairUrgent;
+          let tgt = urgent ? dmg : (this._siteOf(city) || dmg);
+          // 自分の街が無事なら、近くの傷んだ街・現場へ出向く（職人は請われて旅する）。
+          if (!tgt) tgt = this._repairTargetNear(k, hcx, hcy, CP.repairRange);
+          if (tgt) { h.gx = tgt.x; h.gy = tgt.y; h.state = 6; return; }
         }
       } else {
         this._maybeFoundTown(h, k);
@@ -5042,6 +5057,27 @@
       if (c < wc) { wc = c; worst = bs[i]; }
     }
     return worst;
+  };
+
+  // (x,y) から r タイル以内の自国の街々から、職人が出向くべき先を探す。
+  //   最も傷んだ建物を優先し、無ければ建設現場。自分の街に仕事が無い建築家が
+  //   これで隣の傷んだ街へ渡り歩く（「壊れそうなのに誰も直さない」の残りを塞ぐ）。
+  CivSystem.prototype._repairTargetNear = function (k, x, y, r) {
+    const r2 = r * r;
+    let worst = null, wc = CP.repairSeekCond, site = null;
+    for (let c = 0; c < k.cities.length; c++) {
+      const cc = k.cities[c];
+      const dx = cc.x - x, dy = cc.y - y;
+      if (dx * dx + dy * dy > r2) continue;
+      const bs = cc.buildings; if (!bs) continue;
+      for (let i = 0; i < bs.length; i++) {
+        const b = bs[i];
+        if (b.site) { if (!site) site = b; continue; }
+        const cd = b.cond == null ? 1 : b.cond;
+        if (cd < wc) { wc = cd; worst = b; }
+      }
+    }
+    return worst || site;
   };
 
   // (x,y) が海に接する沿岸タイルか（4近傍に水）。
@@ -5182,6 +5218,10 @@
   CivSystem.prototype._construct = function (k, city, world) {
     if (!city.buildings) city.buildings = [];
     const bs = city.buildings;
+
+    // 壊れかけの建物があるうちは新築しない（直すのが先。放置して建て増す街は不自然）。
+    const hurt = this._worstDamaged(city);
+    if (hurt && (hurt.cond == null ? 1 : hurt.cond) < CP.repairUrgent) return;
 
     // 既に工事中なら新たな普請は起こさない（現場に人手を集める）。建て替えだけは進む。
     if (this._siteOf(city)) { this._rebuild(k, city); return; }
@@ -5765,7 +5805,11 @@
           if (cond < bc) { bc = cond; best = b; }
         }
       }
-      if (site) {
+      // 壊れかけ（cond < repairUrgent）の修繕は工事より先（直すのが先）。
+      if (best && bc < CP.repairUrgent) {
+        best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * ability(h));
+        practice(h);
+      } else if (site) {
         // 工事: 腕の良い職人ほど早く建てる。完成させた者は名を上げる。
         site.prog += CP.siteWork * ability(h);
         practice(h);

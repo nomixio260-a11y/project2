@@ -2657,6 +2657,45 @@ test("CivSystem: 建設工事 — 着工費・工期・完成、建設中の建�
   assert.ok(s2.need < s3.need, "木材が工期を縮めない: " + s2.need + " !< " + s3.need);
 });
 
+test("CivSystem: 修繕優先 — 壊れかけの建物は新築・工事より先に直される", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 9 });
+  const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  const city = k.cities[0];
+  const B = Game.BUILDING;
+  k.wealth = 100;
+
+  // 壊れかけ（cond<0.45）があるうちは新築を始めない。
+  city.buildings.push({ x: 22, y: 20, t: B.HOUSE, lvl: 1, cond: 0.3 });
+  const n0 = city.buildings.length;
+  for (let i = 0; i < 30; i++) civ._construct(k, city, w);
+  assert.equal(city.buildings.length, n0, "壊れかけを放置して新築を始めている");
+
+  // 建築家の手: 現場と壊れかけが並んでいたら、修繕が先（工事は待つ）。
+  const site = civ._beginBuild(k, city, 21, 21, B.FARM);
+  const h = civ.people[0];
+  h.role = 2; h.x = 21.5; h.y = 20.5; h.alive = true;
+  const dmg = city.buildings.find(function (b) { return b.cond === 0.3; });
+  for (let i = 0; i < 30; i++) civ._roleTick(h, k, w, 20 * 60 + 21); // 壊れかけ(<0.45)のうちだけ観測
+  assert.ok(dmg.cond > 0.3, "壊れかけが直されない");
+  assert.equal(site.prog, 0, "修繕より先に工事を進めている");
+
+  // 直し終えれば（軽傷になれば）工事に移る。
+  dmg.cond = 1;
+  for (let i = 0; i < 200; i++) civ._roleTick(h, k, w, 20 * 60 + 21);
+  assert.ok(site.prog > 0, "修繕が済んでも工事に移らない");
+
+  // 出張修繕: 自分の街に仕事が無ければ、近くの街の傷んだ建物へ出向く。
+  k.cities.push({ x: 32, y: 20, capital: false, level: 1, buildings: [
+    { x: 32, y: 20, t: B.HOUSE, lvl: 1, cond: 0.25 },
+  ] });
+  const tgt = civ._repairTargetNear(k, 20, 20, 25);
+  assert.ok(tgt && tgt.cond === 0.25, "近くの街の傷んだ建物が見つからない");
+});
+
 test("CivSystem: 建物のバグ修正 — 鉱山州の判定・破壊での格下げ・廃都に現場は残らない", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 8 });
   const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
