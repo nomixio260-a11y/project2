@@ -506,6 +506,14 @@
     warRepairMin: 30,      // この額を超える国庫があれば戦時も修繕を保てる
     warRepairCost: 0.6,    // 応急普請の費用／評価（国庫から）
     warRepairBoost: 0.05,  // 応急普請による修繕の上乗せ（荒廃の平衡点を引き上げる）
+    // 国家開発計画: 国が国庫を投じ、一つの都市を事業（築城・開墾・港湾・文教・造営）として
+    //   計画的に育てる（街づくりが成り行き任せでなく、国の意思で進む）
+    devInterval: 10,       // 新たな計画を検討する評価間隔
+    devWealthMin: 60,      // 計画を立ち上げられる国庫
+    devSpend: 0.5,         // 開発中の投資／評価（国庫から）
+    devDuration: 24,       // 一計画の期間（評価数＝約半年）
+    devBoost: 2.2,         // 開発対象都市の工事の自然進捗の倍率（人夫と資材が集まる）
+    devSites: 2,           // 開発対象都市は同時2件まで工事できる（通常は1件）
     // 交易と平和（経済的相互依存は戦争を抑える）
     tradePeace: 0.6,     // 主要交易相手とは開戦しにくい（相互依存）
     // 交易（取引）: 文明どうしが余剰と不足を交換し、双方が富む（比較優位）。
@@ -1461,8 +1469,9 @@
       for (let i = bs.length - 1; i >= 0; i--) {
         const b = bs[i];
         // 建設現場: 村人総出の助勢で工事が進む（維持の地力＝人手と富が工期を縮める）。
+        //   国の開発対象都市は人夫と資材が集まり、工事が大きく速い（事業の勢い）。
         if (b.site) {
-          b.prog += CP.sitePassive * (0.25 + upkeep);
+          b.prog += CP.sitePassive * (0.25 + upkeep) * (this._isDev(k, city) ? CP.devBoost : 1);
           if (b.prog >= b.need) this._finishSite(k, city, b);
           continue;
         }
@@ -3423,6 +3432,9 @@
       // 開拓: 人口と領土に余裕がある国は、辺境に新たな街や村を興して国土を広げる。
       this._expandSettlement(ka);
 
+      // 国家開発計画: 国庫を投じて一つの都市を事業として計画的に育てる（国が主導する街づくり）。
+      this._development(ka);
+
       // 地方の忠誠（各領地の方針決定）: 各州の忠誠を情勢から更新し、最も不忠な州を記録する。
       this._updateProvinces(ka);
       const worstIdx = ka._worstProvIdx, worstLoy = ka._worstProvLoy;
@@ -5170,11 +5182,91 @@
     return k.cities[0];
   };
 
-  // 都市に建設中の現場（site）があれば返す（1都市に同時1件＝人手と資材を集中する）。
+  // 都市に建設中の現場（site）があれば返す（通常は1都市に同時1件＝人手と資材を集中する）。
   CivSystem.prototype._siteOf = function (city) {
     const bs = city && city.buildings;
     if (bs) for (let i = 0; i < bs.length; i++) if (bs[i].site) return bs[i];
     return null;
+  };
+
+  // 都市の建設現場の数。
+  CivSystem.prototype._siteCount = function (city) {
+    const bs = city && city.buildings;
+    let n = 0;
+    if (bs) for (let i = 0; i < bs.length; i++) if (bs[i].site) n++;
+    return n;
+  };
+
+  // ===== 国家開発計画: 国が国庫を投じ、一つの都市を「事業」として計画的に育てる =====
+  //   事業ごとに建てる建物の青写真(wants)があり、対象都市はそれを最優先で、同時2件・
+  //   進捗2倍で建てる（人夫と資材が集まる）。国の情勢が事業を選ぶ（戦時は築城、飢えは開墾…）。
+  const DEV_PROGRAMS = {
+    fortify:  { name: "築城",     emoji: "🛡", wants: [BUILDING.BARRACKS, BUILDING.WALLS, BUILDING.WALLS] },
+    granary:  { name: "開墾事業", emoji: "🌾", wants: [BUILDING.FARM, BUILDING.GRANARY, BUILDING.FARM] },
+    port:     { name: "港湾整備", emoji: "⚓", wants: [BUILDING.HARBOR, BUILDING.MARKET, BUILDING.TAVERN] },
+    learning: { name: "文教振興", emoji: "📚", wants: [BUILDING.TEMPLE, BUILDING.ACADEMY, BUILDING.TAVERN] },
+    capital:  { name: "造営",     emoji: "🏛", wants: [BUILDING.MARKET, BUILDING.TEMPLE, BUILDING.TAVERN, BUILDING.SMITHY] },
+  };
+
+  // (x,y) に一致する都市（開発対象の追跡用。都市が失われれば null）。
+  CivSystem.prototype._cityByPos = function (k, x, y) {
+    const cs = k.cities;
+    if (cs) for (let c = 0; c < cs.length; c++) if (cs[c].x === x && cs[c].y === y) return cs[c];
+    return null;
+  };
+
+  // city が国の開発対象か。
+  CivSystem.prototype._isDev = function (k, city) {
+    return !!(k.dev && k.dev.x === city.x && k.dev.y === city.y);
+  };
+
+  // 国の情勢から事業と対象都市を選ぶ。戦時は辺境の築城、飢えれば穀倉の開墾、
+  //   沿岸の商国は港湾、学の国は文教、いずれでもなければ首都の造営（都の威容）。
+  CivSystem.prototype._chooseDevProgram = function (ka) {
+    const cs = ka.cities;
+    if (!cs || !cs.length) return null;
+    const byStance = function (key) { for (let c = 1; c < cs.length; c++) if (cs[c].stance === key) return cs[c]; return null; };
+    const atWar = this._count(ka.wars) > 0;
+    if (atWar) return { key: "fortify", city: byStance("frontier") || cs[0] };
+    if (ka.famine || (ka.food || 0) < ka.humanCount * 0.15) return { key: "granary", city: byStance("granary") || cs[0] };
+    if (ka._coastalNation && this._charLean(ka, "trade") > 0.15) {
+      const port = byStance("port");
+      if (port) return { key: "port", city: port };
+    }
+    if (this._charLean(ka, "tech") > 0.15 && hasTech(ka, "writing")) return { key: "learning", city: byStance("core") || cs[0] };
+    return { key: "capital", city: cs[0] };
+  };
+
+  // 開発計画の進行（評価ごと）: 投資を続け、期限が来るか都市・国庫が尽きれば終える。
+  //   計画が無ければ一定間隔で情勢を見て新たな事業を立ち上げる。
+  CivSystem.prototype._development = function (ka) {
+    if (ka.dev) {
+      ka.dev.left--;
+      const city = this._cityByPos(ka, ka.dev.x, ka.dev.y);
+      if (!city || ka.dev.left <= 0 || ka.wealth < 2) { ka.dev = null; return; }
+      ka.wealth = Math.max(0, ka.wealth - CP.devSpend); // 事業への投資（人夫・資材の手配）
+      return;
+    }
+    ka._devT = (ka._devT || 0) + 1;
+    if (ka._devT % CP.devInterval !== 0) return;
+    if ((ka.wealth || 0) < CP.devWealthMin) return;
+    const pick = this._chooseDevProgram(ka);
+    if (!pick) return;
+    ka.dev = { x: pick.city.x, y: pick.city.y, key: pick.key, left: CP.devDuration };
+    const pg = DEV_PROGRAMS[pick.key];
+    const where = pick.city.capital ? "首都" : ((pick.city.name || "地方") + "州");
+    this._logEvent("🏗 " + this.realmName(ka) + " が " + where + "の" + pg.name + "を始めた");
+  };
+
+  // UI 用: 進行中の開発計画の概要（無ければ null）。
+  CivSystem.prototype.devInfo = function (k) {
+    if (!k.dev) return null;
+    const pg = DEV_PROGRAMS[k.dev.key];
+    const city = this._cityByPos(k, k.dev.x, k.dev.y);
+    return {
+      program: pg.name, emoji: pg.emoji, left: k.dev.left,
+      city: city ? (city.capital ? "首都" : (city.name || "地方") + "州") : "",
+    };
   };
 
   // 着工: 資材費（国庫）を確かめて払い、建設現場を置く。木材のある国は工期が縮む。
@@ -5223,8 +5315,9 @@
     const hurt = this._worstDamaged(city);
     if (hurt && (hurt.cond == null ? 1 : hurt.cond) < CP.repairUrgent) return;
 
-    // 既に工事中なら新たな普請は起こさない（現場に人手を集める）。建て替えだけは進む。
-    if (this._siteOf(city)) { this._rebuild(k, city); return; }
+    // 工事の同時数: 通常は1件（人手と資材を集中）。国の開発対象都市は2件まで（事業の勢い）。
+    const devCity = this._isDev(k, city);
+    if (this._siteCount(city) >= (devCity ? CP.devSites : 1)) { this._rebuild(k, city); return; }
 
     // 大記念碑（ワンダー）: 発展した大国が首都に建立する誇りの大建造物（稀）。
     // 上限とは別枠で、満杯の首都でも建てられるよう最優先で判定する。
@@ -5277,8 +5370,24 @@
     // 地方の方針が街づくりを定める: 州は自らの役割（辺境防衛・穀倉・交易港・鉱山・中枢）に
     //   適う建物を優先して建て、国の中に個性ある専門都市が育つ（方針→街並みの因果）。
     const sw = this._stanceWant(k, city, has, n, coastal);
+    // 開発計画の青写真: 対象都市は事業の建物を最優先で建てる（計画都市）。
+    //   技術・立地の条件（城壁=青銅器、学院=文字、港=沿岸）を満たすものだけ。
+    let devWant = null;
+    if (devCity) {
+      const wl = DEV_PROGRAMS[k.dev.key].wants, wcount = {};
+      for (let wi = 0; wi < wl.length; wi++) {
+        const t = wl[wi];
+        wcount[t] = (wcount[t] || 0) + 1;
+        if ((has[t] || 0) >= wcount[t]) continue; // 計画数まで建っている
+        if (t === BUILDING.WALLS && !hasTech(k, "bronze")) continue;
+        if (t === BUILDING.ACADEMY && !hasTech(k, "writing")) continue;
+        if (t === BUILDING.HARBOR && !coastal) continue;
+        devWant = t; break;
+      }
+    }
     if (!has[BUILDING.FARM] && n >= 1) want = BUILDING.FARM;               // まず食料生産
     else if (dwell < 2) want = tier;                                       // 最低限の住居
+    else if (devWant != null) want = devWant;                              // 国の事業（開発計画）
     else if (sw != null) want = sw;                                        // 州の方針に沿う専門化
     else if (coastal && !has[BUILDING.HARBOR] && n >= 3) want = BUILDING.HARBOR; // 港（沿岸の漁・海上交易）
     else if (!has[BUILDING.SMITHY] && n >= 3) want = BUILDING.SMITHY;      // 工房（道具・武具）
@@ -6029,13 +6138,24 @@
       let okFar = true;
       for (let c = 0; c < cs.length; c++) { const dx = cs[c].x - x, dy = cs[c].y - y; if (dx * dx + dy * dy < minD2) { okFar = false; break; } }
       if (!okFar) continue;
-      // 立地評価: 肥沃さ＋水辺（川・海）の利。水運と飲み水がある地に町は栄える。
-      const f = (fert ? fert[i] : 0.5) + (this._coastal(world, x, y) ? 0.25 : 0);
+      // 立地評価: 肥沃さ＋水辺（川・海）の利＋鉱脈などの資源（資源の町・鉱山町が生まれる）。
+      //   水運と飲み水、掘るべき富がある地に町は栄える（現実の都市の立地）。
+      let f = (fert ? fert[i] : 0.5) + (this._coastal(world, x, y) ? 0.25 : 0);
+      if (world.resource) {
+        for (let ry = -2; ry <= 2; ry++) {
+          const yy = y + ry; if (yy < 0 || yy >= H) continue;
+          for (let rx = -2; rx <= 2; rx++) {
+            const xx = x + rx; if (xx < 0 || xx >= W) continue;
+            if (world.resource[yy * W + xx]) { f += 0.4; ry = 3; break; } // 近くに資源＝良い立地
+          }
+        }
+      }
       if (f > bestF) { bestF = f; best = { x: x, y: y }; }
     }
     if (best) {
-      cs.push({ x: best.x, y: best.y, capital: false, level: 1, buildings: [] });
-      this._logEvent("🏘 " + ka.name + " が新たな開拓地を築いた");
+      const name = makeName(this.rand); // 町は名を持って生まれる（勅許の開拓地）
+      cs.push({ x: best.x, y: best.y, capital: false, level: 1, buildings: [], name: name });
+      this._logEvent("🏘 " + ka.name + " が辺境に開拓地 " + name + " を築いた");
     }
   };
 

@@ -360,6 +360,12 @@
         return row("街並", "🏘 " + n + "棟 · 平均段階 " + lvl.toFixed(1) + " · " + upkeep + "（" + Math.round(cond * 100) + "%）" +
           (sites ? " · 🏗建設中" + sites : ""));
       })() +
+      (function () {
+        // 国家開発計画: 進行中なら事業と対象都市を示す（国が主導する街づくり）。
+        const dv = civ.devInfo ? civ.devInfo(k) : null;
+        if (!dv) return "";
+        return row("開発", dv.emoji + " " + esc(dv.city) + "の" + dv.program + ' <span class="insp-tag">残り' + dv.left + "</span>");
+      })() +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
       ((k.industry || 0) >= 0.08 ? row("産業", "🏭 " + (k.industry >= 0.6 ? "高" : k.industry >= 0.3 ? "中" : "低") + "（" + Math.round(k.industry * 100) + "）") : "") +
       (function () {
