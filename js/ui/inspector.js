@@ -311,19 +311,38 @@
           (restless ? ' <span class="insp-tag bad">⚠ 不穏 ' + restless + "州</span>" : ""));
       })() +
       (function () {
-        // 地方の方針: 各州が立地・情勢から選んだ役割（辺境防衛・穀倉・交易港・鉱山・中枢…）を集計して示す。
+        // 領地一覧: 各州の名前・役割・忠誠・政策・自治を一行ずつ示す（領地ごとの政治が見える）。
         if (!k.cities || k.cities.length < 2) return "";
-        const tally = {}; let any = 0;
+        const EDICT_ICON = { relief: "🤲減税", levy: "🛡徴兵", clear: "🪓開墾", fest: "🎉市祭" };
+        let html = "", shown = 0;
+        const max = 5;
+        // 政治的に動きのある州（政策発動・自治・不忠）を先に見せる。平穏な州は後ろへ。
+        const order = [];
         for (let c = 1; c < k.cities.length; c++) {
-          const e = k.cities[c].stanceEmoji, nm = k.cities[c].stanceName;
-          if (!nm) continue; any++;
-          const key = (e ? e + " " : "") + nm;
-          tally[key] = (tally[key] || 0) + 1;
+          const cc = k.cities[c];
+          if (!cc.stanceName) continue;
+          let wgt = 0;
+          if (cc.edict && cc.edict !== "none") wgt += 2;
+          if (cc.autonomous) wgt += 2;
+          if (typeof cc.loyalty === "number" && cc.loyalty < 0.4) wgt += 3;
+          order.push([wgt, cc]);
         }
-        if (!any) return "";
-        const parts = [];
-        for (const key in tally) parts.push(key + "×" + tally[key]);
-        return row("地方の方針", parts.join(" · "));
+        order.sort(function (a, b) { return b[0] - a[0]; });
+        for (let o = 0; o < order.length && shown < max; o++) {
+          const city = order[o][1];
+          const loy = typeof city.loyalty === "number" ? Math.round(city.loyalty * 100) : null;
+          const bad = loy != null && loy < 40;
+          const parts =
+            (city.stanceEmoji || "") + " " + esc(city.name || "―") +
+            (loy != null ? ' <span class="' + (bad ? "insp-tag bad" : "") + '">忠' + loy + "%</span>" : "") +
+            (city.autonomous ? " 🏛自治" : "") +
+            (city.edict && EDICT_ICON[city.edict] ? " " + EDICT_ICON[city.edict] : "");
+          html += row(shown === 0 ? "領地" : "", parts);
+          shown++;
+        }
+        const rest = (k.cities.length - 1) - shown;
+        if (rest > 0) html += row("", "…他 " + rest + " 州");
+        return html;
       })() +
       (function () {
         // 街の発展: 建物の平均段階(普請で育つ)と整備度(状態)を集計して示す。

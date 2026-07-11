@@ -372,6 +372,17 @@
     autonomyYield: 0.5,         // 自治区の方針底上げの係数（中央の取り分が減る＝自治の代価）
     autonomyRevoke: 0.78,       // 忠誠がこれを超えた自治区は直轄へ戻りうる
     autonomyRevokeChance: 0.06, // 直轄復帰の確率/評価（帝国・君主制は2倍＝中央集権の性）
+    // 領地の政策（総督の統治判断）: 各州の総督が地元の情勢（忠誠・戦時・役割・野心）から
+    //   政策を布く。減税は民心を買い中央の取り分を削り、徴兵は兵を出させ民心を削り、開墾は
+    //   食を実らせ、市祭は富を費やして民心を沸かせる——領地ごとに異なる政治が動く。
+    edictInterval: 6,      // 政策を見直す評価間隔（州ごと）
+    edictReliefLoyal: 0.08,// 減税の忠誠上乗せ
+    edictReliefYield: 0.7, // 減税中の中央への貢献係数（取り分が減る＝減税の代価）
+    edictLevyMil: 0.05,    // 徴兵の軍事上乗せ（州ごと。方針の底上げに加算）
+    edictLevyLoyal: 0.06,  // 徴兵の忠誠ペナルティ（民は兵役を厭う）
+    edictClearFood: 0.04,  // 開墾の食料上乗せ（州ごと）
+    edictFestLoyal: 0.11,  // 市祭の忠誠上乗せ（民心を沸かせる）
+    edictFestCost: 2.5,    // 市祭の開催費（評価ごとに国庫から）
     // 継承危機の分裂: 世襲の断絶・簒奪で王統が揺れた時、大きく不安定な国では最も不忠で野心的な
     //   総督が機に乗じて一斉に独立を図る（王朝崩壊＝群雄割拠の引き金）。
     crisisFragmentUnrest: 60, // これ以上の不満なら継承危機時に地方が離反しうる
@@ -1227,7 +1238,7 @@
       gov: GOV_TYPES[govIdx],
       govMod: GOV_MODS[govIdx], // 政体の振る舞い補正
       color: makeColor(this.rand),
-      cities: [{ x: x, y: y, capital: true, level: 1, buildings: [mkBuilding(x, y, BUILDING.KEEP)] }],
+      cities: [{ x: x, y: y, capital: true, name: null, level: 1, buildings: [mkBuilding(x, y, BUILDING.KEEP)] }],
       tileCount: 1,
       humanCount: 0,
       roleCount: [0, 0, 0, 0, 0, 0, 0],
@@ -1266,6 +1277,7 @@
       partners: null, // 主要な交易相手 id→直近交易量（描画・UI用）
       alive: true,
     };
+    k.cities[0].name = k.name; // 首都は国の名を冠する（領地の政治の主体として呼べる）
     this.kingdoms.push(k);
     world.owner[i] = id;
     if (this.renderer) this.renderer.markTerritoryDirty(x, y);
@@ -3397,8 +3409,9 @@
       else if (worstIdx >= 1 && worstLoy < CP.secedeLoyalty &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms &&
           this.rand() < CP.secedeChance * (ka.cities[worstIdx] && ka.cities[worstIdx].autonomous ? 0.35 : 1)) {
+        const provName = (ka.cities[worstIdx] && ka.cities[worstIdx].name) || "地方";
         this._rebellion(ka, worstIdx);
-        this._logEvent("🏴 " + ka.name + " の地方が忠誠を失い独立した");
+        this._logEvent("🏴 " + ka.name + " の " + provName + "州が忠誠を失い独立した");
       }
       // 帝国の過伸長: 版図が広く都市が多い国ほど、遠隔の地方は中央の統制から外れて独立しやすい
       //   （統治の限界・地方分権・継承の綻び）。活力ある名君・文化的威信の高い国は結束を保つ。
@@ -3610,6 +3623,7 @@
     for (let c = 1; c < cities.length; c++) {
       const city = cities[c];
       if (city.loyalty == null) city.loyalty = CP.loyaltyStart;
+      if (!city.name) city.name = makeName(this.rand); // 領地には名がある（政治の主体として呼べる）
       const dx = city.x - cap.x, dy = city.y - cap.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       // --- 総督（各領地を治める実力者）: 威信が求心力を、野心が離反心を生む ---
@@ -3619,13 +3633,31 @@
       // --- 地方の方針（立地・情勢から州が選ぶ役割）: 忠誠と国の底上げに効く ---
       const st = this._provinceStance(ka, city, dist);
       city.stance = st.key; city.stanceName = st.name; city.stanceEmoji = st.emoji;
-      // 自治区は中央への貢献が半減する（自治の代価。領地経営のトレードオフ）。
-      const yld = city.autonomous ? CP.autonomyYield : 1;
+      // --- 領地の政策（総督の統治判断）: 州ごとの政治が忠誠と貢献を動かす ---
+      city._edT = (city._edT || 0) + 1;
+      if (!city.edict || city._edT % CP.edictInterval === 0) {
+        const ne = this._chooseEdict(ka, city, g, st);
+        if (ne !== city.edict) {
+          city.edict = ne;
+          if (city._edInit && ne !== "none") this._logEvent("🏛 " + city.name + "州（" + ka.name + "）が政策「" + EDICTS[ne].name + "」を布いた");
+          city._edInit = 1;
+        }
+      }
+      let edLoyal = 0, edYield = 1;
+      if (city.edict === "relief") { edLoyal = CP.edictReliefLoyal; edYield = CP.edictReliefYield; }
+      else if (city.edict === "levy") { edLoyal = -CP.edictLevyLoyal; bMil += CP.edictLevyMil; }
+      else if (city.edict === "clear") { bFood += CP.edictClearFood; }
+      else if (city.edict === "fest") {
+        if ((ka.wealth || 0) > CP.edictFestCost * 2) { ka.wealth -= CP.edictFestCost; edLoyal = CP.edictFestLoyal; }
+        else city.edict = "none"; // 財が尽きれば祭は開けない
+      }
+      // 自治区は中央への貢献が半減する（自治の代価）。減税はさらに取り分を削る。
+      const yld = (city.autonomous ? CP.autonomyYield : 1) * edYield;
       bFood += st.food * yld; bTrade += st.trade * yld; bMil += st.mil * yld; bTools += st.tools * yld; bTech += st.tech * yld;
       const distPen = Math.min(0.55, dist / CP.loyaltyRange * 0.55);        // 遠いほど求心力が届かない
       const prosperity = Math.min(0.2, ((city.level || 1) - 1) * 0.09 + (city.buildings ? city.buildings.length : 0) * 0.008);
       const autonomyBonus = city.autonomous ? CP.autonomyCalm : 0;          // 自ら治める民は離反の理由を失う
-      const target = clamp01(0.9 - distPen - unrestPen + prosperity + rulerBonus + renownBonus + calmBonus + govBonus - ambPen + st.loyal + autonomyBonus);
+      const target = clamp01(0.9 - distPen - unrestPen + prosperity + rulerBonus + renownBonus + calmBonus + govBonus - ambPen + st.loyal + autonomyBonus + edLoyal);
       city.loyalty += (target - city.loyalty) * rate;
       // --- 自治区の授受（領地経営の決断）: 不忠の遠隔州へは自治を、忠誠の戻った州は直轄へ ---
       if (!city.autonomous) {
@@ -3637,13 +3669,13 @@
           if (this.rand() < gc) {
             city.autonomous = 1;
             g.ambition = Math.max(0.1, g.ambition * 0.5); // 総督は自治で野心を満たす
-            this._logEvent("🏛 " + this.realmName(ka) + " が地方に自治を認めた（自治区）");
+            this._logEvent("🏛 " + this.realmName(ka) + " が " + city.name + "州に自治を認めた（自治区）");
           }
         }
       } else if (city.loyalty > CP.autonomyRevoke &&
           this.rand() < CP.autonomyRevokeChance * ((ka.gov === "帝国" || ka.gov === "君主制") ? 2 : 1)) {
         city.autonomous = 0; // 忠誠が篤く戻れば中央は統治を取り戻す
-        this._logEvent("🏛 " + this.realmName(ka) + " が自治区を直轄に復した");
+        this._logEvent("🏛 " + this.realmName(ka) + " が " + city.name + "州を直轄に復した");
       }
       if (city.loyalty < CP.secedeLoyalty) restless++;
       // 独立の切迫度: 忠誠が低いほど、そして総督が野心的なほど機が熟す（人物駆動の独立）。
@@ -3657,6 +3689,27 @@
     ka._provTrade = 1 + Math.min(CP.provBonusCap, bTrade);
     ka._provTools = 1 + Math.min(CP.provBonusCap, bTools);
     ka._provTech = 1 + Math.min(CP.provBonusCap, bTech);
+  };
+
+  // 領地の政策（州ごとの政治）: 総督が地元の情勢から布く統治の手。国策（国家全体の方針）とは
+  //   別の、領地単位の意思決定。emoji はインスペクタ・年代記の表示に使う。
+  const EDICTS = {
+    none:   { name: "平常",  emoji: "" },
+    relief: { name: "減税",  emoji: "🤲" }, // 民心を買う（中央の取り分が減る）
+    levy:   { name: "徴兵",  emoji: "🛡" }, // 兵を出させる（民は兵役を厭う）
+    clear:  { name: "開墾",  emoji: "🪓" }, // 土地を拓き食を実らせる
+    fest:   { name: "市祭",  emoji: "🎉" }, // 富を費やして民心を沸かせる
+  };
+
+  // 総督の政策判断: 忠誠の危機には民心を（野心家は華やかな市祭、堅実な総督は減税）、
+  //   戦時の辺境は徴兵を、穀倉は開墾を、豊かで少し緩んだ州は市祭を。どれも当てはまらねば平常。
+  CivSystem.prototype._chooseEdict = function (ka, city, g, st) {
+    const atWar = this._count(ka.wars) > 0;
+    if (city.loyalty < 0.5) return g.ambition > 0.5 ? "fest" : "relief"; // 繋ぎ止めの二様
+    if (atWar && (st.key === "frontier" || ka.doctrineKey === "war")) return "levy";
+    if (st.key === "granary") return "clear";
+    if ((ka.wealth || 0) > 60 && city.loyalty < 0.75) return "fest";
+    return "none";
   };
 
   // 総督（各領地を治める実力者）: 州ごとに威信と野心を持つ人物を置く。無ければ任命し、
@@ -3749,13 +3802,14 @@
     const govIdx = (this.rand() * GOV_TYPES.length) | 0;
     const nk = {
       id: id,
-      name: makeName(this.rand),
+      // 州の名がそのまま新しい国の名になる（領地の政治的アイデンティティが独立後も続く）。
+      name: city.name || makeName(this.rand),
       ruler: gov ? (gov.name + " " + gov.sur) : RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
       dynasty: gov ? gov.sur : null, // 総督の家名が新王朝を開く
       gov: GOV_TYPES[govIdx],
       govMod: GOV_MODS[govIdx],
       color: makeColor(this.rand),
-      cities: [{ x: city.x, y: city.y, capital: true, level: city.level || 1, buildings: (city.buildings || []) }],
+      cities: [{ x: city.x, y: city.y, capital: true, name: city.name, level: city.level || 1, buildings: (city.buildings || []) }],
       reign: 0,
       tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
       facilities: newFacilities(),
