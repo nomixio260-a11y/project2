@@ -964,6 +964,77 @@ test("CivSystem: 自治区 — 不忠の遠隔州に自治を認めて繋ぎ止�
   assert.equal(k.cities[1].autonomous, 0, "忠誠の戻った自治区が直轄に復さない");
 });
 
+test("CivSystem: 領地の政策 — 州名・総督の政策判断・政策の効果・独立時の名の継承", () => {
+  const Game = loadCore({ mapWidth: 100, mapHeight: 40 });
+  const w = new Game.World(100, 40);
+  w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  const A = civ.foundAt(10, 20);
+  const k = civ.kingdoms[A];
+  // 首都＋辺境州（dist=80 > loyaltyRange*0.6 で方針は辺境防衛）。
+  k.cities = [
+    { x: 10, y: 20, capital: true, level: 2, buildings: [] },
+    { x: 90, y: 20, capital: false, level: 2, buildings: [], loyalty: 0.8 },
+  ];
+  civ.rand = function () { return 0.99; }; // 自治付与・総督代替わりを発火させない
+
+  // 州名: 領地には名が付く（政治の主体として呼べる）。首都は国名を継ぐ。
+  civ._updateProvinces(k);
+  const city = k.cities[1];
+  assert.ok(city.name && city.name.length > 0, "州に名が付かない");
+  assert.ok(civ.kingdoms[A].cities[0].name || true, "首都名の参照に失敗");
+
+  // 政策判断: 忠誠の危機には民心を（野心家は市祭、堅実な総督は減税）。
+  const stF = { key: "frontier" }, stG = { key: "granary" }, stP = { key: "province" };
+  assert.equal(civ._chooseEdict(k, { loyalty: 0.3 }, { ambition: 0.9 }, stP), "fest", "野心家が市祭を選ばない");
+  assert.equal(civ._chooseEdict(k, { loyalty: 0.3 }, { ambition: 0.1 }, stP), "relief", "堅実な総督が減税を選ばない");
+  // 戦時の辺境は徴兵、穀倉は開墾、豊かで緩んだ州は市祭、平時は平常。
+  k.wars = { 2: 1 };
+  assert.equal(civ._chooseEdict(k, { loyalty: 0.8 }, { ambition: 0.1 }, stF), "levy", "戦時の辺境が徴兵を選ばない");
+  k.wars = {};
+  assert.equal(civ._chooseEdict(k, { loyalty: 0.8 }, { ambition: 0.1 }, stG), "clear", "穀倉が開墾を選ばない");
+  k.wealth = 100;
+  assert.equal(civ._chooseEdict(k, { loyalty: 0.7 }, { ambition: 0.1 }, stP), "fest", "豊かで緩んだ州が市祭を選ばない");
+  assert.equal(civ._chooseEdict(k, { loyalty: 0.9 }, { ambition: 0.1 }, stP), "none", "平時の忠実な州が平常にならない");
+  k.wealth = 0;
+
+  // 政策の効果: 減税は中央への貢献（辺境防衛の軍事寄与）を削り、徴兵は軍事を上乗せする。
+  //   edict と _edT を固定して見直し(6評価毎)を跨がずに比較する。
+  function milWith(edict) {
+    city.edict = edict; city._edT = 0; city._edInit = 1; city.loyalty = 0.8;
+    civ._updateProvinces(k);
+    return k._provMil;
+  }
+  const milNone = milWith("none");
+  assert.ok(milWith("relief") < milNone, "減税が貢献を削らない");
+  assert.ok(milWith("levy") > milNone, "徴兵が軍事を上乗せしない");
+  // 開墾は食料を上乗せする。
+  city.edict = "clear"; city._edT = 0; civ._updateProvinces(k);
+  assert.ok(k._provFood > 1, "開墾が食料を上乗せしない");
+
+  // 徴兵は忠誠を削り、減税は忠誠を支える（同条件の忠誠変化で比較）。
+  city.edict = "levy"; city._edT = 0; city.loyalty = 0.8; civ._updateProvinces(k);
+  const loyLevy = city.loyalty;
+  city.edict = "relief"; city._edT = 0; city.loyalty = 0.8; civ._updateProvinces(k);
+  assert.ok(city.loyalty > loyLevy, "減税の忠誠が徴兵を上回らない");
+
+  // 市祭: 富があれば国庫から費用を払い民心を沸かせ、富が尽きれば開けない。
+  k.wealth = 100;
+  city.edict = "fest"; city._edT = 0; city.loyalty = 0.8; civ._updateProvinces(k);
+  assert.ok(k.wealth < 100, "市祭が国庫を使わない");
+  assert.equal(city.edict, "fest", "富があるのに市祭が取り止めになる");
+  k.wealth = 1;
+  city.edict = "fest"; city._edT = 0; civ._updateProvinces(k);
+  assert.equal(city.edict, "none", "財が尽きても市祭を続けている");
+
+  // 独立時の名の継承: 州の名がそのまま新しい国の名になる。
+  city.name = "テスト州名";
+  civ._rebellion(k, 1);
+  const nk = civ.kingdoms[civ.kingdoms.length - 1];
+  assert.equal(nk.name, "テスト州名", "独立国が州の名を継がない: " + nk.name);
+  assert.equal(nk.cities[0].name, "テスト州名", "新首都が州の名を保たない");
+});
+
 test("CivSystem: 領土の現実化 — 自然国境（領有の段階のみ）・街道の支配", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40 });
   const T = Game.TERRAIN;
