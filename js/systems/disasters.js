@@ -238,10 +238,12 @@
           if (city.buildings) {
             for (let bi = 0; bi < city.buildings.length; bi++) {
               const b = city.buildings[bi];
-              if (b.t === 3) continue; // 砦は揺れに耐える
+              if (b.t === 3 || b.site) continue; // 砦は揺れに耐える。建設中は状態でなく倒壊で失う
               b.cond = Math.max(0, (b.cond == null ? 1 : b.cond) - 0.25 * mag);
             }
           }
+          // 倒壊で建物が減れば都市の格も落ちる。
+          if (civ._cityLevel) city.level = civ._cityLevel(city);
         }
         k.unrest = Math.min(100, (k.unrest || 0) + 6 + mag * 18);
       }
