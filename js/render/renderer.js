@@ -1220,7 +1220,7 @@
         if (!bs) continue;
         for (let bi = 0; bi < bs.length; bi++) {
           const bd = bs[bi];
-          if (bd.t !== 5 && bd.t !== 9) continue; // FARM=5 / GRANARY=9 の周りを耕地に
+          if ((bd.t !== 5 && bd.t !== 9) || bd.site) continue; // FARM=5 / GRANARY=9 の周りを耕地に（建設中はまだ耕されない）
           for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
               if (dx === 0 && dy === 0) continue;
@@ -1704,6 +1704,37 @@
             const bh = bw * (img.height / img.width);
             const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
             const by = camera.worldToScreenY((bd.y + 0.5) * tile);
+            // 建設現場: 躯体が工事の進みに応じて下から立ち上がり、木の足場が組まれている。
+            //   完成した建物とはひと目で違い、街が「建てられていく」様が見える。
+            if (bd.site) {
+              const frac = Math.max(0.12, Math.min(1, (bd.prog || 0) / (bd.need || 1)));
+              const ph = bh * frac;
+              // 接地影（小さめ）。
+              ctx.fillStyle = "rgba(0,0,0,0.2)";
+              ctx.beginPath();
+              ctx.ellipse(bx, by - bh * 0.06, bw * 0.4, bw * 0.14, 0, 0, Math.PI * 2);
+              ctx.fill();
+              // 立ち上がる躯体（スプライトの下部 frac 分だけを描く＝建ちかけ）。
+              ctx.globalAlpha = 0.92;
+              ctx.drawImage(img, 0, img.height * (1 - frac), img.width, Math.max(1, img.height * frac),
+                (bx - bw * 0.5) | 0, (by - ph) | 0, bw | 0, Math.max(1, ph | 0));
+              ctx.globalAlpha = 1;
+              if (scale >= 3) {
+                // 木の足場: 両脇の支柱と横桟（工事の印）。
+                ctx.strokeStyle = "rgba(146,110,62,0.95)";
+                ctx.lineWidth = Math.max(1, scale * 0.07);
+                const lx = (bx - bw * 0.56) | 0, rx = (bx + bw * 0.56) | 0, top = by - bh * 1.04;
+                ctx.beginPath();
+                ctx.moveTo(lx, by); ctx.lineTo(lx, top);
+                ctx.moveTo(rx, by); ctx.lineTo(rx, top);
+                for (let s = 1; s <= 2; s++) { const yy = (by - bh * 0.34 * s) | 0; ctx.moveTo(lx, yy); ctx.lineTo(rx, yy); }
+                ctx.stroke();
+                // 資材（積まれた木材）を足元に。
+                ctx.fillStyle = "rgba(160,124,72,0.9)";
+                ctx.fillRect((bx + bw * 0.3) | 0, (by - Math.max(1, scale * 0.16)) | 0, (bw * 0.3) | 0 || 1, Math.max(1, scale * 0.16) | 0);
+              }
+              continue;
+            }
             // 接地影（建物の足元に落として街に立体感を出す）。
             ctx.fillStyle = "rgba(0,0,0,0.26)";
             ctx.beginPath();

@@ -2610,6 +2610,133 @@ test("CivSystem: 新しい建物 — 城壁(防備)と水道(衛生・給水)の
   assert.ok(mAqua < mNoAqua, "水道の衛生で死亡率が下がる: " + mAqua + " < " + mNoAqua);
 });
 
+test("CivSystem: 建設工事 — 着工費・工期・完成、建設中の建物は機能しない", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 7 });
+  const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  const city = k.cities[0];
+  const B = Game.BUILDING;
+
+  // 着工費: 城壁（費用6）は国庫に余裕（費用×1.5）が無ければ着工できない。
+  k.wealth = 5;
+  assert.equal(civ._beginBuild(k, city, 22, 20, B.WALLS), null, "国庫が乏しくても着工してしまう");
+  k.wealth = 20;
+  const site = civ._beginBuild(k, city, 22, 20, B.WALLS);
+  assert.ok(site && site.site === 1 && site.need > 0, "着工で建設現場ができない");
+  assert.ok(k.wealth < 20, "着工費が国庫から引かれない");
+
+  // 建設中は機能しない: 施設集計に入らず、職場としても選ばれない。
+  civ._recountFacilities(k);
+  assert.equal(k.facilities.walls, 0, "建設中の城壁が防備に数えられている");
+  assert.equal(civ._nearestFacility(k, 20, 20, B.WALLS), null, "建設中の建物が職場に選ばれる");
+
+  // 進捗（村人の助勢）: 維持の地力に応じて評価ごとに工事が進み、やがて完成する。
+  k.roleCount[2] = 20; k.tileCount = 10; k.wealth = 100; k.wars = {}; k.famine = false;
+  for (let i = 0; i < 120 && site.site; i++) civ._maintain(k);
+  assert.ok(!site.site, "工事がいつまでも完成しない: prog=" + site.prog + "/" + site.need);
+  civ._recountFacilities(k);
+  assert.ok(k.facilities.walls > 0, "完成した城壁が防備に数えられない");
+  assert.equal(city.level, civ._cityLevel(city), "完成時に都市の格が更新されない");
+
+  // 建築家の工事: 現場のそばに立つ職人が実際に建てる（腕を振るい、完成させる）。
+  const farmSite = civ._beginBuild(k, city, 24, 20, B.FARM);
+  assert.ok(farmSite, "農場（費用0）が着工できない");
+  const h = civ.people[0];
+  h.role = 2; h.x = 24.5; h.y = 20.5; h.alive = true;
+  for (let i = 0; i < 4000 && farmSite.site; i++) civ._roleTick(h, k, w, 20 * 60 + 24);
+  assert.ok(!farmSite.site, "建築家の工事で完成しない: prog=" + farmSite.prog);
+
+  // 木材のある国は工期が縮む。
+  k.res.timber = 5; k.wealth = 100;
+  const s2 = civ._beginBuild(k, city, 26, 20, B.SMITHY);
+  k.res.timber = 0;
+  const s3 = civ._beginBuild(k, city, 28, 20, B.SMITHY);
+  assert.ok(s2.need < s3.need, "木材が工期を縮めない: " + s2.need + " !< " + s3.need);
+});
+
+test("CivSystem: 修繕優先 — 壊れかけの建物は新築・工事より先に直される", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 9 });
+  const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  const city = k.cities[0];
+  const B = Game.BUILDING;
+  k.wealth = 100;
+
+  // 壊れかけ（cond<0.45）があるうちは新築を始めない。
+  city.buildings.push({ x: 22, y: 20, t: B.HOUSE, lvl: 1, cond: 0.3 });
+  const n0 = city.buildings.length;
+  for (let i = 0; i < 30; i++) civ._construct(k, city, w);
+  assert.equal(city.buildings.length, n0, "壊れかけを放置して新築を始めている");
+
+  // 建築家の手: 現場と壊れかけが並んでいたら、修繕が先（工事は待つ）。
+  const site = civ._beginBuild(k, city, 21, 21, B.FARM);
+  const h = civ.people[0];
+  h.role = 2; h.x = 21.5; h.y = 20.5; h.alive = true;
+  const dmg = city.buildings.find(function (b) { return b.cond === 0.3; });
+  for (let i = 0; i < 30; i++) civ._roleTick(h, k, w, 20 * 60 + 21); // 壊れかけ(<0.45)のうちだけ観測
+  assert.ok(dmg.cond > 0.3, "壊れかけが直されない");
+  assert.equal(site.prog, 0, "修繕より先に工事を進めている");
+
+  // 直し終えれば（軽傷になれば）工事に移る。
+  dmg.cond = 1;
+  for (let i = 0; i < 200; i++) civ._roleTick(h, k, w, 20 * 60 + 21);
+  assert.ok(site.prog > 0, "修繕が済んでも工事に移らない");
+
+  // 出張修繕: 自分の街に仕事が無ければ、近くの街の傷んだ建物へ出向く。
+  k.cities.push({ x: 32, y: 20, capital: false, level: 1, buildings: [
+    { x: 32, y: 20, t: B.HOUSE, lvl: 1, cond: 0.25 },
+  ] });
+  const tgt = civ._repairTargetNear(k, 20, 20, 25);
+  assert.ok(tgt && tgt.cond === 0.25, "近くの街の傷んだ建物が見つからない");
+});
+
+test("CivSystem: 建物のバグ修正 — 鉱山州の判定・破壊での格下げ・廃都に現場は残らない", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 8 });
+  const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {}, markDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  const city = k.cities[0];
+  const B = Game.BUILDING;
+
+  // _resTypeNear: 完成した鉱山を持つ都市は鉱山の州と判定される（旧: .type 参照バグで常に偽）。
+  city.buildings.push({ x: 22, y: 22, t: B.MINE, lvl: 1, cond: 1 });
+  assert.ok(civ._resTypeNear(city, Game.RESOURCE.ORE), "完成した鉱山が州の判定に効かない（.typeバグ）");
+  // 建設中の鉱山はまだ州の鉱山とはみなさない。
+  city.buildings = city.buildings.filter(function (b) { return b.t !== B.MINE; });
+  city.buildings.push({ x: 22, y: 22, t: B.MINE, lvl: 1, cond: 1, site: 1, prog: 0, need: 10 });
+  assert.ok(!civ._resTypeNear(city, Game.RESOURCE.ORE), "建設中の鉱山が州の判定に効いてしまう");
+  city.buildings.pop();
+
+  // 破壊での格下げ: 建物が倒壊すれば都市の格(level)も落ちる（旧: 上がる一方）。
+  for (let i = 0; i < 11; i++) city.buildings.push({ x: 24 + i, y: 24, t: B.HOUSE, lvl: 1, cond: 1 });
+  city.level = civ._cityLevel(city);
+  const lvlBefore = city.level;
+  assert.ok(lvlBefore >= 4, "前提: 建て込んだ都市の格が高い: " + lvlBefore);
+  for (let i = 0; i < city.buildings.length; i++) if (city.buildings[i].t === B.HOUSE) city.buildings[i].cond = 0.01;
+  civ.rand = function () { return 0; }; // 倒壊判定を必ず通す
+  k.wars = {}; k.famine = false; k.roleCount[2] = 0; k.wealth = 0;
+  civ._maintain(k);
+  assert.ok(city.level < lvlBefore, "倒壊しても都市の格が落ちない: " + city.level + " !< " + lvlBefore);
+
+  // 廃都: 建てかけの現場は残らず、完成した建物だけが廃都として遺る。
+  city.buildings = [
+    { x: 20, y: 20, t: B.KEEP, lvl: 1, cond: 1 },
+    { x: 26, y: 20, t: B.FARM, lvl: 1, cond: 1, site: 1, prog: 2, need: 6 },
+  ];
+  civ._abandonCities(k);
+  const gt = civ.ghostTowns[civ.ghostTowns.length - 1];
+  assert.equal(gt.buildings.length, 1, "廃都に建設現場が残っている");
+  assert.equal(gt.buildings[0].t, B.KEEP, "完成した建物が廃都に遺らない");
+});
+
 test("CivSystem: 家族 — 幼い子は親のそばで育ち、成人・死別で独り立ちする", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 12 });
   const w = new Game.World(40, 40); w.terrain.fill(Game.TERRAIN.GRASS);

@@ -49,10 +49,18 @@
   //   lvl: 普請で育ち、機能（生産・防備など）が増す。  cond: 戦火・飢饉・包囲で傷み、
   //   建築家と富で直る。荒れ果てれば倒壊して瓦礫になる。建物が「育ち・傷み・直る」。
   function mkBuilding(x, y, t) { return { x: x, y: y, t: t, lvl: 1, cond: 1 }; }
+  // 建設の費用（国庫から）と工期（工事量。建築家の腕と村人の助勢で進む）。index は BUILDING enum。
+  //   住居・耕地・木造の生業施設（工房・市・倉・兵舎・鉱山・港・酒場）は民が自力で建てるため無料
+  //   （富の乏しい建国期でも街は育つ＝貧困の罠を作らない）。石造の公共建築（神殿・学院・城壁・
+  //   水道）は国庫を要し、WONDER(11)は年単位の大事業。KEEP(3)は建国の中核＝即成（開拓の丸太砦）。
+  const BUILD_COST = [0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 60, 4, 0, 0, 6, 6];
+  const BUILD_WORK = [6, 8, 10, 0, 14, 6, 10, 10, 10, 10, 10, 80, 14, 10, 10, 18, 18];
   // 建物の機能上の実効重み: 段階で増し、状態で減る。新築の1段(lvl1,cond1)はちょうど 1.0
   //   ＝従来どおりの寄与（経済の基準を保つ）。育てば1を超え、荒れれば1を下回る。
   //   lvl/cond 未設定の旧データ・テスト用建物は新築（1.0）として扱う。
+  //   建設中(site)の建物はまだ機能しない（完成して初めて街の力になる）。
   function buildWeight(b) {
+    if (b.site) return 0;
     const lvl = b.lvl || 1;
     const cond = b.cond == null ? 1 : b.cond;
     return (1 + (lvl - 1) * CP.buildLvlBonus) * cond;
@@ -137,7 +145,9 @@
     // 大工の修繕: 建築家は傷んだ建物へ実際に足を運び、槌を振って直す（国全体の受動回復とは
     //   別の、目に見える手当て）。戦時・飢饉で朽ちてゆく街を、职人が現場で食い止める。
     repairSeekCond: 0.8,  // これ未満の状態の建物へ建築家が修繕に向かう
-    handRepair: 0.0022,   // そばに立つ建築家が1ティックに直す量（腕前で増減）
+    repairUrgent: 0.45,   // これ未満は「壊れかけ」＝新築・工事より修繕を優先する
+    handRepair: 0.003,    // そばに立つ建築家が1ティックに直す量（腕前で増減）
+    repairRange: 25,      // 自分の街が無事なら、この距離内の傷んだ街へ修繕に出向く
     socialRise: 0.003,
     socialRadius: 5,
     socialNeed: 5,       // 周囲の同胞がこれ未満だと孤独
@@ -487,6 +497,15 @@
     buildRuin: 0.12,       // この状態を下回ると倒壊（廃墟化）しうる
     buildRuinChance: 0.3,  // 荒廃した建物が1評価で倒壊する確率
     fireCondHit: 0.3,      // 延焼を浴びて焼け残った建物が失う状態
+    // 建設工事（建物は一瞬では建たない: 資材費を払い、工事が進んで完成する）
+    siteWork: 0.012,       // 建築家が現場で1ティックに進める工事量（×腕前）
+    sitePassive: 0.5,      // 1評価あたりの自然進捗（×維持の地力。村人総出の助勢）
+    siteTimberCut: 0.8,    // 木材資源を持つ国の工期係数（材が揃えば早く建つ）
+    siteCostMargin: 1.5,   // 着工に要する国庫の余裕（費用×この倍率が無ければ着工しない）
+    // 戦時の応急普請: 富める国は国庫で職人を雇い、戦の傷を直し続ける（貧しい国の街は荒れる）
+    warRepairMin: 30,      // この額を超える国庫があれば戦時も修繕を保てる
+    warRepairCost: 0.6,    // 応急普請の費用／評価（国庫から）
+    warRepairBoost: 0.05,  // 応急普請による修繕の上乗せ（荒廃の平衡点を引き上げる）
     // 交易と平和（経済的相互依存は戦争を抑える）
     tradePeace: 0.6,     // 主要交易相手とは開戦しにくい（相互依存）
     // 交易（取引）: 文明どうしが余剰と不足を交換し、双方が富む（比較優位）。
@@ -1007,7 +1026,10 @@
     for (let c = 0; c < k.cities.length; c++) {
       const city = k.cities[c];
       if (!city.buildings || !city.buildings.length) continue;
-      gt.push({ x: city.x, y: city.y, from: k.name, buildings: city.buildings });
+      // 建てかけの現場は住み手を失えばただの木組み＝廃都には残らない（完成した建物だけが遺る）。
+      const done = city.buildings.filter(function (b) { return !b.site; });
+      if (!done.length) continue;
+      gt.push({ x: city.x, y: city.y, from: k.name, buildings: done });
       if (gt.length > CP.ghostTownCap) gt.shift(); // 上限: 最古の廃都から静かに歴史へ消える
     }
     k.cities = [];
@@ -1420,17 +1442,30 @@
     const builders = (k.roleCount && k.roleCount[ROLE.BUILDER]) || 0;
     const wealthPerTile = k.wealth / Math.max(1, k.tileCount);
     const upkeep = Math.min(1, builders * 0.05 + Math.min(0.6, wealthPerTile * 0.6));
-    const repair = CP.buildRepair * (0.25 + upkeep);
+    let repair = CP.buildRepair * (0.25 + upkeep);
     // 平時で損耗源が無ければ建物は新築水準(1.0)へ収束する＝経済の基準を保つ。
     const stress = (atWar ? CP.buildWarDecay : 0) + (famine ? CP.buildFamineDecay : 0);
+    // 戦時・飢饉の応急普請: 国庫に余裕があれば金を費やして修繕を保つ（従来は損耗と修繕の
+    //   平衡点が cond≈0.5 に固定され、どれほど富んでも街が「壊れかけ」で荒れ続けた）。
+    if (stress > 0 && k.wealth > CP.warRepairMin) {
+      k.wealth -= CP.warRepairCost;
+      repair += CP.warRepairBoost;
+    }
     let ruined = 0;
     for (let c = 0; c < k.cities.length; c++) {
       const city = k.cities[c], bs = city.buildings;
       if (!bs || !bs.length) continue;
       const siegeWear = city.siege > 0.1 ? city.siege * CP.buildSiegeDecay : 0;
       const decay = stress + siegeWear;
+      const n0 = bs.length;
       for (let i = bs.length - 1; i >= 0; i--) {
         const b = bs[i];
+        // 建設現場: 村人総出の助勢で工事が進む（維持の地力＝人手と富が工期を縮める）。
+        if (b.site) {
+          b.prog += CP.sitePassive * (0.25 + upkeep);
+          if (b.prog >= b.need) this._finishSite(k, city, b);
+          continue;
+        }
         if (b.cond == null) b.cond = 1;
         b.cond += repair * (1 - b.cond) - decay;
         if (b.cond > 1) b.cond = 1;
@@ -1440,6 +1475,8 @@
           bs.splice(i, 1); ruined++;
         }
       }
+      // 破壊・倒壊で建物が減れば都市の格も落ちる（従来は上がる一方だった）。
+      if (bs.length !== n0) city.level = this._cityLevel(city);
     }
     if (ruined > 0) {
       k.unrest = Math.min(100, (k.unrest || 0) + ruined * 1.2);
@@ -1447,14 +1484,14 @@
     }
   };
 
-  // (x,y) から最も近い type の機能建築の座標を返す（職場探し）。
+  // (x,y) から最も近い type の機能建築の座標を返す（職場探し）。建設中はまだ働けない。
   CivSystem.prototype._nearestFacility = function (k, x, y, type) {
     let best = null, bd = 1e18;
     for (let c = 0; c < k.cities.length; c++) {
       const bs = k.cities[c].buildings;
       if (!bs) continue;
       for (let i = 0; i < bs.length; i++) {
-        if (bs[i].t !== type) continue;
+        if (bs[i].t !== type || bs[i].site) continue;
         const dx = bs[i].x - x, dy = bs[i].y - y, d = dx * dx + dy * dy;
         if (d < bd) { bd = d; best = bs[i]; }
       }
@@ -3774,7 +3811,7 @@
   // 都市の建物に鉱山があれば鉱脈の州とみなす（_oreSpotNear が未採掘のみ見るため補完）。
   CivSystem.prototype._resTypeNear = function (city, resType) {
     const bs = city.buildings;
-    if (bs) for (let i = 0; i < bs.length; i++) if (bs[i].type === BUILDING.MINE) return true;
+    if (bs) for (let i = 0; i < bs.length; i++) if (bs[i].t === BUILDING.MINE && !bs[i].site) return true;
     return false;
   };
 
@@ -4950,9 +4987,14 @@
         const city = this._cityAt(k, hcx, hcy);
         if (city) {
           this._construct(k, city, world); practice(h); h.prestige = (h.prestige || 0) + 0.06; // 普請で腕と名を上げる
-          // 修繕: 傷んだ建物があれば、うろつく代わりにそこへ向かう（現場で直す＝_roleTick が手当て）。
+          // 行き先の優先順: 壊れかけの建物（修繕が急務）＞ 建設現場 ＞ 軽い傷み。
+          //   現場ばかり追って修繕が永遠に後回しになるのを防ぐ（直すのが先）。
           const dmg = this._worstDamaged(city);
-          if (dmg) { h.gx = dmg.x; h.gy = dmg.y; h.state = 6; return; }
+          const urgent = dmg && (dmg.cond == null ? 1 : dmg.cond) < CP.repairUrgent;
+          let tgt = urgent ? dmg : (this._siteOf(city) || dmg);
+          // 自分の街が無事なら、近くの傷んだ街・現場へ出向く（職人は請われて旅する）。
+          if (!tgt) tgt = this._repairTargetNear(k, hcx, hcy, CP.repairRange);
+          if (tgt) { h.gx = tgt.x; h.gy = tgt.y; h.state = 6; return; }
         }
       } else {
         this._maybeFoundTown(h, k);
@@ -5010,10 +5052,32 @@
     if (!bs) return null;
     let worst = null, wc = CP.repairSeekCond;
     for (let i = 0; i < bs.length; i++) {
+      if (bs[i].site) continue; // 建設中は修繕でなく工事の対象
       const c = bs[i].cond == null ? 1 : bs[i].cond;
       if (c < wc) { wc = c; worst = bs[i]; }
     }
     return worst;
+  };
+
+  // (x,y) から r タイル以内の自国の街々から、職人が出向くべき先を探す。
+  //   最も傷んだ建物を優先し、無ければ建設現場。自分の街に仕事が無い建築家が
+  //   これで隣の傷んだ街へ渡り歩く（「壊れそうなのに誰も直さない」の残りを塞ぐ）。
+  CivSystem.prototype._repairTargetNear = function (k, x, y, r) {
+    const r2 = r * r;
+    let worst = null, wc = CP.repairSeekCond, site = null;
+    for (let c = 0; c < k.cities.length; c++) {
+      const cc = k.cities[c];
+      const dx = cc.x - x, dy = cc.y - y;
+      if (dx * dx + dy * dy > r2) continue;
+      const bs = cc.buildings; if (!bs) continue;
+      for (let i = 0; i < bs.length; i++) {
+        const b = bs[i];
+        if (b.site) { if (!site) site = b; continue; }
+        const cd = b.cond == null ? 1 : b.cond;
+        if (cd < wc) { wc = cd; worst = b; }
+      }
+    }
+    return worst || site;
   };
 
   // (x,y) が海に接する沿岸タイルか（4近傍に水）。
@@ -5106,12 +5170,61 @@
     return k.cities[0];
   };
 
+  // 都市に建設中の現場（site）があれば返す（1都市に同時1件＝人手と資材を集中する）。
+  CivSystem.prototype._siteOf = function (city) {
+    const bs = city && city.buildings;
+    if (bs) for (let i = 0; i < bs.length; i++) if (bs[i].site) return bs[i];
+    return null;
+  };
+
+  // 着工: 資材費（国庫）を確かめて払い、建設現場を置く。木材のある国は工期が縮む。
+  //   費用が払えなければ着工しない（蓄えの無い普請はしない）。戻り値は現場 or null。
+  CivSystem.prototype._beginBuild = function (k, city, x, y, t) {
+    const cost = BUILD_COST[t] || 0;
+    if (cost > 0 && (k.wealth || 0) < cost * CP.siteCostMargin) return null;
+    if (cost > 0) k.wealth -= cost;
+    const b = mkBuilding(x, y, t);
+    const work = BUILD_WORK[t] || 8;
+    b.site = 1; b.prog = 0;
+    b.need = work * ((k.res && k.res.timber > 0) ? CP.siteTimberCut : 1);
+    city.buildings.push(b);
+    return b;
+  };
+
+  // 竣工: 現場が完成して建物になる。都市の格を更新し、大きな公共建築は年代記に残す。
+  CivSystem.prototype._finishSite = function (k, city, b) {
+    delete b.site; delete b.prog; delete b.need;
+    b.cond = 1;
+    city.level = this._cityLevel(city);
+    if (b.t === BUILDING.WONDER) {
+      const wk = b.kind != null ? WONDER_KINDS[b.kind] : null;
+      this._logEvent("🏛 " + k.name + " が" + (wk ? wk.name : "大記念碑") + "を建立した");
+    } else if (b.t === BUILDING.WALLS) this._logEvent("🏰 " + (city.name || k.name) + " に城壁が築かれた");
+    else if (b.t === BUILDING.AQUEDUCT) this._logEvent("💧 " + (city.name || k.name) + " に水道が引かれた");
+    else if (b.t === BUILDING.ACADEMY) this._logEvent("📚 " + (city.name || k.name) + " に学院が開かれた");
+  };
+
+  // 都市の格（完成した建物の数から。建設中は数えない。破壊で下がる）。
+  CivSystem.prototype._cityLevel = function (city) {
+    const bs = city.buildings;
+    let n = 0;
+    if (bs) for (let i = 0; i < bs.length; i++) if (!bs[i].site) n++;
+    return 1 + ((n / 3) | 0);
+  };
+
   // 建築家が都市で建設/建て替えを行う（人間が街を作る）。
   // 住居だけでなく、時代と都市の必要に応じて農場・鍛冶場・市場・兵舎・神殿・穀倉を
   // バランスよく建て、人々の職場と国の機能を生み出す。
   CivSystem.prototype._construct = function (k, city, world) {
     if (!city.buildings) city.buildings = [];
     const bs = city.buildings;
+
+    // 壊れかけの建物があるうちは新築しない（直すのが先。放置して建て増す街は不自然）。
+    const hurt = this._worstDamaged(city);
+    if (hurt && (hurt.cond == null ? 1 : hurt.cond) < CP.repairUrgent) return;
+
+    // 既に工事中なら新たな普請は起こさない（現場に人手を集める）。建て替えだけは進む。
+    if (this._siteOf(city)) { this._rebuild(k, city); return; }
 
     // 大記念碑（ワンダー）: 発展した大国が首都に建立する誇りの大建造物（稀）。
     // 上限とは別枠で、満杯の首都でも建てられるよう最優先で判定する。
@@ -5122,11 +5235,12 @@
       if (!hasWonder) {
         const spot = this._buildSpot(world, k, city, BUILDING.WONDER);
         if (spot) {
-          const b = mkBuilding(spot.x, spot.y, BUILDING.WONDER);
-          b.kind = this._chooseWonderKind(k, this._coastal(world, spot.x, spot.y));
-          bs.push(b);
-          this._logEvent("🏛 " + k.name + " が" + WONDER_KINDS[b.kind].name + "を建立した");
-          return;
+          const b = this._beginBuild(k, city, spot.x, spot.y, BUILDING.WONDER);
+          if (b) {
+            b.kind = this._chooseWonderKind(k, this._coastal(world, spot.x, spot.y));
+            this._logEvent("🏗 " + k.name + " が" + WONDER_KINDS[b.kind].name + "の建立を始めた");
+            return;
+          }
         }
       }
     }
@@ -5149,14 +5263,10 @@
       has[t] = (has[t] || 0) + 1;
     }
 
-    // 鉱山: 領内に未採掘の鉱石があれば、そのタイルに鉱山を建てて採掘する。
+    // 鉱山: 領内に未採掘の鉱石があれば、そのタイルに鉱山を起工して採掘する。
     if (!has[BUILDING.MINE] && bs.length >= 2) {
       const ore = this._oreSpotNear(world, k, city);
-      if (ore) {
-        bs.push(mkBuilding(ore.x, ore.y, BUILDING.MINE));
-        city.level = 1 + ((bs.length / 3) | 0);
-        return;
-      }
+      if (ore && this._beginBuild(k, city, ore.x, ore.y, BUILDING.MINE)) return;
     }
 
     // 必要な建物を優先順位で選ぶ。基幹施設（工房・倉・市・兵舎）は原始的な形で早期から
@@ -5189,10 +5299,7 @@
     else want = tier;                                                      // さらに住居を増やす
 
     const spot = this._buildSpot(world, k, city, want);
-    if (spot) {
-      bs.push(mkBuilding(spot.x, spot.y, want));
-      city.level = 1 + ((bs.length / 3) | 0);
-    }
+    if (spot) this._beginBuild(k, city, spot.x, spot.y, want);
   };
 
   // 地方の方針に適う建物（未充足なら返す。無ければ null＝汎用の優先順位に委ねる）。
@@ -5252,8 +5359,8 @@
     let target = null;
     for (let i = 0; i < bs.length; i++) {
       const b = bs[i], t = b.t;
-      // 機能建築のみを育てる（住居・砦は対象外）。
-      if (t === BUILDING.HUT || t === BUILDING.HOUSE || t === BUILDING.MANOR || t === BUILDING.KEEP) continue;
+      // 機能建築のみを育てる（住居・砦・建設中は対象外）。
+      if (t === BUILDING.HUT || t === BUILDING.HOUSE || t === BUILDING.MANOR || t === BUILDING.KEEP || b.site) continue;
       const lvl = b.lvl || 1;
       if (lvl >= maxLvl) continue;
       if (!target || lvl < (target.lvl || 1)) target = b;
@@ -5271,6 +5378,7 @@
     const bs = city.buildings;
     for (let i = 0; i < bs.length; i++) {
       const t = bs[i].t;
+      if (bs[i].site) continue; // 建てかけの家は様式を変えない（工事を終えてから）
       if ((t === BUILDING.HUT || t === BUILDING.HOUSE || t === BUILDING.MANOR) && t < tier) { bs[i].t = tier; return; }
     }
   };
@@ -5312,7 +5420,7 @@
     if (cs) for (let ci = 0; ci < cs.length; ci++) {
       const c = cs[ci], bs = c.buildings; if (!bs || !bs.length) continue;
       let hasDwell = false;
-      for (let bi = 0; bi < bs.length; bi++) { if (DWELL_CAP[bs[bi].t]) { hasDwell = true; break; } }
+      for (let bi = 0; bi < bs.length; bi++) { if (DWELL_CAP[bs[bi].t] && !bs[bi].site) { hasDwell = true; break; } }
       if (!hasDwell) continue;
       const dx = c.x - h.x, dy = c.y - h.y, d = dx * dx + dy * dy;
       if (d < cd) { cd = d; city = c; }
@@ -5326,7 +5434,7 @@
     ax = ax < 0 ? 0 : ax >= W ? W - 1 : ax; ay = ay < 0 ? 0 : ay >= H ? H - 1 : ay;
     const bs = city.buildings; let best = null, bd = 1e9;
     for (let i = 0; i < bs.length; i++) {
-      const b = bs[i], cap = DWELL_CAP[b.t]; if (!cap) continue;
+      const b = bs[i], cap = DWELL_CAP[b.t]; if (!cap || b.site) continue; // 建てかけの家には住めない
       if (b._occDay !== day) { b._occ = 0; b._occDay = day; }  // 日替わりで収容をリセット
       if (b._occ >= cap) continue;                             // 満員の家には入れない
       const dx = b.x - ax, dy = b.y - ay, d = dx * dx + dy * dy;
@@ -5618,16 +5726,18 @@
     const W = world.width, SC = Game.TERRAIN.SCORCHED;
     let lost = 0;
     for (let c = 0; c < k.cities.length; c++) {
-      const bs = k.cities[c].buildings;
+      const city = k.cities[c], bs = city.buildings;
       if (!bs) continue;
+      const n0 = bs.length;
       for (let b = bs.length - 1; b >= 0; b--) {
         const bd = bs[b];
         if (bd.t === BUILDING.KEEP) continue; // 砦は焼け残る（都市の核）
         const ti = bd.y * W + bd.x;
         const ablaze = (burn && burn[ti] > 0) || world.terrain[ti] === SC;
-        if (ablaze && this.rand() < CP.fireBuildBurn) { bs.splice(b, 1); lost++; }
+        if (ablaze && (bd.site || this.rand() < CP.fireBuildBurn)) { bs.splice(b, 1); lost++; } // 建てかけの木組みはひとたまりもない
         else if (ablaze) { bd.cond = Math.max(0, (bd.cond == null ? 1 : bd.cond) - CP.fireCondHit); } // 焼け残りも傷む
       }
+      if (bs.length !== n0) city.level = this._cityLevel(city); // 焼失で都市の格も落ちる
     }
     if (lost > 0) {
       k.unrest = Math.min(100, (k.unrest || 0) + lost * 1.5);
@@ -5676,23 +5786,38 @@
       if (!h.gear && k.tools >= 1 && this.rand() < CP.equipChance) { h.gear = this._equipTier(k); k.tools -= 1; }
       return;
     }
-    // 建築家: そばに傷んだ建物があれば手を入れて直す（現場の修繕。腕の良い职人ほど早い）。
-    //   国全体の受動回復と別に、戦時・飢饉で朽ちてゆく街を職人が実際に食い止める。
+    // 建築家: そばの建設現場で工事を進め（最優先）、無ければ傷んだ建物を直す。
+    //   国全体の受動回復と別に、職人が実際に手を動かして街を建て、朽ちるのを食い止める。
     if (h.role === ROLE.BUILDER) {
-      let best = null, bc = 0.95;
+      const REACH2 = 6.25; // 現場に手が届く距離（2.5タイル）
+      let best = null, bc = 0.95, site = null, siteCity = null;
       for (let c = 0; c < k.cities.length; c++) {
         const cc = k.cities[c];
         const cdx = cc.x - h.x, cdy = cc.y - h.y;
         if (cdx * cdx + cdy * cdy > 400) continue; // 遠い都市の建物は見ない（負荷減）
         const bs = cc.buildings; if (!bs) continue;
         for (let i = 0; i < bs.length; i++) {
-          const b = bs[i], cond = b.cond == null ? 1 : b.cond;
-          if (cond >= bc) continue;
+          const b = bs[i];
           const dx = b.x + 0.5 - h.x, dy = b.y + 0.5 - h.y;
-          if (dx * dx + dy * dy <= 3.5) { bc = cond; best = b; }
+          if (dx * dx + dy * dy > REACH2) continue;
+          if (b.site) { if (!site) { site = b; siteCity = cc; } continue; }
+          const cond = b.cond == null ? 1 : b.cond;
+          if (cond < bc) { bc = cond; best = b; }
         }
       }
-      if (best) {
+      // 壊れかけ（cond < repairUrgent）の修繕は工事より先（直すのが先）。
+      if (best && bc < CP.repairUrgent) {
+        best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * ability(h));
+        practice(h);
+      } else if (site) {
+        // 工事: 腕の良い職人ほど早く建てる。完成させた者は名を上げる。
+        site.prog += CP.siteWork * ability(h);
+        practice(h);
+        if (site.prog >= site.need) {
+          this._finishSite(k, siteCity, site);
+          h.prestige = (h.prestige || 0) + 0.5; // 棟梁の誉れ
+        }
+      } else if (best) {
         best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * ability(h));
         practice(h); // 修繕も腕を磨く
       }
