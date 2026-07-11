@@ -244,6 +244,19 @@ html, body {
 .toolbar::-webkit-scrollbar { width: 7px; }
 .toolbar::-webkit-scrollbar-thumb { background: rgba(120, 150, 210, 0.4); border-radius: 4px; }
 
+/* 神の力パネルの折りたたみ（見出しクリック）: 地図を広く見たい時に畳める。 */
+.toolbar .panel-head { cursor: pointer; user-select: none; -webkit-user-select: none; }
+.toolbar .panel-head::before {
+  content: "▾"; margin-right: 6px; font-size: 10px; color: var(--text-faint);
+}
+.toolbar.folded .panel-head::before { content: "▸"; }
+.toolbar.folded .panel-head { padding-bottom: 0; margin-bottom: 0; border-bottom: none; }
+.toolbar.folded .tool-buttons,
+.toolbar.folded .tool-selected,
+.toolbar.folded .brush-control,
+.toolbar.folded .regen-btn,
+.toolbar.folded .hint { display: none; }
+
 .tool-buttons { display: flex; flex-direction: column; gap: 4px; }
 
 .tool-group-label {
@@ -327,7 +340,7 @@ html, body {
 .sidebar {
   position: fixed;
   top: 56px; right: 12px;
-  width: 194px;
+  width: 214px;
   max-height: calc(100vh - 56px - 196px);
   display: flex; flex-direction: column; gap: 9px;
   z-index: 12;
@@ -356,6 +369,11 @@ html, body {
 .hud-chip .hc-val {
   font-size: 12px; font-weight: 800; color: #eef3fc;
   font-variant-numeric: tabular-nums;
+}
+/* チップの常時ラベル: アイコンの意味を推測させない（見やすさの核）。 */
+.hud-chip .hc-lb {
+  margin-left: auto; font-size: 9px; font-weight: 700;
+  color: var(--text-faint); letter-spacing: 0.02em; flex: 0 0 auto;
 }
 
 /* 世界の情勢サマリ（地図の情勢バッジと対応する記号＋国数） */
@@ -389,6 +407,14 @@ html, body {
   color: #b6c6e8; cursor: pointer;
   border-bottom: 1px solid var(--border); flex: 0 0 auto;
 }
+/* 開閉シェブロン: 折りたためることを一目で示す（▾=開 / ▸=閉）。 */
+.nations-header::before {
+  content: "▾"; margin-right: 6px; font-size: 10px;
+  color: var(--text-faint); transition: transform 0.15s ease;
+}
+.hud.collapsed .nations-header::before,
+.nations.collapsed .nations-header::before { content: "▸"; }
+.nations-header > span:first-of-type { margin-right: auto; }
 .nations-header:hover { color: #e3ebfa; }
 .nations-count {
   font-weight: 800; color: #eaf0fb;

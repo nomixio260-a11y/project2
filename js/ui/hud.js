@@ -29,15 +29,15 @@
     this.el = el;
     this.rows = {};
     this.history = [];
-    // [key, アイコン, 説明（ツールチップ）]
+    // [key, アイコン, ラベル（常時表示＝アイコンの意味がすぐ分かる）]
     const defs = [
       ["civpop", "👥", "人口"],
-      ["kingdoms", "🏰", "王国数"],
-      ["nomads", "🚶", "放浪者"],
-      ["pop", "🐾", "総個体数"],
-      ["herb", "🦌", "草食動物"],
-      ["pred", "🐺", "肉食動物"],
-      ["fires", "🔥", "延焼"],
+      ["kingdoms", "🏰", "国"],
+      ["nomads", "🚶", "放浪"],
+      ["pop", "🐾", "野生"],
+      ["herb", "🦌", "草食"],
+      ["pred", "🐺", "肉食"],
+      ["fires", "🔥", "火災"],
       ["fps", "⚡", "FPS"],
     ];
     el.innerHTML = "";
@@ -63,6 +63,7 @@
     // スパークライン。
     const spark = document.createElement("canvas");
     spark.className = "hud-spark";
+    spark.title = "人口の推移（時間で右へ流れるグラフ）";
     spark.width = 150;
     spark.height = 34;
     body.appendChild(spark);
@@ -83,8 +84,12 @@
       const v = document.createElement("span");
       v.className = "hc-val";
       v.textContent = "0";
+      const lb = document.createElement("span");
+      lb.className = "hc-lb";
+      lb.textContent = defs[i][2]; // ラベルを常時表示（アイコン頼みにしない）
       chip.appendChild(ic);
       chip.appendChild(v);
+      chip.appendChild(lb);
       chips.appendChild(chip);
       this.rows[key] = v;
     }
@@ -211,15 +216,15 @@
     }
     // 値が 0 の項目は出さない（情勢が静かなら簡潔に）。
     const parts = [];
-    if (wars) parts.push(['⚔', wars, 'crit']);
-    if (famine) parts.push(['🌾', famine, 'warn']);
-    if (plague) parts.push(['🦠', plague, 'warn']);
-    if (revolt) parts.push(['✊', revolt, 'warn']);
-    if (golden) parts.push(['✨', golden, 'good']);
+    if (wars) parts.push(['⚔', wars, 'crit', '交戦中の国']);
+    if (famine) parts.push(['🌾', famine, 'warn', '飢饉の国']);
+    if (plague) parts.push(['🦠', plague, 'warn', '疫病の国']);
+    if (revolt) parts.push(['✊', revolt, 'warn', '不穏（高い不満）の国']);
+    if (golden) parts.push(['✨', golden, 'good', '黄金時代の国']);
     if (!parts.length) return '<span class="hud-situ-calm">☮ 世界は平穏</span>';
     let html = "";
     for (let i = 0; i < parts.length; i++) {
-      html += '<span class="hud-situ-b ' + parts[i][2] + '">' + parts[i][0] + " " + parts[i][1] + "</span>";
+      html += '<span class="hud-situ-b ' + parts[i][2] + '" title="' + parts[i][3] + '">' + parts[i][0] + " " + parts[i][1] + "</span>";
     }
     return html;
   };
