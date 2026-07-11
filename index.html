@@ -49,8 +49,13 @@
   <!-- 設定パネル（settings.js が中身を生成） -->
   <div id="settings-panel" class="settings-panel panel"></div>
 
-  <!-- モバイルでツールバーを開閉するトグル -->
-  <button id="toolbar-toggle" class="toolbar-toggle" aria-label="道具">🪄</button>
+  <!-- モバイル下部ナビ（スマホのみ表示。道具・情報・世界・設定をシートで開閉） -->
+  <nav id="bottombar" class="bottombar" aria-label="メニュー">
+    <button class="bb-btn" data-sheet="tools"><span class="bb-ic">🪄</span><span class="bb-lb">道具</span></button>
+    <button class="bb-btn" data-sheet="info"><span class="bb-ic">📊</span><span class="bb-lb">情報</span></button>
+    <button class="bb-btn" data-sheet="overview"><span class="bb-ic">🌍</span><span class="bb-lb">世界</span></button>
+    <button class="bb-btn" data-sheet="settings"><span class="bb-ic">⚙️</span><span class="bb-lb">設定</span></button>
+  </nav>
 
   <!-- ツールバー（toolbar.js が中身を生成） -->
   <aside id="toolbar" class="toolbar panel">
@@ -64,7 +69,7 @@
     <button id="regen" class="regen-btn">🌍 新しい世界</button>
     <div class="hint">
       <b>PC</b> WASD/矢印・右ドラッグで移動 · ホイールでズーム · クリックで使用<br>
-      <b>スマホ</b> 1本指で移動・タップで配置 · 2本指でズーム<br>
+      <b>スマホ</b> ドラッグで移動 · タップで配置 · 長押しで調べる · 2本指でズーム<br>
       <b>K</b> 人間を置く（集まり国を興す） · <b>P</b> 一時停止
     </div>
   </aside>
@@ -126,6 +131,7 @@
   <script src="js/ui/mapview.js"></script>
   <script src="js/ui/toasts.js"></script>
   <script src="js/ui/persistence.js"></script>
+  <script src="js/ui/mobilenav.js"></script>
   <script src="js/ui/help.js"></script>
   <script src="js/engine/engine.js"></script>
   <!-- シミュレーションシステム（engine の後、main の前） -->

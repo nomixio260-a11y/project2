@@ -173,9 +173,11 @@ html, body {
 .mvl-sw { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.4); flex: 0 0 auto; }
 
 @media (max-width: 680px) {
-  .topbar-select { padding: 5px 8px; font-size: 11px; max-width: 92px; }
-  /* スマホ: ミニマップ(左下)とヘルプの間。畳んだツールバーの上の空き。 */
-  .mapview-legend { left: 124px; bottom: 12px; max-width: 110px; padding: 6px 8px; }
+  /* スマホ: ミニマップ(左下)の右隣・下部ナビの上。 */
+  .mapview-legend {
+    left: 122px; bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    max-width: 130px; padding: 6px 8px;
+  }
 }
 
 /* 世界の概観パネル */
@@ -559,13 +561,19 @@ html, body {
 .insp-dead { font-size: 12px; color: var(--text-faint); font-style: italic; padding: 4px 0; }
 
 @media (max-width: 680px) {
-  /* 狭い画面では下からのシートにし、上部バー・サイドバー・🪄トグルと衝突させない。
-     ミニマップ/ヘルプの上に重なるが、調べている間の一時的な前面カードとして扱う。 */
+  /* 狭い画面では下からのシートにし、下部ナビのすぐ上に重ねる。
+     長い内容は中身だけスクロールし、閉じるボタンは常に見える。 */
   .inspector {
-    left: 8px; right: 8px; bottom: 8px; top: auto;
+    left: 8px; right: 8px; top: auto;
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
     width: auto; transform: translateY(8px); z-index: 16;
+    max-height: 52vh; display: none; flex-direction: column;
   }
-  .inspector.show { transform: translateY(0); }
+  .inspector.show { display: flex; transform: translateY(0); }
+  .inspector .insp-head { flex: 0 0 auto; }
+  .inspector .insp-body { overflow-y: auto; min-height: 0; -webkit-overflow-scrolling: touch; }
+  /* 触りやすい操作ボタン。 */
+  .insp-follow, .insp-close { padding: 7px 12px; font-size: 12px; }
 }
 
 /* ===== イベント通知トースト ===== */
@@ -640,73 +648,140 @@ html, body {
 .legend-ico { width: 16px; text-align: center; flex: 0 0 auto; font-size: 13px; }
 .help-foot { margin-top: 14px; font-size: 11px; color: var(--text-faint); text-align: center; }
 
-/* ===== モバイルトグル ===== */
-.toolbar-toggle {
-  display: none; position: fixed; top: 52px; left: 12px; z-index: 18;
-  width: 46px; height: 46px;
-  border: 1px solid var(--border); border-radius: 13px;
-  background: rgba(16, 22, 40, 0.94); color: var(--text);
-  font-size: 20px; cursor: pointer; box-shadow: var(--shadow);
+/* ===== モバイル下部ナビ（スマホのみ表示） ===== */
+.bottombar {
+  display: none;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 22;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding: 5px 8px calc(5px + env(safe-area-inset-bottom, 0px));
+  gap: 6px;
+  background: linear-gradient(0deg, rgba(9, 12, 22, 0.98), rgba(9, 12, 22, 0.9));
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
 }
-.toolbar-toggle.on {
-  background: linear-gradient(180deg, var(--accent), #3f6fd0);
-  color: #fff; border-color: transparent;
+.bb-btn {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid transparent; border-radius: 12px;
+  background: transparent; color: var(--text-dim); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s, color 0.12s;
+}
+.bb-btn:active { background: rgba(120, 150, 210, 0.16); }
+.bb-ic { font-size: 19px; line-height: 1.2; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.bb-lb { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; }
+.bb-btn.on {
+  background: linear-gradient(180deg, rgba(91, 141, 239, 0.95), rgba(63, 111, 208, 0.95));
+  color: #fff; border-color: rgba(156, 193, 255, 0.4);
 }
 
 /* ===== レスポンシブ ===== */
 @media (max-width: 680px) {
+  /* 下部ナビを出す。パネル類はナビから開く「下からのシート」になる。 */
+  .bottombar { display: flex; }
+
   .brand-name { display: none; }
-  /* 上部バーが画面からはみ出さないよう各操作を詰める（時計・地図選択・設定が見切れない）。 */
-  .topbar { height: 44px; padding: 0 8px; gap: 6px; }
+  /* 上部バー: 概観・設定は下部ナビへ移したので、残る操作を触りやすい大きさに保つ。 */
+  .topbar { height: 48px; padding: 0 8px; gap: 6px; }
   .sim-cluster { gap: 3px; padding: 3px; }
-  .sim-pause { width: 28px; height: 26px; font-size: 13px; }
+  .sim-pause { width: 34px; height: 30px; font-size: 14px; }
   .speed-control { gap: 2px; }
-  .speed-btn { min-width: 20px; padding: 4px 3px; font-size: 10px; }
+  .speed-btn { min-width: 26px; padding: 7px 4px; font-size: 10.5px; }
   .topbar-right { gap: 5px; }
-  .topbar-clock { font-size: 10.5px; padding: 4px 8px; }
-  .topbar-select { padding: 4px 6px; font-size: 10.5px; max-width: 78px; }
-  .topbar-btn { width: 28px; height: 28px; font-size: 13px; }
+  .topbar-clock { font-size: 11px; padding: 6px 9px; }
+  .topbar-select { padding: 7px 8px; font-size: 11px; max-width: 96px; }
+  .topbar-btn { display: none; } /* 📊/⚙ は下部ナビの「世界」「設定」へ */
 
-  .toolbar-toggle { display: grid; place-items: center; }
-
+  /* 道具シート: 下部ナビの上から出る。ボタンは指で押しやすい大きさに。 */
   .toolbar {
-    top: auto; bottom: 0; left: 0; width: 100%;
-    max-height: 60vh; border-radius: 20px 20px 0 0;
+    top: auto; left: 0; width: 100%;
+    bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    max-height: calc(66vh - 56px); border-radius: 20px 20px 0 0;
     border-left: none; border-right: none; border-bottom: none;
-    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+    padding: 12px 14px 12px;
     transform: translateY(0); transition: transform 0.25s ease;
   }
-  .toolbar.collapsed { transform: translateY(100%); }
-  .tool-grid { grid-template-columns: repeat(5, 1fr); gap: 6px; }
-  .tb-label { font-size: 9.5px; }
+  .toolbar.collapsed { transform: translateY(calc(100% + 80px)); }
+  .tool-grid { grid-template-columns: repeat(4, 1fr); gap: 7px; }
+  .tool-btn { padding: 10px 2px 9px; gap: 3px; }
+  .tb-icon { font-size: 21px; }
+  .tb-label { font-size: 10.5px; }
+  .tb-key { display: none; } /* ホットキーはタッチでは意味を持たない */
+  .brush-control input[type="range"] { height: 30px; }
+  .regen-btn { padding: 12px; font-size: 14px; }
   .hint { display: none; }
 
-  .sidebar { top: 50px; right: 8px; width: 146px; max-height: calc(100vh - 50px - 128px); }
-  .hud-chips { grid-template-columns: 1fr 1fr; }
+  /* 情報シート: HUD・諸国・年代記をまとめて下から開く（既定は閉。ナビの「情報」で開閉）。 */
+  .sidebar {
+    top: auto; left: 0; right: 0; width: 100%;
+    bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    max-height: calc(64vh - 56px);
+    padding: 10px 10px 10px;
+    background: var(--panel);
+    border: 1px solid var(--border); border-bottom: none;
+    border-radius: 20px 20px 0 0;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    transform: translateY(calc(100% + 80px)); transition: transform 0.25s ease;
+    z-index: 15;
+  }
+  .sidebar.open { transform: translateY(0); }
+  .sidebar .panel { box-shadow: none; }
+  /* シート内は各パネルを自然な高さで縦に並べ、シート全体をスクロールする
+     （flex収縮で諸国パネルが潰れないように）。 */
+  .sidebar > .panel { flex: 0 0 auto; }
+  .hud-chips { grid-template-columns: 1fr 1fr 1fr; }
+  .nations-body { max-height: 30vh; }
+  .nation-row { padding: 9px 8px; }
+  .nations-header { padding: 10px 11px; }
+  .chronicle .chronicle-body { max-height: 24vh; }
+  .chronicle-row { padding: 4px 2px; font-size: 11px; }
 
-  /* 🪄トグル(左上)に重ならないよう右へずらす。 */
-  .coords { bottom: auto; top: 54px; left: 66px; max-width: 48vw; }
+  /* 概観・設定パネル: 画面幅いっぱいの前面カードに。 */
+  .overview-panel, .settings-panel {
+    left: 8px; right: 8px; width: auto; top: 56px;
+    max-height: calc(100vh - 56px - 70px - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    z-index: 21;
+  }
+  .set-row { padding: 11px 2px; font-size: 13px; }
+  .set-switch { width: 40px; height: 22px; }
+  .set-switch::after { width: 18px; height: 18px; }
+  .set-toggle:checked + .set-switch::after { transform: translateX(18px); }
+  .set-btn { padding: 10px 4px; }
+
+  /* 座標表示はホバー前提（マウス用）なのでタッチでは出さない。 */
+  .coords { display: none; }
 
   .minimap {
-    bottom: 12px; top: auto; left: 12px; right: auto;
+    top: auto; left: 10px; right: auto;
+    bottom: calc(66px + env(safe-area-inset-bottom, 0px));
     width: 104px !important; height: 104px !important;
   }
-  .help-toggle { left: auto; right: 124px; bottom: 16px; }
+  .help-toggle {
+    left: auto; right: 10px;
+    bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+    width: 38px; height: 38px; font-size: 17px;
+    z-index: 11; /* シート類（道具12・情報15）の下に隠れる＝重なって邪魔しない */
+  }
+
+  /* トースト: 上部バー直下・タップしやすい高さ。 */
+  .toasts { top: 56px; }
 }
 
 @media (max-height: 460px) and (max-width: 900px) {
   .hint, .minimap { display: none; }
 }
 
-/* 極小幅: さらに詰めて上部バーの見切れを防ぐ（ブランド章を隠し、操作を最小化）。 */
+/* 極小幅: さらに詰めて上部バーの見切れを防ぐ（ブランド章を隠す）。 */
 @media (max-width: 430px) {
   .brand { display: none; }
   .topbar { gap: 4px; padding: 0 6px; }
-  .sim-pause { width: 24px; height: 24px; }
-  .speed-btn { min-width: 16px; padding: 4px 2px; font-size: 9px; }
-  .topbar-clock { font-size: 10px; padding: 3px 6px; }
-  .topbar-select { max-width: 64px; font-size: 10px; padding: 4px 5px; }
-  .topbar-btn { width: 26px; height: 26px; font-size: 12px; }
+  .sim-pause { width: 30px; height: 28px; }
+  .speed-btn { min-width: 21px; padding: 6px 3px; font-size: 10px; }
+  .topbar-clock { font-size: 10px; padding: 5px 7px; }
+  .topbar-select { max-width: 76px; font-size: 10.5px; padding: 6px 6px; }
 }
 
 /* 設定パネルのデータ操作（保存・読込・画像） */

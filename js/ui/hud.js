@@ -108,11 +108,8 @@
       self.collapsed = !self.collapsed;
       el.classList.toggle("collapsed", self.collapsed);
     });
-    // 既定: 携帯では畳んでおく（邪魔にならないように）。
-    if (Game.device && Game.device.isPhone) {
-      this.collapsed = true;
-      el.classList.add("collapsed");
-    }
+    // 携帯ではサイドバー全体が「情報」シート（下部ナビで開閉）になるため、
+    // シート内の各パネルは開いたままにする（二重の折りたたみにしない）。
 
     this.clockEl = document.getElementById("clock");
   };

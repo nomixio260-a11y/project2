@@ -40,11 +40,7 @@
       self.collapsed = !self.collapsed;
       el.classList.toggle("collapsed", self.collapsed);
     });
-    // 既定: 携帯では畳む。
-    if (Game.device && Game.device.isPhone) {
-      this.collapsed = true;
-      el.classList.add("collapsed");
-    }
+    // 携帯ではサイドバー全体が「情報」シート（下部ナビで開閉）になるため、畳まない。
   };
 
   Chronicle.tick = function (dt) {

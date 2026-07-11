@@ -124,6 +124,7 @@
 
   // ===== タッチ操作 =====
   // 1本指ドラッグ = 視点移動（パン） / 1本指タップ = ツール適用 /
+  // 1本指長押し = 調べる（その場の人・国・地形をインスペクタで開く） /
   // 2本指 = パン + ピンチズーム。
   // 「動かそうとしただけで配置/地形変更される」を防ぐため、指が一定距離
   // 動いたらパン扱いにし、タップ（ほぼ動かさず離す）だけツールを適用する。
@@ -131,6 +132,24 @@
     const self = this;
     const canvas = this.canvas;
     const TAP_SLOP = 12; // これ以上動いたらタップではなくドラッグ
+    const LONG_PRESS_MS = 550; // 長押し＝調べる の判定時間
+
+    function clearLongPress() {
+      if (self._lpTimer) { clearTimeout(self._lpTimer); self._lpTimer = null; }
+    }
+    function armLongPress(sx, sy) {
+      clearLongPress();
+      self._lpTimer = setTimeout(function () {
+        self._lpTimer = null;
+        // まだタップ待ち（動かしていない・離していない）なら「調べる」を発動。
+        if (self.touch && self.touch.mode === "pending" && self.touch.moved <= TAP_SLOP) {
+          self.touch.mode = "inspected"; // 離した時のツール適用を抑止
+          const t = self.camera.screenToTile(sx, sy);
+          if (Game.inspector && self.world.inBounds(t.x, t.y)) Game.inspector.pickAt(t.x, t.y);
+          if (navigator.vibrate) navigator.vibrate(18); // 触覚で「拾えた」を伝える
+        }
+      }, LONG_PRESS_MS);
+    }
 
     function touchMid(t0, t1) {
       return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
@@ -146,13 +165,15 @@
       function (e) {
         e.preventDefault();
         if (e.touches.length === 1) {
-          // 1本指: まだ何もしない（タップかドラッグか確定するまで待つ）。
+          // 1本指: まだ何もしない（タップかドラッグか長押しか確定するまで待つ）。
           const t = e.touches[0];
           self.gesture = null;
           self.touch = { sx: t.clientX, sy: t.clientY, lx: t.clientX, ly: t.clientY, moved: 0, mode: "pending" };
           self._updateMouseTile(t.clientX, t.clientY);
+          armLongPress(t.clientX, t.clientY);
         } else if (e.touches.length === 2) {
           // 2本指: パン/ズーム。配置はしない。
+          clearLongPress();
           self.touch = null;
           const t0 = e.touches[0], t1 = e.touches[1];
           const mid = touchMid(t0, t1);
@@ -173,9 +194,10 @@
           self.touch.lx = t.clientX;
           self.touch.ly = t.clientY;
           self.touch.moved += Math.abs(dx) + Math.abs(dy);
-          // 一定距離動いたら「パン」に確定。
+          // 一定距離動いたら「パン」に確定（長押し判定も解除）。
           if (self.touch.mode === "pending" && self.touch.moved > TAP_SLOP) {
             self.touch.mode = "pan";
+            clearLongPress();
           }
           if (self.touch.mode === "pan") {
             self.camera.panByScreen(dx, dy);
@@ -196,6 +218,7 @@
     );
 
     function endTouch(e) {
+      clearLongPress();
       if (e.touches.length === 0) {
         // 指が全部離れた。タップ（ほぼ動かしていない）ならツールを1回適用。
         if (self.touch && self.touch.mode === "pending" && self.touch.moved <= TAP_SLOP) {
