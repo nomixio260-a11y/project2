@@ -25,6 +25,16 @@
       this.toolMeta = {};
       const self = this;
 
+      // 見出しクリックでパネルを折りたたむ（デスクトップ。地図を広く見たい時に畳める）。
+      //   モバイルの開閉（.collapsed / #toolbar-toggle）とは独立した .folded を使う。
+      const foldPanel = document.getElementById("toolbar");
+      const head = foldPanel ? foldPanel.querySelector(".panel-head") : null;
+      if (head && !head._foldWired) {
+        head._foldWired = true;
+        head.title = "クリックで折りたたみ";
+        head.addEventListener("click", function () { foldPanel.classList.toggle("folded"); });
+      }
+
       // グループごとに仕分け。
       const byGroup = {};
       Game.godpowers.list.forEach(function (tool) {
