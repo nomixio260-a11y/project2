@@ -171,6 +171,7 @@
     if (Game.overview) Game.overview.init();
     if (Game.mapview) Game.mapview.init();
     if (Game.toasts) Game.toasts.init();
+    if (Game.mobilenav) Game.mobilenav.init();
     if (Game.help) Game.help.init();
 
     // リサイズ / 端末回転対応。カメラには CSSピクセルを渡す。

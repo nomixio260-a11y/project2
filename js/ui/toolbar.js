@@ -128,18 +128,11 @@
         });
       }
 
-      // モバイル: ツールバー開閉トグル。狭い画面では既定で畳んでおき、
-      // 地図とミニマップを覆い隠さないようにする（🪄 で開く）。
+      // モバイル: 狭い画面では既定で畳んでおき、地図を覆い隠さないようにする。
+      // 開閉は下部ナビ（mobilenav.js の「道具」シート）が担う。
       const toolbarEl = document.getElementById("toolbar");
-      const toggle = document.getElementById("toolbar-toggle");
       if (toolbarEl && window.matchMedia && window.matchMedia("(max-width: 680px)").matches) {
         toolbarEl.classList.add("collapsed");
-      }
-      if (toggle) {
-        toggle.addEventListener("click", function () {
-          toolbarEl.classList.toggle("collapsed");
-          toggle.classList.toggle("on", !toolbarEl.classList.contains("collapsed"));
-        });
       }
 
       this.setActive(Game.state.activeToolId);

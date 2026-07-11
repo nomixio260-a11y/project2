@@ -132,13 +132,13 @@ test("レスポンシブ: スマホ縦サイズでcanvasが画面いっぱいに
 
   const layout = await page.evaluate(() => {
     const canvas = document.getElementById("game");
-    const toggle = document.getElementById("toolbar-toggle");
+    const bar = document.getElementById("bottombar");
     return {
       cssW: canvas.clientWidth,
       cssH: canvas.clientHeight,
       // 高DPI: 実バッファは CSS の deviceScaleFactor 倍
       bufW: canvas.width,
-      toggleVisible: getComputedStyle(toggle).display !== "none",
+      barVisible: getComputedStyle(bar).display !== "none",
       innerW: window.innerWidth,
       innerH: window.innerHeight,
     };
@@ -147,7 +147,61 @@ test("レスポンシブ: スマホ縦サイズでcanvasが画面いっぱいに
   assert.equal(layout.cssW, layout.innerW, "canvas幅が画面に合っていない");
   assert.equal(layout.cssH, layout.innerH, "canvas高さが画面に合っていない");
   assert.ok(layout.bufW >= layout.cssW * 2, "高DPIバッファになっていない: " + layout.bufW);
-  assert.ok(layout.toggleVisible, "モバイルのツールバートグルが表示されていない");
+  assert.ok(layout.barVisible, "モバイルの下部ナビが表示されていない");
+  assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
+  await page.close();
+});
+
+test("モバイルUI: 下部ナビでシートが排他的に開閉し、ツール選択で道具シートが閉じる", async () => {
+  const { page, errors } = await openPage({
+    width: 390,
+    height: 844,
+    isMobile: true,
+    hasTouch: true,
+  });
+
+  const result = await page.evaluate(async () => {
+    const bar = document.getElementById("bottombar");
+    const toolbar = document.getElementById("toolbar");
+    const sidebar = document.getElementById("sidebar");
+    const btn = (k) => bar.querySelector('.bb-btn[data-sheet="' + k + '"]');
+    const out = {};
+
+    // 初期状態: 道具シートは畳まれ、情報シートは閉じている。
+    out.initToolsClosed = toolbar.classList.contains("collapsed");
+    out.initInfoClosed = !sidebar.classList.contains("open");
+
+    // 「道具」で開く。
+    btn("tools").click();
+    out.toolsOpen = !toolbar.classList.contains("collapsed");
+
+    // 「情報」に切り替えると道具は閉じる（排他）。
+    btn("info").click();
+    out.infoOpen = sidebar.classList.contains("open");
+    out.toolsClosedAfterInfo = toolbar.classList.contains("collapsed");
+
+    // もう一度「情報」で閉じる。
+    btn("info").click();
+    out.infoClosedAgain = !sidebar.classList.contains("open");
+
+    // 道具シートでツールを選ぶと自動で閉じる。
+    btn("tools").click();
+    const toolBtn = document.querySelector('#tool-buttons .tool-btn[data-tool-id="water"]');
+    toolBtn.click();
+    await new Promise((r) => setTimeout(r, 250));
+    out.toolsAutoClosed = toolbar.classList.contains("collapsed");
+    out.waterActive = Game.state.activeToolId === "water";
+    return out;
+  });
+
+  assert.ok(result.initToolsClosed, "初期状態で道具シートが開いている");
+  assert.ok(result.initInfoClosed, "初期状態で情報シートが開いている");
+  assert.ok(result.toolsOpen, "「道具」でシートが開かない");
+  assert.ok(result.infoOpen, "「情報」でシートが開かない");
+  assert.ok(result.toolsClosedAfterInfo, "シートが排他になっていない");
+  assert.ok(result.infoClosedAgain, "「情報」の再タップで閉じない");
+  assert.ok(result.toolsAutoClosed, "ツール選択後に道具シートが閉じない");
+  assert.ok(result.waterActive, "ツール選択が反映されていない");
   assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
   await page.close();
 });
