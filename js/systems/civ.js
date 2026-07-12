@@ -48,7 +48,16 @@
   // 建物を生成する。すべての建物は段階(lvl 1..)と状態(cond 0..1)を持つ。
   //   lvl: 普請で育ち、機能（生産・防備など）が増す。  cond: 戦火・飢饉・包囲で傷み、
   //   建築家と富で直る。荒れ果てれば倒壊して瓦礫になる。建物が「育ち・傷み・直る」。
-  function mkBuilding(x, y, t) { return { x: x, y: y, t: t, lvl: 1, cond: 1 }; }
+  //   全フィールドをここで宣言して隠れクラスを一本化する（後からの追加・delete は
+  //   メガモルフィックICを生み、tick 全体を遅くする＝20倍速のFPS低下の主因だった）。
+  function mkBuilding(x, y, t) {
+    return {
+      x: x, y: y, t: t, lvl: 1, cond: 1,
+      site: 0, prog: 0, need: 0,   // 建設現場（site=1 の間は工事中）
+      kind: -1,                    // 大記念碑の種類
+      _occ: 0, _occDay: -1,        // 夜の収容（住居のみ使用）
+    };
+  }
   // 建設の費用（国庫から）と工期（工事量。建築家の腕と村人の助勢で進む）。index は BUILDING enum。
   //   住居・耕地・木造の生業施設（工房・市・倉・兵舎・鉱山・港・酒場）は民が自力で建てるため無料
   //   （富の乏しい建国期でも街は育つ＝貧困の罠を作らない）。石造の公共建築（神殿・学院・城壁・
@@ -1246,6 +1255,52 @@
   }
 
   // 陸地かつ無所属の (x,y) に新王国レコードを作り、首都タイルを領有する。
+  // 王国オブジェクトの雛形。国が持ちうる全フィールドをここで宣言し、生成経路（建国・反乱・
+  //   植民）によらず隠れクラスを一本化する（後から足すとメガモルフィックICが tick 全体を
+  //   遅くする。person/建物と同じ最適化）。値は呼び出し側が上書きする。
+  function blankKingdom() {
+    return {
+      // 基本・統治
+      id: 0, name: "", ruler: "", rulerRef: null, rulerPid: 0, dynasty: null, reign: 0,
+      gov: "", govMod: null, color: "", alive: true,
+      // 領土・人口・施設
+      cities: null, tileCount: 0, humanCount: 0, roleCount: null, facilities: null,
+      tools: 0, clanSeq: 0,
+      // 外交
+      relations: null, borders: null, wars: null, allies: null, truce: null,
+      pacts: null, vassals: null, suzerain: 0, royalTies: null,
+      // 文化・言語・宗教
+      langX: 0.5, langY: 0.5, religion: "", faith: 0.3,
+      // 技術・工芸・経済
+      coin: 0, tech: 0, techBits: null, discovered: null, craft: 0.2,
+      trait: null, ethos: null, wealth: 0, food: 30, soil: 1, famine: false,
+      unrest: 0, plague: 0, res: null,
+      tradeVol: 0, tradeIncome: 0, foodTrade: 0, partners: null,
+      // 政治（国策・開発・国是の進化）
+      doctrine: null, doctrineKey: null, doctrineName: null, doctrineEmoji: "",
+      dev: null, warWeary: 0, goldenAge: false, darkAge: false, fortune: -1, // fortune<0 = 未計測（初回に実測値へスナップ）
+      // 工芸の伝統・産業・革新・知恵
+      craftTrad: null, craftProduct: null, craftLore: 0, industry: 0,
+      innov: null, insight: 0, inventions: null, artworks: null, relics: null,
+      renown: 0, fuel: 0, prices: null, figure: null,
+      // 民族・民情の集計
+      race: 0, raceMix: null, raceTot: 0, diversity: 0,
+      cultureAvg: 0.5, mindAvg: 0, moodAvg: 0.6, realmName: "",
+      wonderField: null,
+      // 内部キャッシュ・一時値（評価間で持ち越す作業領域）
+      _coastalNation: false, _coined: false,
+      _craftMil: 1, _craftTools: 1, _craftWealth: 1, _craftTradInit: 0,
+      _cultS: 0, _devT: 0, _doctrineInit: 0, _eraIdx: 0, _ethosT: 0,
+      _faithHead: 0, _famineDeaths: 0, _fireLoss: 0, _fuelN: 0, _fuelTile: 0,
+      _genPtmp: null, _genRef: null, _genReftmp: null, _govLock: 0, _kills: 0,
+      _lxS: 0, _lyS: 0, _milCache: 0, _milTick: -1, _mindS: 0, _moodN: 0, _moodS: 0,
+      _partnersPrev: null, _provFood: 1, _provMil: 1, _provTech: 1, _provTools: 1,
+      _provTrade: 1, _raceCnt: null, _realmInit: 0, _restlessProv: 0,
+      _successionCrisis: 0, _topP: 0, _topRef: null,
+      _worstProvIdx: -1, _worstProvLoy: 2, _worstProvSecede: 0,
+    };
+  }
+
   // 成否は王国 k を返す / null。住人の用意は呼び出し側。
   CivSystem.prototype._newKingdom = function (x, y) {
     const world = this.world;
@@ -1257,56 +1312,25 @@
 
     const id = this.kingdoms.length;
     const govIdx = (this.rand() * GOV_TYPES.length) | 0;
-    const k = {
-      id: id,
-      name: makeName(this.rand),
-      ruler: RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0], // 表示名（実在の統治者から更新される）
-      rulerRef: null, // 統治者である実在の人物（_succeed が選ぶ）
-      rulerPid: 0,
-      dynasty: null,  // 王朝＝統治者の家名（世襲で継がれ、王朝交代で変わる）
-      reign: 0,      // 現君主の在位（ティック）。継承で 0 に戻る
-      gov: GOV_TYPES[govIdx],
-      govMod: GOV_MODS[govIdx], // 政体の振る舞い補正
-      color: makeColor(this.rand),
-      cities: [{ x: x, y: y, capital: true, name: null, level: 1, buildings: [mkBuilding(x, y, BUILDING.KEEP)] }],
-      tileCount: 1,
-      humanCount: 0,
-      roleCount: [0, 0, 0, 0, 0, 0, 0],
-      facilities: newFacilities(), // 機能建築の総数
-      tools: 0,      // 道具・武具の備蓄（鍛冶が生産・住民が装備）
-      clanSeq: 0,
-      relations: {}, // 既知の他国 id → 関係値(-100..100)
-      borders: {},   // 隣接した他国 id → 最後に接触した tick（隣国判定）
-      wars: {},      // 交戦中の id → 開戦 tick
-      allies: {},    // 同盟中の id → true
-      truce: {},     // 休戦中の id → 解除 tick（この間は再戦しない）
-      pacts: {},     // 不可侵条約の id → 失効 tick（同盟と休戦の間の「中間の外交」）
-      vassals: {},   // 属国の id → true（朝貢を受け、戦に従える）
-      suzerain: 0,   // 宗主国の id（0=独立）
-      royalTies: {}, // 王家の婚姻で結ばれた他国 id → 成婚 tick（縁戚。戦を避け、断絶時に継承しうる）
-      langX: this.rand(), langY: this.rand(), // 国の言語（言語空間の位置。住民の言葉の重心で更新）
-      coin: 0,       // 鋳造された貨幣の量（鋳貨技術＋金鉱石で増える。交易・富を潤す）
-      tech: 0,       // 技術力（時代の指標）
-      techBits: {},  // 獲得済みの個別技術（id→true）
-      discovered: [], // 発見順の技術名（表示用）
-      religion: RELIGIONS[(this.rand() * RELIGIONS.length) | 0],
-      faith: 0.3,    // 信仰の篤さ(0..1)。神殿・神官・政体・敬虔さで高まり、結束/布教/聖戦に効く
-      craft: 0.2,    // 工芸力(0..1)。鍛冶場・職人・金属・技術で育ち、装備の質と道具の産出に効く
-      trait: TRAITS[(this.rand() * TRAITS.length) | 0], // 指導者の性格
-      ethos: NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0], // 国是（持続的な国の気質）
-      wealth: 0,     // 富（交易・領土から蓄積）
-      food: 30,      // 食料備蓄（生産-消費。0で飢饉）
-      soil: 1,       // 地力(0..1)。過耕作で痩せ、休閑・農法で回復。収量に効く
-      famine: false, // 飢饉中か（繁殖停止・餓死）
-      unrest: 0,     // 不満（戦争・過密・貧困で上昇 → 反乱）
-      plague: 0,     // 疫病の残り評価回数（>0 で流行中）
-      res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 }, // 領有資源（_tallyResources が更新）
-      tradeVol: 0,    // 直近の交易量（活況の指標。毎評価で減衰し交易で増える）
-      tradeIncome: 0, // 直近評価での交易による富の増分（表示用）
-      foodTrade: 0,   // 直近の食料の純流入（+輸入 / -輸出）。飢饉の緩和を示す
-      partners: null, // 主要な交易相手 id→直近交易量（描画・UI用）
-      alive: true,
-    };
+    const k = blankKingdom();
+    k.id = id;
+    k.name = makeName(this.rand);
+    k.ruler = RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0]; // 表示名（実在の統治者から更新される）
+    k.gov = GOV_TYPES[govIdx];
+    k.govMod = GOV_MODS[govIdx];   // 政体の振る舞い補正
+    k.color = makeColor(this.rand);
+    k.cities = [{ x: x, y: y, capital: true, name: null, level: 1, buildings: [mkBuilding(x, y, BUILDING.KEEP)] }];
+    k.tileCount = 1;
+    k.roleCount = [0, 0, 0, 0, 0, 0, 0];
+    k.facilities = newFacilities(); // 機能建築の総数
+    k.relations = {}; k.borders = {}; k.wars = {}; k.allies = {}; k.truce = {};
+    k.pacts = {}; k.vassals = {}; k.royalTies = {};
+    k.langX = this.rand(); k.langY = this.rand(); // 国の言語（言語空間の位置）
+    k.techBits = {}; k.discovered = [];
+    k.religion = RELIGIONS[(this.rand() * RELIGIONS.length) | 0];
+    k.trait = TRAITS[(this.rand() * TRAITS.length) | 0];           // 指導者の性格
+    k.ethos = NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0]; // 国是（持続的な国の気質）
+    k.res = { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
     k.cities[0].name = k.name; // 首都は国の名を冠する（領地の政治の主体として呼べる）
     this.kingdoms.push(k);
     world.owner[i] = id;
@@ -1631,6 +1655,7 @@
       // 記憶・戦闘・住まい
       memFoods: null, memDanger: null, _enemy: null,
       hbx: 0, hby: 0, _sheltered: false, _homeDay: -1,
+      _trekAng: -1, // 放浪の進行方位（荒野の群れが一方向へ渡り歩くための持続）
       // 名声・創造・伝記
       _famed: false, _chronicled: false, invention: undefined, masterwork: undefined,
       _hadChild: 0, _choseWay: 0,
@@ -3195,7 +3220,7 @@
       const crisisN = (ka.famine ? 0.22 : 0) + (ka.plague > 0 ? 0.18 : 0);
       const fRaw = clamp01(wealthN * 0.26 + orderN * 0.24 + popN * 0.16 + peaceN * 0.18 + leaderN * 0.16 - crisisN);
       // 緩やかな指数平滑（瞬間値ではなく持続した状態を映す＝自然なヒステリシス）。
-      ka.fortune = ka.fortune === undefined ? fRaw : ka.fortune + (fRaw - ka.fortune) * 0.12;
+      ka.fortune = (ka.fortune === undefined || ka.fortune < 0) ? fRaw : ka.fortune + (fRaw - ka.fortune) * 0.12;
       if (ka.fortune > 0.72) { if (!ka.goldenAge) this._logEvent("✨ " + ka.name + " が黄金時代を迎えた"); ka.goldenAge = 1; ka.darkAge = 0; }
       else if (ka.fortune < 0.6 && ka.goldenAge) { ka.goldenAge = 0; this._logEvent("　" + ka.name + " の黄金時代が過ぎ去った"); }
       if (ka.fortune < 0.28) { if (!ka.darkAge) this._logEvent("🌑 " + ka.name + " が暗黒時代に陥った"); ka.darkAge = 1; ka.goldenAge = 0; }
@@ -3466,7 +3491,7 @@
       //   （統治の限界・地方分権・継承の綻び）。活力ある名君・文化的威信の高い国は結束を保つ。
       else if (ka.cities.length >= CP.overstretchCities &&
           this.kingdoms.length - 1 < Game.config.sim.maxKingdoms) {
-        const cohesion = 0.5 + 0.5 * (ka.fortune == null ? 0.5 : ka.fortune) +
+        const cohesion = 0.5 + 0.5 * ((ka.fortune == null || ka.fortune < 0) ? 0.5 : ka.fortune) +
           (ka.figure ? 0.15 : 0) + Math.min(0.2, (ka.renown || 0) * 0.02) - (ka.unrest || 0) / 300;
         const p = CP.overstretchBase * (ka.cities.length - CP.overstretchCities + 1) / Math.max(0.4, cohesion);
         if (this.rand() < p) {
@@ -3846,34 +3871,33 @@
     //   （＝独立が人物に駆動される。無名の州は成り行きで指導者が立つ）。
     const gov = city.governor;
 
-    // 新国家レコード（独立都市を首都に）。
+    // 新国家レコード（独立都市を首都に）。blankKingdom で隠れクラスを建国と揃える。
     const id = this.kingdoms.length;
     const govIdx = (this.rand() * GOV_TYPES.length) | 0;
-    const nk = {
-      id: id,
-      // 州の名がそのまま新しい国の名になる（領地の政治的アイデンティティが独立後も続く）。
-      name: city.name || makeName(this.rand),
-      ruler: gov ? (gov.name + " " + gov.sur) : RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0],
-      dynasty: gov ? gov.sur : null, // 総督の家名が新王朝を開く
-      gov: GOV_TYPES[govIdx],
-      govMod: GOV_MODS[govIdx],
-      color: makeColor(this.rand),
-      cities: [{ x: city.x, y: city.y, capital: true, name: city.name, level: city.level || 1, buildings: (city.buildings || []) }],
-      reign: 0,
-      tileCount: 0, humanCount: 0, roleCount: [0, 0, 0, 0, 0, 0, 0], clanSeq: 0,
-      facilities: newFacilities(),
-      tools: parent.tools * 0.3,
-      relations: {}, borders: {}, wars: {}, allies: {}, truce: {}, pacts: {}, vassals: {}, suzerain: 0, royalTies: {},
-      tech: parent.tech * 0.7, techBits: {}, discovered: [], religion: parent.religion,
-      // 言語: 独立した地方は母国の言葉を受け継ぎ、以後ゆるやかに方言として分岐していく。
-      langX: clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05),
-      langY: clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05),
-      trait: TRAITS[(this.rand() * TRAITS.length) | 0],
-      ethos: parent.ethos || NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0], // 国是は母国から継ぐ
-      wealth: 0, food: 20, soil: parent.soil == null ? 1 : parent.soil, famine: false, unrest: 30, plague: 0, res: { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 },
-      tradeVol: 0, tradeIncome: 0, foodTrade: 0, partners: null, // 交易系の初期化（未設定だと tradeVol が NaN 汚染する）
-      alive: true,
-    };
+    const nk = blankKingdom();
+    nk.id = id;
+    // 州の名がそのまま新しい国の名になる（領地の政治的アイデンティティが独立後も続く）。
+    nk.name = city.name || makeName(this.rand);
+    nk.ruler = gov ? (gov.name + " " + gov.sur) : RULER_NAMES[(this.rand() * RULER_NAMES.length) | 0];
+    nk.dynasty = gov ? gov.sur : null; // 総督の家名が新王朝を開く
+    nk.gov = GOV_TYPES[govIdx];
+    nk.govMod = GOV_MODS[govIdx];
+    nk.color = makeColor(this.rand);
+    nk.cities = [{ x: city.x, y: city.y, capital: true, name: city.name, level: city.level || 1, buildings: (city.buildings || []) }];
+    nk.roleCount = [0, 0, 0, 0, 0, 0, 0];
+    nk.facilities = newFacilities();
+    nk.tools = parent.tools * 0.3;
+    nk.relations = {}; nk.borders = {}; nk.wars = {}; nk.allies = {}; nk.truce = {};
+    nk.pacts = {}; nk.vassals = {}; nk.royalTies = {};
+    nk.tech = parent.tech * 0.7; nk.techBits = {}; nk.discovered = [];
+    nk.religion = parent.religion;
+    // 言語: 独立した地方は母国の言葉を受け継ぎ、以後ゆるやかに方言として分岐していく。
+    nk.langX = clamp01((parent.langX == null ? 0.5 : parent.langX) + (this.rand() - 0.5) * 0.05);
+    nk.langY = clamp01((parent.langY == null ? 0.5 : parent.langY) + (this.rand() - 0.5) * 0.05);
+    nk.trait = TRAITS[(this.rand() * TRAITS.length) | 0];
+    nk.ethos = parent.ethos || NATION_ETHOS[(this.rand() * NATION_ETHOS.length) | 0]; // 国是は母国から継ぐ
+    nk.food = 20; nk.soil = parent.soil == null ? 1 : parent.soil; nk.unrest = 30;
+    nk.res = { ore: 0, fish: 0, gems: 0, gold: 0, horses: 0, spice: 0, salt: 0, timber: 0 };
     this.kingdoms.push(nk);
     // 宗派分裂（独立に伴う異端の発生）: 独立国はしばしば母国の信仰から分かれ、
     //   独自の宗派を立てる。これが宗教戦争や更なる対立の火種になる（信仰の多様化）。
@@ -4074,15 +4098,36 @@
         }
         h.gx = citizen.x | 0; h.gy = citizen.y | 0; h.state = 9;
       } else {
-        // 3) 定住先（肥沃な無所属地）を探す。無ければ仲間と群れる/徘徊。
-        const spot = this._nearestTile(h, world, 5, function (terr, ow) {
-          return ow === 0 && tile.isEdible(terr);
-        });
-        if (spot) { h.gx = spot.x; h.gy = spot.y; h.state = 10; }
+        // 3) 定住先（肥沃な無所属地）を探す。飢えているほど遠くまで探す（荒地からの脱出）。
+        const wantSpot = function (terr, ow) { return ow === 0 && tile.isEdible(terr); };
+        let spot = this._nearestTile(h, world, 5, wantSpot);
+        if (!spot && h.food < 0.75) spot = this._nearestTile(h, world, 16, wantSpot);
+        if (!spot && h.food < 0.45) spot = this._nearestTile(h, world, 26, wantSpot); // 切迫＝視界の限りを探す
+        if (spot) { h.gx = spot.x; h.gy = spot.y; h.state = 10; h._trekAng = -1; }
         else {
-          const mate = this._scan(h.x, h.y, CP.nomadClusterRadius, function (oo) { return oo.kid === 0 && oo.alive ? 2 : 0; }).best;
-          if (mate) { h.gx = mate.x | 0; h.gy = mate.y | 0; }
-          else { h.gx = (h.x + (this.rand() - 0.5) * 8) | 0; h.gy = (h.y + (this.rand() - 0.5) * 8) | 0; }
+          // 仲間と群れる（自分自身は除く＝自分を「最寄りの仲間」と誤認して足元に立ち尽くす
+          //   バグの修正。荒地に置かれた放浪者が動かず餓死していた）。
+          const mate = this._scan(h.x, h.y, CP.nomadClusterRadius, function (oo) { return (oo !== h && oo.kid === 0 && oo.alive) ? 2 : 0; }).best;
+          const md2 = mate ? (mate.x - h.x) * (mate.x - h.x) + (mate.y - h.y) * (mate.y - h.y) : 1e9;
+          if (mate && md2 > 9) { h.gx = mate.x | 0; h.gy = mate.y | 0; }
+          else if (!this._keepGoal(h)) {
+            // 群れ（または独り）の渡り: 食を求めて概ね同じ方角へ歩き続ける（方向の持続）。
+            //   その場の千鳥足では砂漠を出られない――群れごと一方向へ渡って緑を探す。
+            let base = h._trekAng < 0 ? this.rand() * Math.PI * 2 : h._trekAng + (this.rand() - 0.5) * 0.9;
+            // 地図の縁に達したら内陸へ向き直す（縁を彷徨い続けて力尽きない）。
+            if (h.x < 4 || h.y < 4 || h.x > world.width - 5 || h.y > world.height - 5) {
+              base = Math.atan2(world.height / 2 - h.y, world.width / 2 - h.x) + (this.rand() - 0.5) * 0.8;
+            }
+            for (let a = 0; a < 4; a++) {
+              const ang = base + a * 1.6;
+              const dr = 9 + this.rand() * 8;
+              const gx = Game.utils.clamp((h.x + Math.cos(ang) * dr) | 0, 0, world.width - 1);
+              const gy = Game.utils.clamp((h.y + Math.sin(ang) * dr) | 0, 0, world.height - 1);
+              if (tile.isLand(world.terrain[gy * world.width + gx])) {
+                h.gx = gx; h.gy = gy; h._trekAng = ang; break;
+              }
+            }
+          }
           h.state = 11;
         }
 
@@ -5284,8 +5329,9 @@
   };
 
   // 竣工: 現場が完成して建物になる。都市の格を更新し、大きな公共建築は年代記に残す。
+  //   （delete でなく 0 代入＝建物の隠れクラスを保つ。性能に効く）
   CivSystem.prototype._finishSite = function (k, city, b) {
-    delete b.site; delete b.prog; delete b.need;
+    b.site = 0; b.prog = 0; b.need = 0;
     b.cond = 1;
     city.level = this._cityLevel(city);
     if (b.t === BUILDING.WONDER) {
@@ -5898,6 +5944,10 @@
     // 建築家: そばの建設現場で工事を進め（最優先）、無ければ傷んだ建物を直す。
     //   国全体の受動回復と別に、職人が実際に手を動かして街を建て、朽ちるのを食い止める。
     if (h.role === ROLE.BUILDER) {
+      // 周辺走査は6ティックに1回に間引き、作業量を6倍で適用する（結果は同じで負荷1/6。
+      //   建て込んだ大都市で建築家の毎tick全建物走査がFPS低下の一因だった）。
+      if (((this._tickN + (h.pid || 0)) % 6) !== 0) return;
+      const WORKMUL = 6;
       const REACH2 = 6.25; // 現場に手が届く距離（2.5タイル）
       let best = null, bc = 0.95, site = null, siteCity = null;
       for (let c = 0; c < k.cities.length; c++) {
@@ -5916,18 +5966,18 @@
       }
       // 壊れかけ（cond < repairUrgent）の修繕は工事より先（直すのが先）。
       if (best && bc < CP.repairUrgent) {
-        best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * ability(h));
+        best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * WORKMUL * ability(h));
         practice(h);
       } else if (site) {
         // 工事: 腕の良い職人ほど早く建てる。完成させた者は名を上げる。
-        site.prog += CP.siteWork * ability(h);
+        site.prog += CP.siteWork * WORKMUL * ability(h);
         practice(h);
         if (site.prog >= site.need) {
           this._finishSite(k, siteCity, site);
           h.prestige = (h.prestige || 0) + 0.5; // 棟梁の誉れ
         }
       } else if (best) {
-        best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * ability(h));
+        best.cond = Math.min(1, (best.cond == null ? 1 : best.cond) + CP.handRepair * WORKMUL * ability(h));
         practice(h); // 修繕も腕を磨く
       }
       return;
@@ -6166,6 +6216,9 @@
   Game.CivSystem = CivSystem;
   Game.ROLE = ROLE;
   Game.BUILDING = BUILDING; // 建物種別（renderer・テストが参照）
+  // 形状の統一ファクトリ（persistence がロード時の隠れクラス正規化に使う）。
+  CivSystem.blankPerson = blankPerson;
+  CivSystem.blankKingdom = blankKingdom;
   Game.ROLE_NAMES = ["開拓者", "農民", "建築家", "兵士", "鍛冶", "商人", "神官"];
   Game.WONDER_KINDS = WONDER_KINDS;
   Game.eraOf = eraOf; // 技術→時代名（ホバー説明・UI用）

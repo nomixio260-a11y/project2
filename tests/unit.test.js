@@ -2646,7 +2646,8 @@ test("CivSystem: 建設工事 — 着工費・工期・完成、建設中の建�
   assert.ok(farmSite, "農場（費用0）が着工できない");
   const h = civ.people[0];
   h.role = 2; h.x = 24.5; h.y = 20.5; h.alive = true;
-  for (let i = 0; i < 4000 && farmSite.site; i++) civ._roleTick(h, k, w, 20 * 60 + 24);
+  // 建築家の周辺走査は6ティックに1回（負荷の間引き）なので、tick位相を進めながら呼ぶ。
+  for (let i = 0; i < 4000 && farmSite.site; i++) { civ._tickN++; civ._roleTick(h, k, w, 20 * 60 + 24); }
   assert.ok(!farmSite.site, "建築家の工事で完成しない: prog=" + farmSite.prog);
 
   // 木材のある国は工期が縮む。
@@ -2739,13 +2740,14 @@ test("CivSystem: 修繕優先 — 壊れかけの建物は新築・工事より�
   const h = civ.people[0];
   h.role = 2; h.x = 21.5; h.y = 20.5; h.alive = true;
   const dmg = city.buildings.find(function (b) { return b.cond === 0.3; });
-  for (let i = 0; i < 30; i++) civ._roleTick(h, k, w, 20 * 60 + 21); // 壊れかけ(<0.45)のうちだけ観測
+  // 建築家の周辺走査は6ティックに1回（負荷の間引き）なので、tick位相を進めながら呼ぶ。
+  for (let i = 0; i < 30; i++) { civ._tickN++; civ._roleTick(h, k, w, 20 * 60 + 21); } // 壊れかけ(<0.45)のうちだけ観測
   assert.ok(dmg.cond > 0.3, "壊れかけが直されない");
   assert.equal(site.prog, 0, "修繕より先に工事を進めている");
 
   // 直し終えれば（軽傷になれば）工事に移る。
   dmg.cond = 1;
-  for (let i = 0; i < 200; i++) civ._roleTick(h, k, w, 20 * 60 + 21);
+  for (let i = 0; i < 200; i++) { civ._tickN++; civ._roleTick(h, k, w, 20 * 60 + 21); }
   assert.ok(site.prog > 0, "修繕が済んでも工事に移らない");
 
   // 出張修繕: 自分の街に仕事が無ければ、近くの街の傷んだ建物へ出向く。

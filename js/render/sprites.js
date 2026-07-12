@@ -441,6 +441,46 @@
   // 建物タイプID → スプライト（civ の Game.BUILDING と対応）。
   // 0=小屋,1=家,2=邸宅,3=砦,4=神殿,5=農場,6=鍛冶場,7=市場,8=兵舎,9=穀倉,
   // 10=鉱山,11=大記念碑,12=学院,13=港,14=酒場。
+  // 荒廃した建物のスプライト（黒ずみ版）。素の絵に source-atop で影を焼き込み、
+  //   スプライトの形の内側だけが暗くなる（矩形の黒ずみが建物からはみ出さない）。
+  //   bucket: 1..3（傷みの深さ。キャッシュして毎フレームの合成を避ける）。
+  const wornCache = {};
+  Game.sprites.buildingWorn = function (t, bucket) {
+    const key = t + "_" + bucket;
+    let c = wornCache[key];
+    if (c) return c;
+    const base = Game.sprites.building(t);
+    c = document.createElement("canvas");
+    c.width = base.width; c.height = base.height;
+    const g = c.getContext("2d");
+    g.drawImage(base, 0, 0);
+    g.globalCompositeOperation = "source-atop";
+    g.fillStyle = "rgba(20,16,12," + (0.18 * bucket).toFixed(2) + ")";
+    g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = "source-over";
+    wornCache[key] = c;
+    return c;
+  };
+
+  // 廃都の建物（灰に沈んだ版）。灰の翳りもスプライトの形の内側だけに乗せる。
+  const ghostCache = {};
+  Game.sprites.buildingGhost = function (t, bucket) {
+    const key = t + "_" + bucket;
+    let c = ghostCache[key];
+    if (c) return c;
+    const base = Game.sprites.building(t);
+    c = document.createElement("canvas");
+    c.width = base.width; c.height = base.height;
+    const g = c.getContext("2d");
+    g.drawImage(base, 0, 0);
+    g.globalCompositeOperation = "source-atop";
+    g.fillStyle = "rgba(70,72,70," + (0.2 + 0.14 * bucket).toFixed(2) + ")";
+    g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = "source-over";
+    ghostCache[key] = c;
+    return c;
+  };
+
   Game.sprites.building = function (t) {
     switch (t) {
       case 0: return Game.sprites.hut();
