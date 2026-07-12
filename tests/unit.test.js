@@ -2658,6 +2658,70 @@ test("CivSystem: 建設工事 — 着工費・工期・完成、建設中の建�
   assert.ok(s2.need < s3.need, "木材が工期を縮めない: " + s2.need + " !< " + s3.need);
 });
 
+test("CivSystem: 戦争の再編 — 前線の都市が奪われ、戦利品と占領地の再編・国境割譲が起きる", () => {
+  const Game = loadCore({ mapWidth: 80, mapHeight: 40, seed: 13 });
+  const w = new Game.World(80, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(15, 20), B = civ.foundAt(60, 20);
+  const ka = civ.kingdoms[A], kb = civ.kingdoms[B];
+  // B は2都市: 首都(60,20) と前線の街(40,20)。前線の街は攻囲されている。
+  kb.cities.push({ x: 40, y: 20, capital: false, name: "フロンティア", level: 2, buildings: [], loyalty: 0.9, autonomous: 1, siege: 0.6, governor: { name: "X", sur: "Y", prestige: 1, ambition: 0.5 } });
+  kb.tools = 40; kb.food = 50;
+  const at0 = ka.tools, af0 = ka.food;
+  civ._annexNearestCity(ka, kb);
+  // 前線の街（攻囲された方）が奪われている。
+  assert.equal(ka.cities.length, 2, "都市が併合されない");
+  const taken = ka.cities[1];
+  assert.equal(taken.name, "フロンティア", "前線の街でなく別の街が奪われた");
+  // 占領地の再編: 忠誠は地に落ち、自治・総督・政策は御破算。名は残る。
+  assert.ok(taken.loyalty <= 0.35, "占領地の忠誠が下がらない");
+  assert.equal(taken.autonomous, 0, "占領で自治が解かれない");
+  assert.equal(taken.governor, null, "占領で総督が残っている");
+  // 戦利品: 武具・食料の一部が勝者へ。
+  assert.ok(ka.tools > at0, "戦利品（武具）が無い");
+  assert.ok(ka.food > af0, "戦利品（食料）が無い");
+
+  // 国境地帯の割譲: 都市を奪えない単一都市の国からは土地が割譲される。
+  const C = civ.foundAt(15, 35), D = civ.foundAt(40, 35);
+  const kc = civ.kingdoms[C], kd = civ.kingdoms[D];
+  for (let x = 20; x < 40; x++) { const i = 35 * 80 + x; if (w.owner[i] === 0) { w.owner[i] = D; kd.tileCount++; } }
+  const dt0 = kd.tileCount, ct0 = kc.tileCount;
+  civ._cedeBorderland(kc, kd);
+  assert.ok(kd.tileCount < dt0 && kc.tileCount > ct0, "国境地帯が割譲されない: " + kd.tileCount + "/" + dt0);
+});
+
+test("CivSystem: 動員と財政 — 戦時は民が兵に、平時は復員し、軍費が国庫を実際に締める", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 14 });
+  const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  const A = civ.foundAt(20, 20);
+  const k = civ.kingdoms[A];
+  k.humanCount = 100; k.roleCount = [40, 30, 20, 10, 0, 0, 0]; // 兵10
+  k.wealth = 50;
+
+  // 戦時: 徴集目標が立ち、税収と軍費が国庫に流れる。
+  k.wars = { 2: 1 };
+  civ._mobilize(k);
+  assert.ok(k._draftNeed > 0, "戦時に徴集が立たない: " + k._draftNeed);
+  assert.ok(k.taxIncome > 0, "税収が無い");
+  assert.ok(k.armyCost > 0, "軍費が無い");
+
+  // 平時: 常備軍の上限を超える兵は復員する。
+  k.wars = {};
+  k.roleCount[3] = 40; // 兵40 > 上限22
+  civ._mobilize(k);
+  assert.equal(k._draftNeed, 0, "平時に徴集が残る");
+  assert.ok(k._demobNeed > 0, "平時に復員が立たない: " + k._demobNeed);
+
+  // 金欠: 軍費を払えない国の兵は離れていく（経済が軍の規模を規定する）。
+  k.wars = { 2: 1 }; k.wealth = 0; k.humanCount = 100; k.roleCount[3] = 40;
+  civ._mobilize(k);
+  assert.equal(k._draftNeed, 0, "金欠でも徴集を続けている");
+  assert.ok(k._demobNeed > 0, "給金が尽きても兵が離れない");
+});
+
 test("CivSystem: 国家開発計画 — 情勢が事業を選び、対象都市は青写真どおり同時2件で建つ", () => {
   const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 11 });
   const w = new Game.World(60, 40); w.terrain.fill(Game.TERRAIN.GRASS);
