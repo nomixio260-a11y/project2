@@ -135,9 +135,12 @@
     if (snap.climate && st.climate) { st.climate._wphase = snap.climate._wphase; st.climate._dphase = snap.climate._dphase; st.climate._epoch = snap.climate._epoch; }
 
     // 文明: 王国・人物を復元し、参照（伴侶・親友・統治者）を pid から張り直す。
+    //   雛形（blank*）へ流し込んで隠れクラスを実行時と揃える（ロード後の性能低下を防ぐ）。
     const civ = st.civ;
-    civ.kingdoms = snap.civ.kingdoms.slice();
-    civ.people = snap.civ.people;
+    const BK = Game.CivSystem && Game.CivSystem.blankKingdom;
+    const BP = Game.CivSystem && Game.CivSystem.blankPerson;
+    civ.kingdoms = snap.civ.kingdoms.map(function (k) { return (k && BK) ? Object.assign(BK(), k) : k; });
+    civ.people = BP ? snap.civ.people.map(function (p) { return Object.assign(BP(), p); }) : snap.civ.people;
     civ._tickN = snap.civ.tickN || 0;
     civ._pidSeq = snap.civ.pidSeq || 0;
     civ.ghostTowns = snap.civ.ghostTowns || []; // 廃都（旧セーブは空＝互換）
@@ -146,11 +149,12 @@
     for (let i = 0; i < civ.people.length; i++) { const p = civ.people[i]; if (p.pid) pmap[p.pid] = p; }
     for (let i = 0; i < civ.people.length; i++) {
       const p = civ.people[i];
-      p.partner = p._partnerPid ? (pmap[p._partnerPid] || null) : null; delete p._partnerPid;
-      p._mom = p._momPid ? (pmap[p._momPid] || null) : null; delete p._momPid;
+      // delete は隠れクラスを辞書モードへ落とすため使わない（undefined 代入で形状を保つ）。
+      p.partner = p._partnerPid ? (pmap[p._partnerPid] || null) : null; p._partnerPid = undefined;
+      p._mom = p._momPid ? (pmap[p._momPid] || null) : null; p._momPid = undefined;
       // 親友は {ref,aff} 構造で復元する（そのまま人物配列にすると _socialize が .ref/.aff を読めず壊れる）。
       p.bonds = p._bondsData ? p._bondsData.map(function (bp) { const ref = pmap[bp[0]]; return ref ? { ref: ref, aff: bp[1] } : null; }).filter(Boolean) : null;
-      delete p._bondsData;
+      p._bondsData = undefined;
     }
     for (let id = 1; id < civ.kingdoms.length; id++) {
       const k = civ.kingdoms[id]; if (!k) continue;

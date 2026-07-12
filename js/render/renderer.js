@@ -1695,10 +1695,12 @@
           const size = Math.max(12, scale * 2.0);
           for (let bi = 0; bi < bs.length; bi++) {
             const bd = bs[bi];
-            const img = sprites.building(bd.t);
             // 段階(lvl)で建物は大きく育ち、状態(cond)が悪いと荒れて見える（街並みに盛衰が出る）。
             const lvl = bd.lvl || 1;
             const cond = bd.cond == null ? 1 : bd.cond;
+            // 荒廃の黒ずみはスプライトに焼き込んだ変種で描く（建物の形の内側だけが黒ずみ、はみ出さない）。
+            const wornB = cond < 0.78 ? Math.min(3, 1 + ((0.78 - cond) * 4) | 0) : 0;
+            const img = wornB && !bd.site ? sprites.buildingWorn(bd.t, wornB) : sprites.building(bd.t);
             // 種別ごとの相対サイズ: 小屋は小さく、邸宅・砦・神殿・記念碑は大きく。育った建物は一回り大きい。
             const bw = size * (BUILD_SIZE[bd.t] || 1) * (1 + (lvl - 1) * 0.18);
             const bh = bw * (img.height / img.width);
@@ -1755,18 +1757,16 @@
                 ctx.fillRect((cx0 + drift - rr) | 0, (ry - rr) | 0, (rr * 2) | 0 || 1, (rr * 2) | 0 || 1);
               }
             }
-            // 荒廃の表現: 傷んだ建物は黒ずみ、ひどく荒れると亀裂・崩れが見える（実際の損耗）。
+            // 荒廃の表現: 黒ずみはスプライト変種（buildingWorn）で焼き込み済み。
+            //   ひどく荒れた建物にだけ亀裂を描き足す（建物の内側に収める）。
             if (cond < 0.78) {
-              const dim = Math.min(0.55, (0.78 - cond) * 0.9);
-              ctx.fillStyle = "rgba(20,16,12," + dim.toFixed(2) + ")";
-              ctx.fillRect((bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
               if (cond < 0.4 && scale >= 4) {
                 ctx.strokeStyle = "rgba(30,24,20,0.6)";
                 ctx.lineWidth = Math.max(1, scale * 0.06);
                 ctx.beginPath();
-                ctx.moveTo((bx - bw * 0.2) | 0, (by - bh * 0.85) | 0);
-                ctx.lineTo((bx + bw * 0.12) | 0, (by - bh * 0.35) | 0);
-                ctx.lineTo((bx - bw * 0.04) | 0, by | 0);
+                ctx.moveTo((bx - bw * 0.14) | 0, (by - bh * 0.72) | 0);
+                ctx.lineTo((bx + bw * 0.08) | 0, (by - bh * 0.35) | 0);
+                ctx.lineTo((bx - bw * 0.02) | 0, (by - bh * 0.08) | 0);
                 ctx.stroke();
               }
             } else if (lvl >= 3 && scale >= 5 && (bd.t === 4 || bd.t === 7 || bd.t === 11 || bd.t === 12)) {
@@ -1882,9 +1882,10 @@
         const bs = town.buildings;
         for (let bi = 0; bi < bs.length; bi++) {
           const bd = bs[bi];
-          const img = sprites.building(bd.t);
           const lvl = bd.lvl || 1;
           const cond = bd.cond == null ? 1 : bd.cond;
+          // 廃屋の翳り: 灰に沈んだスプライト変種で描く（翳りが建物からはみ出さない）。
+          const img = sprites.buildingGhost(bd.t, Math.min(3, 1 + ((1 - cond) * 3) | 0));
           const bw = size * (BUILD_SIZE[bd.t] || 1) * (1 + (lvl - 1) * 0.18);
           const bh = bw * (img.height / img.width);
           const bx = camera.worldToScreenX((bd.x + 0.5) * tile);
@@ -1892,15 +1893,12 @@
           ctx.fillStyle = "rgba(0,0,0,0.2)";
           ctx.beginPath(); ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2); ctx.fill();
           ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
-          // 廃屋の翳り: 生気のない灰の色に沈み、傷むほど暗い。
-          ctx.fillStyle = "rgba(70,72,70," + (0.32 + 0.4 * (1 - cond)).toFixed(2) + ")";
-          ctx.fillRect((bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
           if (cond < 0.45 && scale >= 4) { // 崩れかけの亀裂
             ctx.strokeStyle = "rgba(28,24,20,0.65)";
             ctx.lineWidth = Math.max(1, scale * 0.06);
             ctx.beginPath();
-            ctx.moveTo((bx - bw * 0.18) | 0, (by - bh * 0.8) | 0);
-            ctx.lineTo((bx + bw * 0.1) | 0, (by - bh * 0.3) | 0);
+            ctx.moveTo((bx - bw * 0.14) | 0, (by - bh * 0.72) | 0);
+            ctx.lineTo((bx + bw * 0.08) | 0, (by - bh * 0.3) | 0);
             ctx.stroke();
           }
         }
