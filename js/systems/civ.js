@@ -34,7 +34,9 @@
   //   防止）と現実的な敷地間隔に使う。大建造物（記念碑・砦・神殿・学院・水道）ほど広い敷地が要る。
   //   index は BUILDING enum と一致。末尾: AQUEDUCT, WALLS。
   const BUILD_FOOT = [0.62, 0.72, 0.9, 1.05, 0.95, 0.7, 0.74, 0.66, 0.86, 0.74, 0.66, 1.4, 1.0, 0.82, 0.72, 1.0, 0.9];
-  function footR(t) { return BUILD_FOOT[t] || 0.75; }
+  // 敷地は描画サイズに対して少し余裕を持たせる（×1.12。超過密で建物同士が重なって
+  //   見える「首都の団子」を緩和し、街並みに息をつかせる）。
+  function footR(t) { return (BUILD_FOOT[t] || 0.75) * 1.12; }
   // 住居の収容人数（現実的な「家に入れる人の上限」）。住居のみが夜の宿になる。
   //   index は BUILDING enum: HUT=3, HOUSE=5, MANOR=9, それ以外は住居でない(0)。
   const DWELL_CAP = [3, 5, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -129,8 +131,11 @@
     seekRange: 3,
     conflictChance: 0.06,
     newTownDist: 14,     // この距離を超える自国領で新集落を興す（支配を延伸）
+    dispatchChance: 0.35, // 建て込んだ街の建築家が、育っていない自国の街へ移り住む確率／思考
+    dispatchRange: 40,    // 建築家の派遣が届く距離（この範囲の未発達な街へ移る）
+    crowdSlow: 20,        // 都市の建物がこの数を超えると新築が半分の頻度に（過密の鈍化）
     foundRate: 0.05,
-    maxSettlements: 14,
+    maxSettlements: 18,
     expandChance: 0.16,  // 国が評価ごとに新たな開拓地を興そうとする確率（人口・領土に余裕がある時）
     controlRadius: 28,   // 都市が支配を及ぼす半径（これを超える辺境は手放す）
     controlPerLevel: 3,  // 都市の発展度1あたりの支配半径の増分
@@ -223,6 +228,11 @@
     willEmigrateMood: 0.33,// これ未満の不満なら「より良き生」を求めて旅立ちを考える
     willEmigrate: 0.12,   // 不遇な意志ある者が自らの意志で国を離れる確率
     soldierPeaceCap: 0.22,// 平時に志願で兵になれる上限（人口比。常備軍の暴走を防ぐ）
+    mobilizeShare: 0.34,  // 戦時の動員目標（人口比。武断的な国ほど厚く、疲弊で緩む）
+    // 国庫の収支（経済が軍と政治を実際に規定する）
+    taxPerHead: 0.05,     // 人頭税（1人・1評価あたり。産業が厚いほど徴税力が上がる）
+    taxUnrest: 0.5,       // 重税（戦時の臨時徴税）が1評価で生む不満
+    armyUpkeep: 0.15,     // 兵1人の維持費／評価（給金と兵糧）。払えねば兵は離れる
     aspirePrestige: 1.3, // 立身・蓄財の志を持つ者の名声の伸び
     aspireFamily: 1.4,   // 家族の志を持つ者の繁殖意欲
     aspireCreate: 1.5,   // 創造の志を持つ者の閃きの起きやすさ
@@ -1179,8 +1189,15 @@
     }
     if (ci === 0) return k.color; // 首都直轄圏は国色
     const city = k.cities[ci];
-    // 州ごとの固有色（決定的）。自治区は白を混ぜて淡くする。
-    const c = hashColor("prov" + id + ":" + ci);
+    // 州ごとの固有色: 黄金角(137.5°)で色相を回して隣どうしが必ず離れた色になる
+    //   （hash では偶然似た色が並び領地の境が見分けにくかった）。彩度は高く、明度は揃える。
+    const hue = ((id * 53 + ci * 137.508) % 360 + 360) % 360;
+    const cch = 168, l = 92; // 彩度高め・共通の明度＝「州の色」だと分かる統一感
+    const kk = hue / 60, xx = cch * (1 - Math.abs((kk % 2) - 1));
+    let r = 0, g = 0, b = 0;
+    if (kk < 1) { r = cch; g = xx; } else if (kk < 2) { r = xx; g = cch; } else if (kk < 3) { g = cch; b = xx; }
+    else if (kk < 4) { g = xx; b = cch; } else if (kk < 5) { r = xx; b = cch; } else { r = cch; b = xx; }
+    const c = [(r + l) | 0, (g + l) | 0, (b + l) | 0];
     if (city.autonomous) return [(c[0] + 255) >> 1, (c[1] + 255) >> 1, (c[2] + 255) >> 1];
     return c;
   };
@@ -1276,6 +1293,7 @@
       trait: null, ethos: null, wealth: 0, food: 30, soil: 1, famine: false,
       unrest: 0, plague: 0, res: null,
       tradeVol: 0, tradeIncome: 0, foodTrade: 0, partners: null,
+      taxIncome: 0, armyCost: 0,
       // 政治（国策・開発・国是の進化）
       doctrine: null, doctrineKey: null, doctrineName: null, doctrineEmoji: "",
       dev: null, warWeary: 0, goldenAge: false, darkAge: false, fortune: -1, // fortune<0 = 未計測（初回に実測値へスナップ）
@@ -1294,6 +1312,7 @@
       _faithHead: 0, _famineDeaths: 0, _fireLoss: 0, _fuelN: 0, _fuelTile: 0,
       _genPtmp: null, _genRef: null, _genReftmp: null, _govLock: 0, _kills: 0,
       _lxS: 0, _lyS: 0, _milCache: 0, _milTick: -1, _mindS: 0, _moodN: 0, _moodS: 0,
+      _draftNeed: 0, _demobNeed: 0,
       _partnersPrev: null, _provFood: 1, _provMil: 1, _provTech: 1, _provTools: 1,
       _provTrade: 1, _raceCnt: null, _realmInit: 0, _restlessProv: 0,
       _successionCrisis: 0, _topP: 0, _topRef: null,
@@ -1408,6 +1427,8 @@
       if (r < 0.8) return ROLE.EXPLORER;
       return ROLE.BUILDER;
     }
+    // 拡張策の国は開拓者を厚く育てる（辺境へ人を送り、国土を広げる野心）。
+    if (k.doctrineKey === "expand" && r < 0.68) return ROLE.EXPLORER;
     if (r < 0.55) return ROLE.EXPLORER;
     if (r < 0.72) return ROLE.SOLDIER;
     return ROLE.BUILDER;
@@ -2430,6 +2451,9 @@
       this._subjugate(s, w); subjugated = true;
     } else if (kw.cities.length >= 2 && this._isNeighbor(ks, w)) {
       this._annexNearestCity(ks, kw);
+    } else if (this._isNeighbor(ks, w)) {
+      // 都市を奪えない相手（単一都市の国）からは国境地帯を割譲させる（土地だけの再編）。
+      this._cedeBorderland(ks, kw);
     }
     if (!subjugated) {
       this._makePeace(s, w);
@@ -2437,6 +2461,37 @@
       kw.unrest = Math.min(100, kw.unrest + 20); // 敗戦で国内動揺
     }
     ks.unrest = Math.max(0, ks.unrest - 10);   // 戦勝で求心力
+  };
+
+  // 国境地帯の割譲: 敗者の領土のうち、両国の境目（勝者の最寄り都市と敗者の首都の中間）に
+  //   近い帯を勝者へ移す。都市を持たない土地だけの再編＝小国も戦争で領土を失う。
+  //   敗者の首都周辺（半径7）は残す（国が窒息しない最低限の本領安堵）。
+  CivSystem.prototype._cedeBorderland = function (winner, loser) {
+    if (!loser.cities.length || !winner.cities.length) return;
+    const lc = loser.cities[0];
+    let wc = winner.cities[0], bd = 1e18;
+    for (let c = 0; c < winner.cities.length; c++) {
+      const dx = winner.cities[c].x - lc.x, dy = winner.cities[c].y - lc.y;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; wc = winner.cities[c]; }
+    }
+    const mx = ((wc.x + lc.x) / 2) | 0, my = ((wc.y + lc.y) / 2) | 0;
+    const R = 12, R2 = R * R, KEEP2 = 49;
+    const world = this.world, W = world.width, H = world.height, owner = world.owner;
+    let moved = 0;
+    for (let y = Math.max(0, my - R); y <= Math.min(H - 1, my + R); y++) {
+      for (let x = Math.max(0, mx - R); x <= Math.min(W - 1, mx + R); x++) {
+        const i = y * W + x;
+        if (owner[i] !== loser.id) continue;
+        const dx = x - mx, dy = y - my;
+        if (dx * dx + dy * dy > R2) continue;
+        const cx = x - lc.x, cy = y - lc.y;
+        if (cx * cx + cy * cy <= KEEP2) continue; // 首都周辺は安堵
+        owner[i] = winner.id; loser.tileCount--; winner.tileCount++; moved++;
+        if (this.renderer) this.renderer.markTerritoryDirty(x, y);
+      }
+    }
+    if (moved > 0) this._logEvent("🗺 " + loser.name + " が " + winner.name + " に国境の地を割譲した（" + moved + "タイル）");
   };
 
   // 従属（属国化）: 敗者は存続しつつ宗主に従う。朝貢を納め、宗主の戦に従軍する。
@@ -2451,15 +2506,23 @@
     this._logEvent("⚑ " + kl.name + " が " + ks.name + " の属国となった");
   };
 
-  // 勝者の首都に最も近い敗者都市を、その周辺領土・住民ごと併合する。
+  // 係争都市（戦火に最も晒された前線の街）を、その周辺領土・住民ごと併合する。
+  //   攻囲を受けている街 ＞ 勝者の街に近い街 の順で選ぶ（首都からの距離でなく前線で決まる
+  //   ＝実際に戦った土地が奪われる。戦争による現実的な領土の再編）。
   CivSystem.prototype._annexNearestCity = function (winner, loser) {
     if (loser.cities.length <= 1) return; // 最後の都市は戦場でしか落ちない
-    const wc = winner.cities[0];
-    let idx = -1, bd = 1e18;
+    let idx = -1, bs = -1e18;
     for (let c = 0; c < loser.cities.length; c++) {
-      const dx = loser.cities[c].x - wc.x, dy = loser.cities[c].y - wc.y;
-      const d = dx * dx + dy * dy;
-      if (d < bd) { bd = d; idx = c; }
+      const lc = loser.cities[c];
+      // 勝者のどの街からも最も近い距離（前線への近さ）。
+      let nd = 1e18;
+      for (let wcI = 0; wcI < winner.cities.length; wcI++) {
+        const dx = lc.x - winner.cities[wcI].x, dy = lc.y - winner.cities[wcI].y;
+        const d = dx * dx + dy * dy;
+        if (d < nd) nd = d;
+      }
+      const score = -Math.sqrt(nd) + (lc.siege || 0) * 60; // 攻囲された街は真っ先に落ちる
+      if (score > bs) { bs = score; idx = c; }
     }
     if (idx < 0) return;
     const city = loser.cities[idx];
@@ -2468,6 +2531,16 @@
     city.capital = false;
     winner.cities.push(city);
     if (wasCapital && loser.cities.length) loser.cities[0].capital = true;
+    // 占領地の再編: 征服された州は忠誠が地に落ち、総督は逃亡し、自治も政策も御破算になる
+    //   （名は残る＝土地のアイデンティティは続く。新たな支配者は民心を掴み直さねばならない）。
+    city.loyalty = 0.3; city.autonomous = 0; city.governor = null; city.edict = "none";
+    city.siege = 0;
+    // 戦利品: 陥ちた街から武具・食料が奪われる（敗者の備蓄の一部が勝者へ）。
+    const loot = Math.floor((loser.tools || 0) * 0.25);
+    const foodLoot = Math.floor((loser.food || 0) * 0.2);
+    if (loot > 0) { loser.tools -= loot; winner.tools += loot; }
+    if (foodLoot > 0) { loser.food -= foodLoot; winner.food += foodLoot; }
+    if (loot > 0 || foodLoot > 0) this._logEvent("⚔💰 " + winner.name + " が " + (city.name || "係争の街") + " から戦利品を得た（武具" + loot + "・食料" + foodLoot + "）");
 
     // 周辺領土の割譲。
     const world = this.world, W = world.width, H = world.height, owner = world.owner;
@@ -3460,6 +3533,9 @@
       // 国家開発計画: 国庫を投じて一つの都市を事業として計画的に育てる（国が主導する街づくり）。
       this._development(ka);
 
+      // 動員・復員の目標: 戦時は民を兵に徴集し、平時は兵を鍬に帰す（実際の転職は各人の思考で行う）。
+      this._mobilize(ka);
+
       // 地方の忠誠（各領地の方針決定）: 各州の忠誠を情勢から更新し、最も不忠な州を記録する。
       this._updateProvinces(ka);
       const worstIdx = ka._worstProvIdx, worstLoy = ka._worstProvLoy;
@@ -4328,8 +4404,12 @@
     const cx = h.x | 0, cy = h.y | 0;
     // 足下が自国領でなければ拡張しない（連続性の担保）。
     if (owner[cy * W + cx] !== id) return;
-    const nb = [cx - 1, cy, cx + 1, cy, cx, cy - 1, cx, cy + 1];
-    for (let n = 0; n < 8; n += 2) {
+    // 野心的な国（拡張策・拡張的な性格）は斜め方向にも領有を広げる＝倍の勢いで国土が伸びる。
+    const ambitious = this._eff(k, "expand") > 1.08;
+    const nb = ambitious
+      ? [cx - 1, cy, cx + 1, cy, cx, cy - 1, cx, cy + 1, cx - 1, cy - 1, cx + 1, cy - 1, cx - 1, cy + 1, cx + 1, cy + 1]
+      : [cx - 1, cy, cx + 1, cy, cx, cy - 1, cx, cy + 1];
+    for (let n = 0; n < nb.length; n += 2) {
       const x = nb[n], y = nb[n + 1];
       if (x < 0 || y < 0 || x >= W || y >= H) continue;
       const ni = y * W + x;
@@ -4789,6 +4869,17 @@
     }
     // 近傍の土地を確保（足下は毎ティック）。
     this._claimNeighbors(h, k, world);
+    // 動員・復員: 戦時は国の求め（_mobilize が立てた徴集数）に応じて成人の民が兵となり、
+    //   戦が終われば兵は鍬に持ち替えて帰農する（戦争の規模が実際の人の動きで膨らむ）。
+    if (k._draftNeed > 0 && h.role !== ROLE.SOLDIER && h.age >= CP.adultAge &&
+        (h.role === ROLE.EXPLORER || h.role === ROLE.BUILDER ||
+         (h.role === ROLE.FARMER && k.roleCount[ROLE.FARMER] > k.humanCount * 0.3))) {
+      k._draftNeed--;
+      this._switchRole(h, k, ROLE.SOLDIER);
+    } else if (k._demobNeed > 0 && h.role === ROLE.SOLDIER) {
+      k._demobNeed--;
+      this._switchRole(h, k, (k.roleCount[ROLE.FARMER] < k.humanCount * 0.34) ? ROLE.FARMER : ROLE.EXPLORER);
+    }
     // 社会的な交わり（会話）と機嫌の更新。人々が互いに影響し合い社会を形づくる。
     this._socialize(h, k);
     // 繁殖（成人・食料十分・近くに同胞成人がいれば家族を作る）。
@@ -5043,6 +5134,17 @@
       if (hd2 < 36) {
         const city = this._cityAt(k, hcx, hcy);
         if (city) {
+          // 職人の派遣: 建て込んだ街の建築家は、育っていない自国の街へ移り住んで建てる
+          //   （首都だけが超過密になり領地が栄えない一極集中の解消。都から地方へ人が流れる）。
+          const bsn = city.buildings ? city.buildings.length : 0;
+          if (bsn >= MAX_BUILDINGS * 0.55 && this.rand() < CP.dispatchChance) {
+            const tgt = this._underbuiltCity(k, city);
+            if (tgt) {
+              h.home = { x: tgt.x, y: tgt.y };
+              h.gx = tgt.x; h.gy = tgt.y; h.state = 6;
+              return;
+            }
+          }
           this._construct(k, city, world); practice(h); h.prestige = (h.prestige || 0) + 0.06; // 普請で腕と名を上げる
           // 行き先の優先順: 壊れかけの建物（修繕が急務）＞ 建設現場 ＞ 軽い傷み。
           //   現場ばかり追って修繕が永遠に後回しになるのを防ぐ（直すのが先）。
@@ -5114,6 +5216,23 @@
       if (c < wc) { wc = c; worst = bs[i]; }
     }
     return worst;
+  };
+
+  // from より明らかに育っていない自国の街（派遣先）。dispatchRange 内で最も建物が少ない街を
+  //   返す（from の半分未満かつ12棟未満のときだけ＝本当に未発達な街にだけ人が流れる）。
+  CivSystem.prototype._underbuiltCity = function (k, from) {
+    const r2 = CP.dispatchRange * CP.dispatchRange;
+    const fromN = from.buildings ? from.buildings.length : 0;
+    let best = null, bestN = Math.min(12, fromN * 0.5);
+    for (let c = 0; c < k.cities.length; c++) {
+      const cc = k.cities[c];
+      if (cc === from) continue;
+      const dx = cc.x - from.x, dy = cc.y - from.y;
+      if (dx * dx + dy * dy > r2) continue;
+      const n = cc.buildings ? cc.buildings.length : 0;
+      if (n < bestN) { bestN = n; best = cc; }
+    }
+    return best;
   };
 
   // (x,y) から r タイル以内の自国の街々から、職人が出向くべき先を探す。
@@ -5303,6 +5422,39 @@
     this._logEvent("🏗 " + this.realmName(ka) + " が " + where + "の" + pg.name + "を始めた");
   };
 
+  // 動員・復員の目標を立てる（評価ごと）: 戦時は人口の一定割合（武断的な国ほど厚く、
+  //   戦争疲弊で緩む）まで兵を徴集し、平時は常備軍の上限まで兵を減らす。
+  //   実際の転職は各人の思考（_think）が量をこなす＝軍が実際の人の動員で膨らむ。
+  CivSystem.prototype._mobilize = function (ka) {
+    const soldiers = (ka.roleCount && ka.roleCount[ROLE.SOLDIER]) || 0;
+    // 税: 民から人頭税を徴収する（産業が厚い国ほど徴税力が高い）。戦時は臨時徴税で
+    //   増収するが、民の不満を生む（重税と厭戦）。
+    const atWar = this._count(ka.wars) > 0;
+    const taxMul = (ka.doctrineKey === "trade" ? 1.15 : 1) * (atWar ? 1.25 : 1);
+    const tax = ka.humanCount * CP.taxPerHead * taxMul * (0.6 + (ka.industry || 0));
+    ka.wealth += tax; ka.taxIncome = tax;
+    if (atWar) ka.unrest = Math.min(100, ka.unrest + CP.taxUnrest);
+    // 軍の維持費: 兵には給金と兵糧がかかる。払えない国の兵は食い扶持を求めて隊を離れる
+    //   （経済力が軍の規模を実際に規定する＝金の切れ目が戦の切れ目）。
+    const cost = soldiers * CP.armyUpkeep;
+    ka.armyCost = cost;
+    let broke = false;
+    if (ka.wealth >= cost) ka.wealth -= cost;
+    else { ka.wealth = Math.max(0, ka.wealth - cost * 0.5); broke = soldiers > 4; }
+    if (atWar && !broke) {
+      const share = Math.min(0.45, CP.mobilizeShare * this._eff(ka, "war") * (1 - Math.min(0.5, ka.warWeary || 0)));
+      ka._draftNeed = Math.max(0, ((ka.humanCount * share) | 0) - soldiers);
+      ka._demobNeed = 0;
+    } else if (atWar && broke) {
+      ka._draftNeed = 0;
+      ka._demobNeed = Math.max(1, Math.ceil(soldiers * 0.05)); // 給金の尽きた軍は痩せていく
+    } else {
+      ka._draftNeed = 0;
+      const cap = (ka.humanCount * CP.soldierPeaceCap) | 0;
+      ka._demobNeed = Math.max(broke ? Math.ceil(soldiers * 0.08) : 0, soldiers - cap);
+    }
+  };
+
   // UI 用: 進行中の開発計画の概要（無ければ null）。
   CivSystem.prototype.devInfo = function (k) {
     if (!k.dev) return null;
@@ -5390,6 +5542,9 @@
 
     // 上限に達したら建て替え（時代遅れの住居を更新）のみ。
     if (bs.length >= MAX_BUILDINGS) { this._rebuild(k, city); return; }
+    // 過密の鈍化: 建て込んだ都市の新築は半分の頻度になる（際限ない一極集中を抑え、
+    //   その分の人手が地方の街づくりへ向かう）。
+    if (bs.length >= CP.crowdSlow && this.rand() < 0.5) { this._rebuild(k, city); return; }
     // 建設は緩やかに進める。建てない番は古い住居の更新に充てる。
     if (this.rand() > 0.2) { this._rebuild(k, city); return; }
 
@@ -6036,6 +6191,8 @@
           e.food -= CP.attack * (0.6 + edge) * (1 + (h.gear || 0) * 0.12) *
             (0.55 + 0.45 * ability(h, "brave")) * (1 + 0.3 * (h.anger || 0)) * defF * rally * supplyMul;
           practice(h); // 実戦で武を磨く
+          // 剣戟の火花: 打ち合いが実際に見える（戦闘の視認性。間引きで軽量）。
+          if (this.rand() < 0.2) this._fx("clash", (h.x + e.x) / 2, (h.y + e.y) / 2, e.x, e.y);
           // 戦死: 倒れた兵は亡骸として戦場に残る（演出ではなく実際の死の跡）。
           //   倒した敵の武具は戦場で拾われ、勝者の武具庫へ半分ほど還る（戦利品の回収＝現実の兵站）。
           if (e.food <= 0) {
@@ -6168,9 +6325,11 @@
     const cs = ka.cities;
     if (!cs || cs.length >= CP.maxSettlements) return;
     // 余裕の条件: 人口が都市数に対して多く、領土も都市数に比して広い（＝もう一つ町を持てる）。
-    if (ka.humanCount < cs.length * 11 + 8) return;
-    if (ka.tileCount < cs.length * 42) return;
-    if (this.rand() >= CP.expandChance * this._eff(ka, "expand")) return;
+    //   野心的な国（拡張策など）はより果敢に、少ない余裕でも辺境へ町を興す。
+    const amb = this._eff(ka, "expand");
+    if (ka.humanCount < cs.length * (11 / amb) + 8) return;
+    if (ka.tileCount < cs.length * (42 / amb)) return;
+    if (this.rand() >= CP.expandChance * amb) return;
     const world = this.world, W = world.width, H = world.height, owner = world.owner, fert = world.fertility;
     const minD = CP.newTownDist, minD2 = minD * minD;
     // 既存都市の周辺(newTownDist〜controlRadius)に候補を撒き、他の都市から十分離れ、自国の

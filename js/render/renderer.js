@@ -658,6 +658,17 @@
       // 目（向き側に1ドット）。
       ctx.fillStyle = "#2a1c10";
       ctx.fillRect(sx + (fd > 0 ? uu : -2 * uu), sy - 4 * uu + ob, uu, uu);
+      // 将旗: 軍を率いる将は国色の軍旗を掲げる（軍勢の所在と所属が戦場で一目で分かる）。
+      if (k && k._genRef === person) {
+        const top = sy - 10 * uu + ob;
+        ctx.fillStyle = "#6b4a2a";
+        ctx.fillRect(sx + 3 * uu, top, Math.max(1, uu * 0.6) | 0, 7 * uu); // 旗竿
+        const wv = Math.round(Math.sin(t * 5 + p) * uu * 0.7);
+        ctx.fillStyle = body;
+        ctx.fillRect(sx + 3 * uu + uu, top + wv, 3 * uu, 2 * uu); // 国色の旗
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
+        ctx.fillRect(sx + 3 * uu + uu, top + wv, 3 * uu, Math.max(1, uu * 0.4) | 0); // 上辺の照り
+      }
       // 役割の被り物（子供は被らない）。兵は兜、神官は頭巾、他は職掌の帽子で役割が一目で分かる。
       if (!isChild) {
         if (person.role === 3) {
@@ -1097,22 +1108,39 @@
     const hasRoad = function (tx, ty) { return tx >= 0 && ty >= 0 && tx < W && ty < H && road && road[ty * W + tx]; };
     const isWater = Game.tile.isWater, terr = world.terrain;
     ctx.save();
-    // 2層: まず暗い路肩（太）、次に明るい路面（細）。各層で中央ノード＋隣接方向スポークを描く。
+    // 2層: まず暗い路肩（太）、次に明るい路面（細）。タイル中心を8方向の線分（丸端）で結んで
+    //   描く＝斜めの区間は斜めの線になり、従来の「四角の階段」のカクカクが消える。
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
     for (let pass = 0; pass < 2; pass++) {
-      const wdt = pass === 0 ? ew : cw, half = wdt * 0.5;
+      const wdt = pass === 0 ? ew : cw;
+      ctx.lineWidth = wdt;
       for (let n = 0; n < list.length; n++) {
         const i = list[n];
         const tx = i % W, ty = (i / W) | 0;
         if (tx < x0 - 1 || tx > x1 + 1 || ty < y0 - 1 || ty > y1 + 1) continue;
         const stone = isStone(i);
-        ctx.fillStyle = pass === 0 ? (stone ? edgeStone : edgeDirt) : (stone ? surfStone : surfDirt);
+        ctx.strokeStyle = pass === 0 ? (stone ? edgeStone : edgeDirt) : (stone ? surfStone : surfDirt);
         const cx = camera.worldToScreenX((tx + 0.5) * tile);
         const cy = camera.worldToScreenY((ty + 0.5) * tile);
-        ctx.fillRect((cx - half) | 0, (cy - half) | 0, wdt | 0, wdt | 0); // 中央ノード
-        if (hasRoad(tx + 1, ty)) ctx.fillRect(cx | 0, (cy - half) | 0, reach, wdt | 0); // 東へ
-        if (hasRoad(tx - 1, ty)) ctx.fillRect((cx - reach) | 0, (cy - half) | 0, reach, wdt | 0); // 西へ
-        if (hasRoad(tx, ty + 1)) ctx.fillRect((cx - half) | 0, cy | 0, wdt | 0, reach); // 南へ
-        if (hasRoad(tx, ty - 1)) ctx.fillRect((cx - half) | 0, (cy - reach) | 0, wdt | 0, reach); // 北へ
+        // 東・南・南東・南西の4方向だけ描けば、全タイルの走査で全結線が一度ずつ引かれる。
+        let drawn = false;
+        ctx.beginPath();
+        if (hasRoad(tx + 1, ty)) { ctx.moveTo(cx, cy); ctx.lineTo(cx + scale, cy); drawn = true; }
+        if (hasRoad(tx, ty + 1)) { ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + scale); drawn = true; }
+        // 斜め: 直交の両隣で既に繋がる場合は省く（太り過ぎを防ぐ）。片側だけなら斜線で滑らかに。
+        if (hasRoad(tx + 1, ty + 1) && !(hasRoad(tx + 1, ty) && hasRoad(tx, ty + 1))) {
+          ctx.moveTo(cx, cy); ctx.lineTo(cx + scale, cy + scale); drawn = true;
+        }
+        if (hasRoad(tx - 1, ty + 1) && !(hasRoad(tx - 1, ty) && hasRoad(tx, ty + 1))) {
+          ctx.moveTo(cx, cy); ctx.lineTo(cx - scale, cy + scale); drawn = true;
+        }
+        ctx.stroke();
+        if (!drawn && !hasRoad(tx - 1, ty) && !hasRoad(tx, ty - 1) &&
+            !hasRoad(tx - 1, ty - 1) && !hasRoad(tx + 1, ty - 1)) {
+          // 孤立タイル（端点）: 丸い結節点を打つ。
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.beginPath(); ctx.arc(cx, cy, wdt * 0.5, 0, Math.PI * 2); ctx.fill();
+        }
         // 木橋: 道が川・水路で途切れる所（1〜2タイルの水の切れ目の先に道が続く）には橋を渡す。
         //   街道が川を「渡っている」ことが見え、水辺が交通の要衝になる。
         if (pass === 1) {
@@ -1475,11 +1503,30 @@
     for (let n = fx.length - 1; n >= 0; n--) {
       const f = fx[n];
       f.age++;
-      const life = f.t === "shot" ? 10 : 12;
+      const life = f.t === "shot" ? 10 : f.t === "clash" ? 9 : 12;
       if (f.age > life) { fx.splice(n, 1); continue; }
       if (scale < 2.5) continue;
       if (f.x < range.x0 - 2 || f.x > range.x1 + 2 || f.y < range.y0 - 2 || f.y > range.y1 + 2) continue;
       const pr = f.age / life;
+      // 剣戟の火花: 白兵の打ち合いの瞬間、火花が散り土埃が舞う（戦闘が起きている場所が分かる）。
+      if (f.t === "clash") {
+        const cx0 = sc(f.x), cy0 = scy(f.y);
+        const rr = Math.max(2, scale * 0.34) * (0.5 + pr);
+        ctx.strokeStyle = "rgba(255,236,150," + (0.95 * (1 - pr)).toFixed(2) + ")";
+        ctx.lineWidth = Math.max(1, scale * 0.06);
+        ctx.beginPath();
+        for (let s = 0; s < 4; s++) {
+          const a = s * 1.5708 + 0.6 + (f.x2 || 0); // 向きは対象位置で散らす
+          ctx.moveTo(cx0 + Math.cos(a) * rr * 0.3, cy0 + Math.sin(a) * rr * 0.3);
+          ctx.lineTo(cx0 + Math.cos(a) * rr, cy0 + Math.sin(a) * rr);
+        }
+        ctx.stroke();
+        // 足元の土埃。
+        ctx.fillStyle = "rgba(150,132,104," + (0.3 * (1 - pr)).toFixed(2) + ")";
+        const du = Math.max(1, scale * 0.22 * (0.4 + pr));
+        ctx.fillRect((cx0 - du) | 0, (cy0 + scale * 0.1) | 0, (du * 2) | 0, Math.max(1, du * 0.5) | 0);
+        continue;
+      }
       const x = f.x + (f.x2 - f.x) * pr, y = f.y + (f.y2 - f.y) * pr;
       const sx = sc(x), sy = scy(y), u = Math.max(1, scale * (f.t === "shot" ? 0.13 : 0.1));
       if (f.t === "shot" && pr < 0.3) { ctx.fillStyle = "rgba(255,220,120,0.9)"; ctx.fillRect((sc(f.x) - u) | 0, (scy(f.y) - u) | 0, 2 * u, 2 * u); } // 銃口炎

@@ -367,6 +367,10 @@
         return row("開発", dv.emoji + " " + esc(dv.city) + "の" + dv.program + ' <span class="insp-tag">残り' + dv.left + "</span>");
       })() +
       row("国力", "💰" + Math.round(k.wealth) + " 🔬" + Math.round(k.tech) + " ⚔" + Math.round(this._mil(k))) +
+      (k.taxIncome != null && (k.taxIncome > 0 || k.armyCost > 0)
+        ? row("財政", "税 +" + (k.taxIncome || 0).toFixed(1) + " · 軍費 −" + (k.armyCost || 0).toFixed(1) +
+            ((k.roleCount && k.roleCount[3]) ? " · 兵 " + k.roleCount[3] + "人" : ""))
+        : "") +
       ((k.industry || 0) >= 0.08 ? row("産業", "🏭 " + (k.industry >= 0.6 ? "高" : k.industry >= 0.3 ? "中" : "低") + "（" + Math.round(k.industry * 100) + "）") : "") +
       (function () {
         // 都市の整備: 城壁（防備）・水道（衛生）を備えていれば示す。
