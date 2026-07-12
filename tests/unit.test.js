@@ -2658,6 +2658,41 @@ test("CivSystem: 建設工事 — 着工費・工期・完成、建設中の建�
   assert.ok(s2.need < s3.need, "木材が工期を縮めない: " + s2.need + " !< " + s3.need);
 });
 
+test("CivSystem: 現実的な街道 — 山脈は峠へ迂回し、水路は狭い所にだけ橋を架ける", () => {
+  const Game = loadCore({ mapWidth: 60, mapHeight: 40, seed: 15 });
+  const T = Game.TERRAIN;
+  const w = new Game.World(60, 40); w.terrain.fill(T.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+
+  // 山脈の壁（x=28..31・厚さ4）。y=25..27 にだけ峠（草地）を開けておく。
+  for (let y = 0; y < 40; y++) for (let x = 28; x <= 31; x++) {
+    if (y >= 25 && y <= 27) continue;
+    w.terrain[y * 60 + x] = T.MOUNTAIN;
+  }
+  const path = civ._roadPath(w, 10, 10, 50, 10);
+  assert.ok(path.length > 0, "経路が見つからない");
+  let mountains = 0, passY = null;
+  for (const i of path) {
+    if (w.terrain[i] === T.MOUNTAIN) mountains++;
+    const x = i % 60; if (x >= 28 && x <= 31) passY = (i / 60) | 0;
+  }
+  assert.equal(mountains, 0, "街道が山を直登している（峠へ迂回しない）: " + mountains);
+  assert.ok(passY >= 25 && passY <= 27, "峠(y=25..27)を通っていない: y=" + passY);
+
+  // 水路: 幅10の海峡、y=30..31 にだけ幅2の狭まり。橋は狭い所に架かる。
+  const w2 = new Game.World(60, 40); w2.terrain.fill(T.GRASS);
+  for (let y = 0; y < 40; y++) {
+    const width = (y >= 30 && y <= 31) ? 2 : 10;
+    for (let x = 25; x < 25 + width; x++) w2.terrain[y * 60 + x] = T.OCEAN != null ? T.OCEAN : T.DEEP_WATER;
+  }
+  const civ2 = new Game.CivSystem(w2, { markTerritoryDirty() {} });
+  const path2 = civ2._roadPath(w2, 10, 10, 50, 10);
+  let waterN = 0;
+  for (const i of path2) if (Game.tile.isWater(w2.terrain[i])) waterN++;
+  assert.ok(waterN <= 3, "広い海峡を突っ切っている（狭い渡し場に橋を架けない）: water=" + waterN);
+});
+
 test("CivSystem: 戦争の再編 — 前線の都市が奪われ、戦利品と占領地の再編・国境割譲が起きる", () => {
   const Game = loadCore({ mapWidth: 80, mapHeight: 40, seed: 13 });
   const w = new Game.World(80, 40); w.terrain.fill(Game.TERRAIN.GRASS);

@@ -2290,40 +2290,143 @@
     this._tcursor = y1 >= H ? 0 : y1;
   };
 
-  // 集落網（首都⇄都市、同盟首都間）を直線でラスタライズして街道を敷く。
-  // 街道タイルは移動を速めるインフラとして機能する。定期的に再構築する。
+  // 街道の通行コスト: 平地は歩きやすく、森・丘は切り拓きが要り、湿地・山は難所、
+  //   水は橋・渡し（狭い所でだけ渡る価値がある）。現実の道は地形の抵抗が最小の筋を通る。
+  function roadCost(t) {
+    const T = Game.TERRAIN;
+    if (t === T.GRASS || t === T.SAVANNA) return 1;
+    if (t === T.SAND || t === T.SCORCHED) return 1.4;
+    if (t === T.DESERT) return 1.7;
+    if (t === T.TUNDRA) return 1.6;
+    if (t === T.FOREST) return 2.2;
+    if (t === T.JUNGLE) return 3.2;
+    if (t === T.HILL) return 2.6;
+    if (t === T.SWAMP) return 4.5;
+    if (t === T.MOUNTAIN) return 12;
+    if (t === T.SNOW) return 6;
+    return 8; // 水（橋・渡し。狭い水路だけ渡る価値がある）
+  }
+
+  // 地形コスト最小の経路（A*）で2点を結ぶ。既に敷かれた道は歩きやすい（コスト45%）ため、
+  //   後から引く道は自然と幹線に合流し、支線が枝分かれする現実的な道路網になる。
+  //   経路は端点キーでキャッシュ（都市は動かないので再構築がほぼ無償になる）。
+  CivSystem.prototype._roadPath = function (world, x0, y0, x1, y1) {
+    const key = x0 + "," + y0 + "," + x1 + "," + y1;
+    let cache = this._roadCache;
+    if (!cache) { cache = this._roadCache = {}; this._roadCacheN = 0; }
+    if (cache[key]) return cache[key];
+    const W = world.width, H = world.height, terr = world.terrain, road = world.road;
+    // 探索域: 両端点の外側に余白を持たせた矩形。遠い都市ほど余白を広げ、
+    //   大回りの峠越え・狭い渡し場への迂回も探索できるようにする。
+    const dist = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+    const M = Math.min(26, 10 + ((dist / 3) | 0));
+    const bx0 = Math.max(0, Math.min(x0, x1) - M), by0 = Math.max(0, Math.min(y0, y1) - M);
+    const bx1 = Math.min(W - 1, Math.max(x0, x1) + M), by1 = Math.min(H - 1, Math.max(y0, y1) + M);
+    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1, bn = bw * bh;
+    const g = new Float32Array(bn); g.fill(Infinity);
+    const came = new Int32Array(bn); came.fill(-1);
+    const closed = new Uint8Array(bn);
+    // 二分ヒープ（f値最小取り出し）。
+    const heap = [];
+    function push(f, n) {
+      heap.push([f, n]); let i = heap.length - 1;
+      while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; const tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp; i = p; }
+    }
+    function pop() {
+      const top = heap[0], last = heap.pop();
+      if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let s = i;
+        if (l < heap.length && heap[l][0] < heap[s][0]) s = l;
+        if (r < heap.length && heap[r][0] < heap[s][0]) s = r;
+        if (s === i) break; const tmp = heap[s]; heap[s] = heap[i]; heap[i] = tmp; i = s; } }
+      return top;
+    }
+    const sx = x0 - bx0, sy = y0 - by0, gx = x1 - bx0, gy = y1 - by0;
+    const sN = sy * bw + sx, gN = gy * bw + gx;
+    const oct = function (ax, ay) { const dx = Math.abs(ax - gx), dy = Math.abs(ay - gy); return Math.max(dx, dy) + 0.414 * Math.min(dx, dy); };
+    g[sN] = 0; push(oct(sx, sy), sN);
+    let guard = 0;
+    while (heap.length && guard++ < bn * 3) {
+      const [, n] = pop();
+      if (closed[n]) continue;
+      closed[n] = 1;
+      if (n === gN) break;
+      const nx = n % bw, ny = (n / bw) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const mx = nx + dx, my = ny + dy;
+          if (mx < 0 || my < 0 || mx >= bw || my >= bh) continue;
+          const m = my * bw + mx;
+          if (closed[m]) continue;
+          const wi = (by0 + my) * W + (bx0 + mx);
+          let c = roadCost(terr[wi]);
+          if (road && road[wi]) c *= 0.45; // 既存の道は歩きやすい＝幹線へ合流する
+          const ng = g[n] + c * (dx && dy ? 1.4142 : 1);
+          if (ng < g[m]) { g[m] = ng; came[m] = n; push(ng + oct(mx, my), m); }
+        }
+      }
+    }
+    // 経路の復元（見つからなければ空＝呼び手が素通し）。
+    const path = [];
+    if (came[gN] >= 0 || gN === sN) {
+      let n = gN;
+      while (n >= 0) {
+        const nx = n % bw, ny = (n / bw) | 0;
+        path.push((by0 + ny) * W + (bx0 + nx));
+        if (n === sN) break;
+        n = came[n];
+      }
+      path.reverse();
+    }
+    if (this._roadCacheN > 400) { this._roadCache = {}; this._roadCacheN = 0; cache = this._roadCache; }
+    cache[key] = path; this._roadCacheN++;
+    return path;
+  };
+
+  // 集落網に街道を敷く。各国の都市は「既に道の通じた最寄りの都市」へ繋がる（最小全域木）
+  //   ＝首都から全都市へ放射する不自然な星形でなく、幹線から支線が伸びる現実の道路網になる。
+  //   経路は地形コスト最小（A*）: 平地を選び、峠を越え、狭い水路にだけ橋を架ける。
   CivSystem.prototype._rebuildRoads = function (world) {
     if (!world.road) return;
-    const W = world.width, H = world.height, road = world.road;
+    const W = world.width, road = world.road;
     road.fill(0);
     const list = [];
     const ks = this.kingdoms;
-    function line(x0, y0, x1, y1) {
-      let dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-      let sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-      let err = dx - dy, x = x0, y = y0, guard = 0;
-      const lim = W + H + 4;
-      while (guard++ < lim) {
-        if (x >= 0 && y >= 0 && x < W && y < H) {
-          const i = y * W + x;
-          if (tile.isLand(world.terrain[i]) && road[i] === 0 && list.length < 24000) { road[i] = 1; list.push(i); }
-        }
-        if (x === x1 && y === y1) break;
-        const e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x += sx; }
-        if (e2 < dx) { err += dx; y += sy; }
+    const self = this;
+    function lay(path) {
+      for (let n = 0; n < path.length; n++) {
+        const i = path[n];
+        if (tile.isLand(world.terrain[i]) && road[i] === 0 && list.length < 24000) { road[i] = 1; list.push(i); }
       }
     }
+    function connect(x0, y0, x1, y1) { lay(self._roadPath(world, x0, y0, x1, y1)); }
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive || !k.cities || !k.cities.length) continue;
-      const cap = k.cities[0];
-      for (let c = 1; c < k.cities.length; c++) line(cap.x, cap.y, k.cities[c].x, k.cities[c].y);
+      const cs = k.cities;
+      // 最小全域木（Prim）: 未接続の都市のうち「接続済みの都市に最も近いもの」から順に繋ぐ。
+      const connected = [0], left = [];
+      for (let c = 1; c < cs.length; c++) left.push(c);
+      while (left.length) {
+        let bi = -1, bj = -1, bd = Infinity;
+        for (let l = 0; l < left.length; l++) {
+          const a = cs[left[l]];
+          for (let j = 0; j < connected.length; j++) {
+            const b = cs[connected[j]];
+            const dx = a.x - b.x, dy = a.y - b.y, d = dx * dx + dy * dy;
+            if (d < bd) { bd = d; bi = l; bj = connected[j]; }
+          }
+        }
+        const ci = left.splice(bi, 1)[0];
+        connect(cs[ci].x, cs[ci].y, cs[bj].x, cs[bj].y);
+        connected.push(ci);
+      }
+      // 同盟の首都間（通商の幹線）。
       if (k.allies) {
         for (const b in k.allies) {
-          const bi = +b; if (bi <= id) continue;
-          const kb = ks[bi];
-          if (kb && kb.alive && kb.cities && kb.cities.length) line(cap.x, cap.y, kb.cities[0].x, kb.cities[0].y);
+          const bIdx = +b; if (bIdx <= id) continue;
+          const kb = ks[bIdx];
+          if (kb && kb.alive && kb.cities && kb.cities.length) connect(cs[0].x, cs[0].y, kb.cities[0].x, kb.cities[0].y);
         }
       }
     }
