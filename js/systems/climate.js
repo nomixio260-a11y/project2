@@ -64,6 +64,7 @@
       0.05 * Math.sin(yr * TWO_PI / 3.1 + this._wphase * 1.7);
     const wetBase = 0.12 * Math.sin(yr * TWO_PI / 5 + this._dphase) +
       0.05 * Math.sin(yr * TWO_PI / 2.3 + this._dphase * 0.6);
+    // 火山の冬は数年かけて薄れる（日ごとに1.5%減＝半減期 約46日≈2.3年。1年=20日）。
     if (clk.coolShock > 0) { clk.coolShock *= 0.985; if (clk.coolShock < 0.003) clk.coolShock = 0; }
     clk.warmth = warmBase - clk.coolShock;
     clk.wetness = wetBase;

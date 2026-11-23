@@ -29,10 +29,30 @@
     }
   }
 
+  // 種子散布: 森・密林は種を落とす木々（隣接する森）からしか広がらない。草原の真ん中に
+  //   突然森が生えることはなく、森は縁から少しずつ前進する（風・鳥による遠距離散布だけは稀に起きる）。
+  //   速さは「年あたり」で定め、走査の頻度（地図の大きさで変わる）に依らず同じ歴史になる。
+  const FOREST_ADVANCE = 3;  // 森の縁が1年に前進するおよそのタイル数（隣接する森からの散布）
+  const LONG_SEED = 0.002;   // 孤立した草地に遠距離散布で種が届く確率／年
+
+  // (x,y) の8近傍に、指定の地形（種子源）があるか。
+  function hasSeedSource(terr, W, H, x, y, src) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const yy = y + dy; if (yy < 0 || yy >= H) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const xx = x + dx; if (xx < 0 || xx >= W) continue;
+        if (terr[yy * W + xx] === src) return true;
+      }
+    }
+    return false;
+  }
+
   function VegetationSystem(world, renderer) {
     this.world = world;
     this.renderer = renderer;
     this.cursor = 0; // 次に処理する開始行
+    this._sweep = 0; // 全域を何巡したか（遠距離散布の決定的な抽選に使う）
   }
 
   VegetationSystem.prototype.setWorld = function (world) {
@@ -145,9 +165,9 @@
         } else if (t === T.GRASS) {
           if (bt < th.cold - 0.04) nt = T.TUNDRA;                           // 寒冷化で凍土へ
           else if (bt > th.hot + 0.02 && m < th.desertMoisture) nt = T.SAVANNA; // 高温乾燥で疎林化
-          else if (v > 0.82 && m >= th.forestMoisture && bt < th.hot) nt = T.FOREST;
+          else if (v > 0.82 && m >= th.forestMoisture && bt < th.hot && this._seeded(terr, W, H, x, y, i, T.FOREST)) nt = T.FOREST;
         } else if (t === T.SAVANNA) {
-          if (v > 0.85 && m >= th.jungleMoisture && bt > th.hot) nt = T.JUNGLE;
+          if (v > 0.85 && m >= th.jungleMoisture && bt > th.hot && this._seeded(terr, W, H, x, y, i, T.JUNGLE)) nt = T.JUNGLE;
           else if (v < 0.25 && m < th.desertMoisture && bt > th.hot + 0.02) nt = T.DESERT; // 砂漠化
           else if (bt < th.hot - 0.04 && m >= th.forestMoisture) nt = T.GRASS; // 冷涼・湿潤化で草地へ
         } else if (t === T.FOREST) {
@@ -168,7 +188,25 @@
       }
     }
 
+    if (y1 >= H) this._sweep++;
     this.cursor = y1 >= H ? 0 : y1;
+  };
+
+  // 森（密林）がここへ広がれるか: 隣に種子源があるか、稀な遠距離散布（風・鳥）に当たったか。
+  //   抽選はタイルと巡回数のハッシュで決定的（同じ世界は同じ歴史を辿る）。
+  VegetationSystem.prototype._seeded = function (terr, W, H, x, y, i, src) {
+    // 1年あたりの全域走査回数（走査は毎ティック vegBandRows 行ずつ）。
+    const sim = Game.config.sim;
+    const ticksPerYear = (sim.ticksPerDay || 216) * (sim.daysPerSeason || 5) * 4;
+    const sweepsPerYear = Math.max(1, ticksPerYear / Math.ceil(H / (sim.vegBandRows || 96)));
+    const near = hasSeedSource(terr, W, H, x, y, src);
+    // 草地が森へ育てる（植生が十分に繁る）のは概ね生育期（夏）だけなので、年率を生育期の
+    //   走査回数（年の約1/4）に割り振る。
+    const growSweeps = sweepsPerYear / 4;
+    const p = near ? Math.min(1, FOREST_ADVANCE / growSweeps) : LONG_SEED / growSweeps;
+    let h = Math.imul(i ^ Math.imul(this._sweep + src * 7919, 0x9E3779B1), 0x85EBCA6B);
+    h ^= h >>> 13; h = Math.imul(h, 0xC2B2AE35); h ^= h >>> 16;
+    return ((h >>> 0) % 1000000) < p * 1000000;
   };
 
   // 草食動物が (i) で採食したとき呼ぶ: fertility を消費し、得た量(0..1)を返す。
