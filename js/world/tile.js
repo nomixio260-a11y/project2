@@ -97,5 +97,22 @@
     isLand: function (terrain) {
       return !this.isWater(terrain) && terrain !== T.MOUNTAIN && terrain !== T.SNOW;
     },
+
+    // 地形の歩きやすさ（移動速度の倍率。草原=1）。下草の茂る森、起伏の丘、ぬかるむ湿地、
+    //   足を取られる砂地は遅い。人・軍・動物が共有する（道路は人の側で別扱い）。
+    moveCost: function (terrain) {
+      switch (terrain) {
+        case T.GRASS: case T.SAVANNA: return 1;
+        case T.SCORCHED: return 0.92;
+        case T.TUNDRA: return 0.82;
+        case T.SAND: return 0.85;
+        case T.DESERT: return 0.8;
+        case T.FOREST: return 0.72;
+        case T.HILL: return 0.68;
+        case T.JUNGLE: return 0.58;
+        case T.SWAMP: return 0.5;
+        default: return 0.5; // 雪・山・水際（通常は立ち入らない）
+      }
+    },
   };
 })(window.Game);

@@ -598,6 +598,15 @@
     spiceWealth: 2.2,    // 香辛料1つの富（高値の奢侈。工芸で付加価値）
     timberWealth: 0.8,   // 良材1つの富（建材・交易）
     saltStore: 6,        // 塩1つあたりの食料備蓄上限の増加（保存）
+    // 備蓄の傷み: 蓄えた穀物は湿気・鼠・虫で少しずつ失われる（暑い土地・夏ほど早く、寒冷地・冬は
+    //   遅い）。穀倉と塩（塩漬け・乾物）が傷みを抑える＝倉を建てる意味が「上限」だけでなくなる。
+    spoilRate: 0.02,     // 外交評価1回あたりに傷む備蓄の割合（温帯・倉なしの基準）
+    spoilGranary: 0.18,  // 穀倉1つあたりの傷みの抑制（上限 spoilKeepMax）
+    spoilSalt: 0.12,     // 塩1つあたりの傷みの抑制
+    spoilKeepMax: 0.8,   // 保存技術で抑えられる傷みの上限
+    // 冬の行軍: 補給圏の外で冬を越す遠征軍は寒さと飢えで消耗する（高緯度ほど厳しい）。
+    //   自国の補給圏内（宿営できる）では消耗しない＝冬の遠征は割に合わず、戦は春を待つ。
+    winterMarch: 0.0011, // 1ティックの追加消耗（metab の約7割。緯度・補給の細りで増減）
     // 製錬の燃料（炭）: 領内の森林タイル数で表す。鉄・鋼ほど高い炉熱＝多くの燃料を要する。
     fuelIron: 6,         // 鉄器の製錬に要する燃料（森林）の最低量
     fuelSteel: 18,       // 鋼の製錬に要する燃料（さらに高い炉熱）
@@ -1334,7 +1343,7 @@
       _coastalNation: false, _coined: false,
       _craftMil: 1, _craftTools: 1, _craftWealth: 1, _craftTradInit: 0,
       _cultS: 0, _devT: 0, _doctrineInit: 0, _eraIdx: 0, _ethosT: 0,
-      _faithHead: 0, _famineDeaths: 0, _fireLoss: 0, _fuelN: 0, _fuelTile: 0,
+      _faithHead: 0, _famineDeaths: 0, _spoiled: 0, _fireLoss: 0, _fuelN: 0, _fuelTile: 0,
       _genPtmp: null, _genRef: null, _genReftmp: null, _govLock: 0, _kills: 0,
       _lxS: 0, _lyS: 0, _milCache: 0, _milTick: -1, _mindS: 0, _moodN: 0, _moodS: 0,
       _draftNeed: 0, _demobNeed: 0,
@@ -2021,6 +2030,9 @@
     }
     // 火災が世界に存在するか（人々の火災回避を発動させるかの判定）。
     this._fireNear = !!(Game.state.fire && Game.state.fire.active && Game.state.fire.active.length > 0);
+    // 冬か（冬の遠征軍の消耗判定。8ティックに1回まとめて適用し負荷を抑える）。
+    const clk0 = Game.state.clock;
+    const winterOn = !!(clk0 && clk0.season && clk0.season.name === "冬" && Game.poleness);
 
     this._buildGrid();
 
@@ -2086,6 +2098,14 @@
         h.pack -= bite;
         h.food += bite;
         if (h.food > 1) h.food = 1;
+      }
+      // 冬の行軍: 戦時に補給圏の外にいる兵は寒さと飢えで消耗する（高緯度ほど・遠いほど）。
+      if (winterOn && h.role === ROLE.SOLDIER && ((tN + i) & 7) === 0 && this._count(k.wars) > 0) {
+        const sup = this._supply(h, k, ti);
+        if (sup < 1) {
+          const pol = Game.poleness(ty / world.height);
+          h.food -= CP.winterMarch * 8 * (0.4 + pol) * (1.5 - sup);
+        }
       }
       // 火災に巻かれる: 燃えるタイルにいる者は焼かれ、体力(食料)を失い恐慌する。
       const onFire = this._fireNear && this._onFire(world, ti);
@@ -3666,6 +3686,17 @@
       const forage = Math.min(CP.forageBase, (ka.tileCount || 0) * CP.foragePerTile);
       const consume = Math.max(0, ka.humanCount - forage) * CP.foodConsume * (1 + warCount * 0.5);
       ka.food += produce - consume;
+      // 備蓄の傷み（気温と季節で増減、穀倉と塩で抑える）。
+      ka._spoiled = 0;
+      if (ka.food > 0) {
+        const c0 = ka.cities[0], wd = this.world;
+        const ct = c0 && wd && wd.temperature ? wd.temperature[(c0.y | 0) * wd.width + (c0.x | 0)] : 0.5;
+        const sName = season ? season.name : "";
+        const heat = Math.max(0.2, 0.6 + ct * 0.8 + (sName === "夏" ? 0.25 : sName === "冬" ? -0.35 : 0));
+        const keep = Math.min(CP.spoilKeepMax, fac.granary * CP.spoilGranary + (res.salt || 0) * CP.spoilSalt);
+        const lost = ka.food * CP.spoilRate * heat * (1 - keep);
+        ka.food -= lost; ka._spoiled = lost;
+      }
       const maxStore = CP.foodStoreBase + fac.granary * CP.foodStoreGranary + (res.salt || 0) * CP.saltStore; // 塩で保存（備蓄増）
       ka._famineDeaths = 0;
       if (ka.food < 0) {
@@ -6159,9 +6190,13 @@
     let duy = h.gy + 0.5 - h.y;
     const dist = Math.sqrt(dux * dux + duy * duy);
     let speed = CP.speed;
-    // 街道の上では速く移動できる（交通インフラの効果）。
-    // 道の格が上がるほど速い（小道1.3倍・街道1.5倍・幹線1.75倍）。
-    if (world.road) { const rg = world.road[(h.y | 0) * W + (h.x | 0)]; if (rg) speed *= rg === 3 ? 1.75 : rg === 2 ? 1.5 : 1.3; }
+    // 足下の地形の歩きにくさ（森・丘・湿地は遅い）。街道の上では道が地形を均すので、
+    //   地形に関わらず道の格の速さで進める（小道1.3倍・街道1.5倍・幹線1.75倍）。
+    //   これで人も軍も道に沿って動くのが速く、道路網が実際に人の流れを集める。
+    const hereI = (h.y | 0) * W + (h.x | 0);
+    const rg = world.road ? world.road[hereI] : 0;
+    if (rg) speed *= rg === 3 ? 1.75 : rg === 2 ? 1.5 : 1.3;
+    else speed *= tile.moveCost ? tile.moveCost(world.terrain[hereI]) : 1;
     if (dist < 0.6) {
       // 目標到達 → 減速してその場に立ち止まる。従来は前の向きに歩き続けて目標の周りを
       //   回り続けており（慣性との合成で円軌道になる）、これが「同じ所をぐるぐる回る」

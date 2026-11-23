@@ -79,10 +79,12 @@
     }
     const big = mag > 0.55;
     this._log("🌋 " + this._place(world, ex, ey) + "で" + (big ? "大規模な" : "") + "火山が噴火した");
-    // 大噴火ほど「火山の冬」を招き、世界を冷え込ませる（規模→気候の因果）。
+    // 大噴火だけが「火山の冬」を招く（成層圏まで噴煙が届く規模）。従来は小噴火でも2割以上が
+    //   火山の冬を起こし、山の多い世界では冷え込み（半減期 約2年）が明ける前に次が来て、
+    //   世界がほぼ常に冬だった。噴火そのものの頻度は変えず、気候を揺るがすのは大噴火だけに。
     const clk = Game.state.clock;
-    if (clk && rand() < 0.2 + mag * 0.6) {
-      clk.coolShock = Math.min(0.6, (clk.coolShock || 0) + 0.2 + mag * 0.4);
+    if (clk && mag > 0.4 && rand() < 0.35 + mag * 0.6) {
+      clk.coolShock = Math.min(0.5, (clk.coolShock || 0) + 0.12 + mag * 0.3);
       this._log("🌋❄ 噴煙が空を覆い、火山の冬が世界を冷え込ませた");
     }
   };
@@ -168,44 +170,40 @@
   // 地震: 断層の応力が解放される。震源は起伏の大きい（断層帯らしい）土地を選び、規模に
   //   応じて地盤がずれ（標高変動→地形変化）、建物が倒壊し住民に犠牲が出る。大地震は余震を
   //   伴い、沿岸では津波（洪水）を誘発しうる（規模→被害・地形・連鎖の因果）。
-  DisasterSystem.prototype._earthquake = function (world) {
+  //   (fx, fy, fmag) を渡すと震源と規模を指定して起こす（検証・演出用）。省略時は断層帯から選ぶ。
+  DisasterSystem.prototype._earthquake = function (world, fx, fy, fmag) {
     const civ = Game.state.civ;
     const rand = this.rand, W = world.width, H = world.height, tile = Game.tile;
-    const relief = function (i) {
-      const x = i % W, y = (i / W) | 0;
-      let r = 0;
-      if (x > 0) r += Math.abs(world.elevation[i] - world.elevation[i - 1]);
-      if (x < W - 1) r += Math.abs(world.elevation[i] - world.elevation[i + 1]);
-      if (y > 0) r += Math.abs(world.elevation[i] - world.elevation[i - W]);
-      if (y < H - 1) r += Math.abs(world.elevation[i] - world.elevation[i + W]);
-      return r;
+    // 震源: 断層帯（起伏の大きい土地・山地の縁）で起きる。従来は「最も断層に近い都市」を
+    //   震源に選んでいたため、地震が毎回どこかの街を直撃していた。現実の地震は街の有無に関係なく
+    //   断層で起き、たまたま近くにある街だけが被害を受ける。
+    const T = Game.TERRAIN;
+    const nearMountain = function (x, y) {
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const t = world.terrain[yy * W + xx];
+        if (t === T.MOUNTAIN || t === T.SNOW) return true;
+      }
+      return false;
     };
-    // 震源: 文明に被害を及ぼす地震は集落付近で起き、断層帯（起伏の大きい土地）ほど強い。
-    //   集落が無ければ辺境の断層帯で揺れる。
     let ex = -1, ey = -1, best = -1;
-    if (civ && civ.kingdoms) {
-      for (let id = 1; id < civ.kingdoms.length; id++) {
-        const k = civ.kingdoms[id];
-        if (!k || !k.alive || !k.cities) continue;
-        for (let ci = 0; ci < k.cities.length; ci++) {
-          const c = k.cities[ci];
-          if (c.x < 0 || c.y < 0 || c.x >= W || c.y >= H) continue;
-          const score = 0.2 + relief(c.y * W + c.x) + rand() * 0.15; // 断層近い集落ほど揺れやすい
-          if (score > best) { best = score; ex = c.x; ey = c.y; }
-        }
+    if (fx != null) { ex = fx; ey = fy; }
+    else for (let s = 0; s < 48; s++) {
+      const x = 2 + ((rand() * (W - 4)) | 0), y = 2 + ((rand() * (H - 4)) | 0);
+      const i = y * W + x;
+      if (!tile.isLand(world.terrain[i])) continue;
+      // 断層帯らしさ: 周囲（半径2）の標高差。山地の縁のような急な起伏の帯ほど高い。
+      let lo = 9, hi = -9;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const e = world.elevation[i + dy * W + dx];
+        if (e < lo) lo = e; if (e > hi) hi = e;
       }
-    }
-    if (ex < 0) { // 辺境の断層帯
-      for (let s = 0; s < 14; s++) {
-        const x = 1 + ((rand() * (W - 2)) | 0), y = 1 + ((rand() * (H - 2)) | 0);
-        const i = y * W + x;
-        if (!tile.isLand(world.terrain[i])) continue;
-        const r = relief(i);
-        if (r > best) { best = r; ex = x; ey = y; }
-      }
+      const score = (hi - lo) * 3 + (nearMountain(x, y) ? 0.25 : 0) + rand() * 0.05;
+      if (score > best) { best = score; ex = x; ey = y; }
     }
     if (ex < 0) return;
-    const mag = rand() * rand();                   // 0..1（大半は小さい）
+    const mag = fmag != null ? fmag : rand() * rand(); // 0..1（大半は小さい）
     const R = 4 + Math.round(mag * 8);             // 被害半径 4..12
     // 断層変位: 震源付近の地盤が上下にずれ、地形が変わる（地形は静的でない）。
     if (world.raise && mag > 0.3) {
@@ -216,18 +214,22 @@
       }
       this._reclass(world, ex, ey, 2);
     }
-    // 直下・近傍の国に被害（建物倒壊・住民の犠牲・不満）。
+    // 被害: 揺れは震源から遠ざかるほど弱まる。国を問わず、揺れの届く範囲の街はみな傷む
+    //   （従来は震源の土地を持つ国の街だけが被害を受けていた）。
     let destroyed = 0, killed = 0, hitName = this._place(world, ex, ey);
     if (civ && civ.kingdoms) {
-      const owner = world.owner[ey * W + ex];
-      const k = owner && civ.kingdoms[owner] && civ.kingdoms[owner].alive ? civ.kingdoms[owner] : null;
-      if (k) {
-        hitName = k.name;
-        const nB = 1 + Math.round(mag * 4);        // 倒壊棟数は規模で増える
+      const reach = R * 1.25;
+      for (let id = 1; id < civ.kingdoms.length; id++) {
+        const k = civ.kingdoms[id];
+        if (!k || !k.alive || !k.cities) continue;
+        let hit = 0;
         for (let ci = 0; ci < k.cities.length; ci++) {
           const city = k.cities[ci];
-          const ddx = city.x - ex, ddy = city.y - ey;
-          if (ddx * ddx + ddy * ddy > R * R * 1.5) continue;
+          const ddx = city.x - ex, ddy = city.y - ey, d = Math.sqrt(ddx * ddx + ddy * ddy);
+          if (d > reach) continue;
+          const inten = mag * (1 - d / reach);       // その街での揺れの強さ
+          hit = Math.max(hit, inten);
+          const nB = Math.round(inten * 5);          // 倒壊棟数は揺れの強さで増える
           if (city.buildings) for (let n = 0; n < nB && city.buildings.length; n++) {
             const idxs = [];
             for (let bi = 0; bi < city.buildings.length; bi++) if (city.buildings[bi].t !== 3) idxs.push(bi);
@@ -239,23 +241,26 @@
             for (let bi = 0; bi < city.buildings.length; bi++) {
               const b = city.buildings[bi];
               if (b.t === 3 || b.site) continue; // 砦は揺れに耐える。建設中は状態でなく倒壊で失う
-              b.cond = Math.max(0, (b.cond == null ? 1 : b.cond) - 0.25 * mag);
+              b.cond = Math.max(0, (b.cond == null ? 1 : b.cond) - 0.3 * inten);
             }
           }
           // 倒壊で建物が減れば都市の格も落ちる。
           if (civ._cityLevel) city.level = civ._cityLevel(city);
         }
-        k.unrest = Math.min(100, (k.unrest || 0) + 6 + mag * 18);
+        if (hit > 0) k.unrest = Math.min(100, (k.unrest || 0) + 4 + hit * 22);
       }
       const R2 = R * R, kcap = 4 + ((mag * 24) | 0), people = civ.people;
       for (let p = 0; p < people.length; p++) {
         const o = people[p];
         if (!o.alive || !o.kid) continue;
-        const dx = o.x - ex, dy = o.y - ey;
-        if (dx * dx + dy * dy > R2) continue;
-        if (rand() < 0.08 + mag * 0.18) { o.alive = false; if (civ._addMark) civ._addMark(o.x, o.y); if (++killed >= kcap) break; }
+        const dx = o.x - ex, dy = o.y - ey, d2 = dx * dx + dy * dy;
+        if (d2 > R2) continue;
+        const inten = mag * (1 - Math.sqrt(d2) / R);
+        if (rand() < 0.04 + inten * 0.3) { o.alive = false; if (civ._addMark) civ._addMark(o.x, o.y); if (++killed >= kcap) break; }
       }
     }
+    // 人知れず辺境で揺れただけの小さな地震は記録しない（年代記と通知を埋めない）。
+    if (destroyed === 0 && killed === 0 && mag <= 0.4) return;
     const scale = mag > 0.7 ? "大地震" : mag > 0.4 ? "地震" : "弱い地震";
     this._log("🌐 " + hitName + "で" + scale + " — 建物" + destroyed + "棟倒壊・" + killed + "人犠牲");
     // 沿岸の大地震は津波（洪水）を誘発する（連鎖災害）。
@@ -282,7 +287,16 @@
   DisasterSystem.prototype._drought = function (world) {
     if (!world.moisture) return;
     const W = world.width, H = world.height, rand = this.rand, tile = Game.tile;
-    const cx = (rand() * W) | 0, cy = (rand() * H) | 0;
+    // 発生地: 元々乾きがちな内陸ほど干ばつに見舞われる（数点を下見し、気候の素地の湿度が
+    //   最も低い陸地を選ぶ）。従来は海の上も含めて完全にランダムだった。
+    const mb = world.moistureBase || world.moisture;
+    let cx = -1, cy = -1, dry = 2;
+    for (let s = 0; s < 8; s++) {
+      const x = (rand() * W) | 0, y = (rand() * H) | 0, i = y * W + x;
+      if (!tile.isLand(world.terrain[i])) continue;
+      if (mb[i] < dry) { dry = mb[i]; cx = x; cy = y; }
+    }
+    if (cx < 0) return;
     const R = 14 + ((rand() * 18) | 0);            // 影響半径
     const R2 = R * R, m = world.moisture, f = world.fertility;
     for (let dy = -R; dy <= R; dy++) {

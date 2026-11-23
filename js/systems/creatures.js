@@ -321,6 +321,9 @@
         let sp = P.speed[type] * (0.7 + 0.3 * gene) * (0.7 + 0.3 * gSpd);
         if (fleeing) sp *= P.fleeBoost;
         if (chasing) sp *= P.chaseBoost;
+        // 地形の歩きにくさ（獣は人より荒れ地に慣れているので影響は半分）。森や湿地に
+        //   逃げ込んだ獲物は追う側も鈍る＝地形が追跡劇に効く。
+        if (tile.moveCost) sp *= 0.5 + 0.5 * tile.moveCost(terrain[(ey[i] | 0) * W + (ex[i] | 0)]);
         const stepX = (dirX / len) * sp, stepY = (dirY / len) * sp;
         // 向きは左右の判定のみに使う（renderer は cos(heading)<0 で左向き）。atan2 を避ける。
         e.heading[i] = stepX < 0 ? PI : 0;

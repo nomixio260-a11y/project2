@@ -1667,6 +1667,45 @@ test("VegetationSystem: 焼け地が再成長して草原に回復する", () =>
   assert.ok(grass > w.terrain.length * 0.5, "焼け地が回復していない: " + grass);
 });
 
+test("VegetationSystem: 森は隣の森から少しずつ広がる（草原の真ん中に突然生えない）", () => {
+  const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 21 });
+  const T = Game.TERRAIN;
+  function lush(withForest) {
+    const w = new Game.World(40, 40);
+    w.terrain.fill(T.GRASS);
+    w.temperature.fill(0.5); w.moisture.fill(1); w.fertility.fill(0.95);
+    if (withForest) for (let y = 0; y < 40; y++) for (let x = 0; x < 3; x++) w.terrain[y * 40 + x] = T.FOREST; // 西端の森
+    const veg = new Game.VegetationSystem(w, null);
+    veg.seed(w); w.fertility.fill(0.95);
+    return { w, veg };
+  }
+  // 生育期（夏）に固定する: 草地が森へ育つほど繁るのは夏だけ。
+  Game.state.clock = { season: Game.SEASONS[1], wetness: 0, warmth: 0 };
+  const ticksPerYear = Game.config.sim.ticksPerDay * Game.config.sim.daysPerSeason * 4;
+  // 種子源の無い草原: 1年たっても森はほとんど現れない（従来は条件が揃えば一斉に森になった）。
+  const a = lush(false);
+  for (let t = 0; t < ticksPerYear / 4; t++) a.veg.tick(a.w);
+  let forestA = 0; for (let i = 0; i < 1600; i++) if (a.w.terrain[i] === T.FOREST) forestA++;
+  assert.ok(forestA < 1600 * 0.08, "種子源の無い草原に森が一斉に生えた: " + forestA);
+  // 西端に森がある草原: 生育期1年分で森は西から前進するが、東の端までは届かない。
+  const b = lush(true);
+  for (let t = 0; t < ticksPerYear / 4; t++) b.veg.tick(b.w);
+  let west = 0, grown = 0, isolated = 0;
+  for (let y = 0; y < 40; y++) for (let x = 3; x < 40; x++) {
+    if (b.w.terrain[y * 40 + x] !== T.FOREST) continue;
+    grown++; if (x < 12) west++;
+    let nb = false;
+    for (let dy = -1; dy <= 1 && !nb; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if ((dx || dy) && b.w.terrain[(y + dy) * 40 + x + dx] === T.FOREST) { nb = true; break; }
+    }
+    if (!nb) isolated++;
+  }
+  assert.ok(west > 40, "隣接する森から森が広がらない: " + west);
+  // 森は既存の森の縁から連続して育つ（ぽつんと孤立した森はごく稀な遠距離散布だけ）。
+  assert.ok(isolated <= Math.max(2, grown * 0.05), "孤立した森が多すぎる: " + isolated + "/" + grown);
+  assert.ok(forestA < west, "種子源の有無で森の広がりが変わらない: " + forestA + " vs " + west);
+});
+
 test("VegetationSystem: graze で fertility が減り、空なら 0 を返す", () => {
   const Game = loadCore({ mapWidth: 8, mapHeight: 8 });
   const w = new Game.World(8, 8);
@@ -1755,7 +1794,8 @@ test("DisasterSystem: 干ばつ・地震・洪水が被害を与える", () => {
   const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 13 });
   const w = new Game.World(40, 40);
   w.terrain.fill(Game.TERRAIN.GRASS);
-  for (let y = 0; y < 40; y++) for (let x = 0; x < 4; x++) w.setTerrain(x, y, Game.TERRAIN.MOUNTAIN);
+  w.elevation.fill(0.45); // 平地
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 4; x++) { w.setTerrain(x, y, Game.TERRAIN.MOUNTAIN); w.elevation[y * 40 + x] = 0.85; } // 西端の山脈（断層帯）
   for (let y = 0; y < 40; y++) w.setTerrain(15, y, Game.TERRAIN.SHALLOW_WATER); // 陸に挟まれた浅瀬列
   if (w.fertility) w.fertility.fill(1);
   if (w.moisture) w.moisture.fill(0.1);
@@ -1781,13 +1821,28 @@ test("DisasterSystem: 干ばつ・地震・洪水が被害を与える", () => {
   let after = 0; for (let i = 0; i < w.fertility.length; i++) after += w.fertility[i];
   assert.ok(after < before, "干ばつで肥沃度が減るはず");
 
-  // 地震: 砦以外の建物が倒壊し、不満が上がる。
+  // 地震: 震源の近くの街は砦以外の建物が倒壊し、不満が上がる（震源・規模を指定して起こす）。
   const bCount = k.cities[0].buildings.length;
   const u0 = k.unrest || 0;
-  ds._earthquake(w);
+  ds._earthquake(w, 26, 20, 0.9);
   assert.ok(k.cities[0].buildings.length < bCount, "地震で建物が倒壊するはず");
   assert.ok((k.unrest || 0) > u0, "地震で不満が上がるはず");
   assert.ok(k.cities[0].buildings.some((b) => b.t === 3), "砦(KEEP)は倒壊しないはず");
+  // 遠く離れた地震では街は揺れない（震源から被害半径の外）。
+  const bCount2 = k.cities[0].buildings.length, u1 = k.unrest;
+  ds._earthquake(w, 2, 2, 0.5);
+  assert.equal(k.cities[0].buildings.length, bCount2, "遠い地震で街の建物が倒壊した");
+  assert.equal(k.unrest, u1, "遠い地震で街の不満が上がった");
+  // 自然の地震は断層帯（山脈の縁）で起きる: 震源を選ばせると、西端の山脈の近くになる。
+  const logs = [];
+  civ._logEvent = function (m) { logs.push(m); };
+  let nearFault = 0;
+  for (let n = 0; n < 12; n++) {
+    const before = w.elevation.slice();
+    ds._earthquake(w, undefined, undefined, 0.8); // 規模は大きく（断層変位で震源が分かる）
+    for (let i = 0; i < before.length; i++) if (w.elevation[i] !== before[i]) { if (i % 40 <= 8) nearFault++; break; }
+  }
+  assert.ok(nearFault >= 9, "自然の地震が断層帯（山脈の縁）で起きていない: " + nearFault + "/12");
 
   // 洪水: 浅瀬付近の陸地の湿度が上がる。
   ds._flood(w);
@@ -2691,6 +2746,62 @@ test("CivSystem: 現実的な街道 — 山脈は峠へ迂回し、水路は狭�
   let waterN = 0;
   for (const i of path2) if (Game.tile.isWater(w2.terrain[i])) waterN++;
   assert.ok(waterN <= 3, "広い海峡を突っ切っている（狭い渡し場に橋を架けない）: water=" + waterN);
+});
+
+test("CivSystem: 備蓄は暑い土地ほど傷み、穀倉が傷みを抑える", () => {
+  function spoilOf(temp, granaries) {
+    const Game = loadCore({ mapWidth: 40, mapHeight: 40, seed: 5 });
+    const w = new Game.World(40, 40);
+    w.terrain.fill(Game.TERRAIN.GRASS); w.temperature.fill(temp);
+    const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+    const A = civ.foundAt(20, 20), ka = civ.kingdoms[A];
+    ka.tileCount = 120;
+    for (let g = 0; g < granaries; g++) ka.cities[0].buildings.push({ x: 18 + g, y: 18, t: Game.BUILDING.GRANARY, lvl: 1, cond: 1, site: 0, prog: 0, need: 0, kind: -1 });
+    ka.food = 30;
+    civ._diplomacy();
+    assert.ok(Number.isFinite(ka._spoiled), "傷みが記録されない");
+    return ka._spoiled / Math.max(1e-6, ka.food + ka._spoiled);
+  }
+  const hot = spoilOf(0.85, 0), cold = spoilOf(0.2, 0), stored = spoilOf(0.85, 3);
+  assert.ok(hot > 0, "備蓄が傷まない");
+  assert.ok(hot > cold * 1.4, "暑い土地ほど傷むはず: hot=" + hot + " cold=" + cold);
+  assert.ok(stored < hot * 0.7, "穀倉が傷みを抑えていない: " + stored + " vs " + hot);
+});
+
+test("CivSystem: 冬に補給圏の外で戦う兵は消耗する（自国の宿営地では消耗しない）", () => {
+  function drain(season, far) {
+    const Game = loadCore({ mapWidth: 120, mapHeight: 120, seed: 9 });
+    const w = new Game.World(120, 120);
+    w.terrain.fill(Game.TERRAIN.GRASS);
+    const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+    const A = civ.foundAt(10, 15), B = civ.foundAt(110, 15);
+    w.terrain[15 * 120 + 60] = Game.TERRAIN.SAND; w.terrain[15 * 120 + 11] = Game.TERRAIN.SAND; // 採食で相殺されない地点
+    civ._declareWar(A, B);
+    Game.state.clock = { season: Game.SEASONS[season], wetness: 0, warmth: 0 };
+    const h = civ.people.find(function (p) { return p.kid === A; });
+    h.role = Game.ROLE ? Game.ROLE.SOLDIER : h.role;
+    const civP = Object.getPrototypeOf(civ);
+    // 移動・行動を止め、毎ティックの代謝と冬の消耗だけを測る。
+    civ._think = function () {}; civ._move = function () {};
+    let total = 0;
+    for (let t = 0; t < 64; t++) {
+      h.x = far ? 60 : 11; h.y = 15; h.food = 0.9; h.pack = 0;
+      const before = h.food;
+      civP.tick.call(civ, w);
+      total += before - h.food;
+    }
+    return total;
+  }
+  const winterFar = drain(3, true), winterHome = drain(3, false), summerFar = drain(1, true);
+  assert.ok(winterFar > winterHome * 1.25, "冬の遠征が消耗しない: far=" + winterFar + " home=" + winterHome);
+  assert.ok(winterFar > summerFar * 1.25, "夏の遠征と同じ消耗しかない: winter=" + winterFar + " summer=" + summerFar);
+});
+
+test("tile.moveCost: 草原が最速、森・丘・湿地は遅い", () => {
+  const Game = loadCore({});
+  const T = Game.TERRAIN, mc = Game.tile.moveCost;
+  assert.equal(mc(T.GRASS), 1);
+  assert.ok(mc(T.FOREST) < 1 && mc(T.HILL) < mc(T.FOREST) && mc(T.SWAMP) < mc(T.JUNGLE), "地形の歩きにくさの順序が不自然");
 });
 
 test("CivSystem: 交易インフラ — 交易路が街道として敷かれ、交通量で格が付き、通過国が関税を得る", () => {

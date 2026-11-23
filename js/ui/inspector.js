@@ -385,7 +385,8 @@
       bar("不満", Math.round(k.unrest), true) +
       (info && info.morale != null ? bar("民心", info.morale, false) : "") +
       row("食料", (info ? info.food : Math.round(k.food || 0)) + (k.famine ? " ⚠飢饉" : "") +
-        (info && info.foodTrade ? (info.foodTrade > 0 ? " （輸入+" + info.foodTrade + "）" : " （輸出" + info.foodTrade + "）") : "")) +
+        (info && info.foodTrade ? (info.foodTrade > 0 ? " （輸入+" + info.foodTrade + "）" : " （輸出" + info.foodTrade + "）") : "") +
+        ((k._spoiled || 0) >= 0.5 ? " ・傷み−" + (k._spoiled < 10 ? k._spoiled.toFixed(1) : Math.round(k._spoiled)) : "")) +
       (k.soil != null && k.soil < 0.98 ? row("地力", Math.round(k.soil * 100) + "%" + (k.soil < 0.72 ? " ⚠ 土が痩せている" : "")) : "") +
       row("資源", resStr) +
       row("通貨", moneyStr) +
