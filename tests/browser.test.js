@@ -395,6 +395,56 @@ test("シミュレーション制御: 一時停止と速度変更が反映され
   await page.close();
 });
 
+// 可視の主要パネル同士が重ならないか（親子関係・画面外のシートは除外）。
+async function panelOverlaps(page) {
+  return page.evaluate(async () => {
+    const civ = Game.state.civ;
+    // 国を一つ興して、インスペクタ（国の詳細）と地図ビュー凡例と通知を同時に出す。
+    let id = -1;
+    for (let i = 1; i < civ.kingdoms.length; i++) if (civ.kingdoms[i] && civ.kingdoms[i].alive) { id = i; break; }
+    if (id < 0) id = civ.foundAt((Game.config.mapWidth / 2) | 0, (Game.config.mapHeight / 2) | 0);
+    if (id > 0) Game.inspector.selectNation(id);
+    Game.mapview.setMode("province");
+    Game.toasts.show("重なり検査の通知（やや長い文章で幅を確保する）");
+    await new Promise((r) => setTimeout(r, 450)); // 遷移の完了を待つ
+    const ids = ["topbar", "toolbar", "sidebar", "inspector", "mapview-legend", "minimap", "help-toggle", "toasts", "bottombar", "coords"];
+    const rects = {};
+    for (const k of ids) {
+      const el = document.getElementById(k); if (!el) continue;
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden" || +cs.opacity === 0) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      if (r.top >= innerHeight - 1 || r.bottom <= 1 || r.left >= innerWidth - 1 || r.right <= 1) continue;
+      rects[k] = r;
+    }
+    const out = [], keys = Object.keys(rects);
+    for (let a = 0; a < keys.length; a++) for (let b = a + 1; b < keys.length; b++) {
+      const A = rects[keys[a]], B = rects[keys[b]];
+      const ix = Math.min(A.right, B.right) - Math.max(A.left, B.left);
+      const iy = Math.min(A.bottom, B.bottom) - Math.max(A.top, B.top);
+      if (ix > 2 && iy > 2) out.push(keys[a] + "×" + keys[b]);
+    }
+    return out;
+  });
+}
+
+test("UI: インスペクタ・凡例・通知・パネルが重ならない（ノートPC／スマホ縦横）", async () => {
+  const views = [
+    { width: 1024, height: 640 },
+    { width: 390, height: 844, isMobile: true, hasTouch: true },
+    { width: 844, height: 390, isMobile: true, hasTouch: true },
+  ];
+  for (const vp of views) {
+    const { page, errors } = await openPage(vp);
+    await page.waitForFunction("Game.state.civ && Game.state.civ.kingdoms.length > 1", { timeout: 10000 });
+    const ov = await panelOverlaps(page);
+    assert.deepEqual(ov, [], vp.width + "x" + vp.height + " で重なり: " + ov.join(", "));
+    assert.deepEqual(errors, [], "実行時エラー: " + errors.join("\n"));
+    await page.close();
+  }
+});
+
 test("再生成: 新しい世界ボタンでマップが変わる", async () => {
   const { page, errors } = await openPage({ width: 1024, height: 768 });
 

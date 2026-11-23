@@ -22,6 +22,10 @@
     [2.2, 0.3], [-2.1, 0.4], [0.6, 2.1], [-0.7, 2.0],
   ];
 
+  // 竈の煙の色（透明度 0〜0.32 を16段階）。毎フレーム建物ごとに色文字列を作らずに済ませる。
+  const SMOKE_STYLES = [];
+  for (let i = 0; i < 16; i++) SMOKE_STYLES.push("rgba(150,148,150," + (i / 46.9).toFixed(3) + ")");
+
   function Renderer(canvas, world) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
@@ -74,6 +78,7 @@
   // 別の world に差し替え（再生成時）。
   Renderer.prototype.setWorld = function (world) {
     this.world = world;
+    this._wmAll = true;
     if (this.terrainCanvas.width !== world.width || this.terrainCanvas.height !== world.height) {
       this.terrainCanvas.width = world.width;
       this.terrainCanvas.height = world.height;
@@ -220,6 +225,27 @@
       }
     }
     this.terrainCtx.putImageData(this.imageData, 0, 0);
+    this._wmAll = true; // 水域マスクも全面作り直す（次の水面描画で）
+  };
+
+  // 水域マスク（1px/タイル。水なら不透明）。水面のさざ波を「画面全体をパターンで塗って
+  //   マスクで切り抜く」数回の描画命令で描くために使う（タイル数に依存しない）。
+  Renderer.prototype._waterMask = function () {
+    const world = this.world, W = world.width, H = world.height;
+    let m = this._wm;
+    if (!m || m.width !== W || m.height !== H) {
+      m = this._wm = document.createElement("canvas");
+      m.width = W; m.height = H;
+      this._wmCtx = m.getContext("2d");
+      this._wmAll = true;
+    }
+    if (this._wmAll) {
+      const img = this._wmCtx.createImageData(W, H), d = img.data, terr = world.terrain, isWater = Game.tile.isWater;
+      for (let i = 0, n = W * H; i < n; i++) if (isWater(terr[i])) d[i * 4 + 3] = 255;
+      this._wmCtx.putImageData(img, 0, 0);
+      this._wmAll = false;
+    }
+    return m;
   };
 
   // 1タイルを dirty キューに積む（input から呼ばれる）。
@@ -251,6 +277,11 @@
       //   その2タイルも塗り直さないと縁に古い陰影が残る（改変後の照明のズレ）。
       if (x + 1 < W) this._paintTile(world, rgb, tctx, x + 1, y);
       if (y + 1 < H) this._paintTile(world, rgb, tctx, x, y + 1);
+      // 水域マスクも追従（掘って湖ができた・埋め立てた等）。
+      if (this._wm && !this._wmAll) {
+        if (Game.tile.isWater(world.terrain[y * W + x])) { this._wmCtx.fillStyle = "#000"; this._wmCtx.fillRect(x, y, 1, 1); }
+        else this._wmCtx.clearRect(x, y, 1, 1);
+      }
     }
     this.dirty.length = 0;
   };
@@ -900,6 +931,49 @@
   };
 
   // 戦略資源を地図上に小さなアイコンで描く（一定以上ズーム時）。
+  // 資源アイコン1つを (cx,cy) 中心・大きさ s で描く（キャッシュ用のキャンバスへ一度だけ描く）。
+  function paintResourceIcon(ctx, t, cx, cy, s) {
+    if (t === 1) { // 鉱石: 岩塊＋鉱脈の粒
+      ctx.fillStyle = "#574f47"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+      ctx.fillStyle = "#c9a24a"; ctx.fillRect(cx - s * 0.22, cy - s * 0.12, s * 0.26, s * 0.26);
+      ctx.fillStyle = "#e7decb"; ctx.fillRect(cx + s * 0.05, cy + s * 0.04, s * 0.2, s * 0.2);
+    } else if (t === 2) { // 漁場: 波と魚影
+      ctx.fillStyle = "rgba(190,230,248,0.85)"; ctx.fillRect(cx - s * 0.5, cy + s * 0.15, s, s * 0.18);
+      ctx.fillStyle = "#34637e"; ctx.fillRect(cx - s * 0.28, cy - s * 0.22, s * 0.5, s * 0.22);
+      ctx.fillStyle = "#34637e"; ctx.fillRect(cx + s * 0.22, cy - s * 0.16, s * 0.14, s * 0.1);
+    } else if (t === 4) { // 金鉱石: 岩塊に輝く金塊
+      ctx.fillStyle = "#5a4a36"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+      ctx.fillStyle = "#f3c433"; ctx.fillRect(cx - s * 0.2, cy - s * 0.16, s * 0.32, s * 0.3);
+      ctx.fillStyle = "#ffe98a"; ctx.fillRect(cx - s * 0.1, cy - s * 0.08, s * 0.14, s * 0.14);
+      ctx.fillStyle = "#fff6cf"; ctx.fillRect(cx + s * 0.12, cy + s * 0.06, s * 0.12, s * 0.12);
+    } else if (t === 5) { // 馬: 草地の駿馬（胴＋脚＋首）
+      ctx.fillStyle = "#7a4a28"; ctx.fillRect(cx - s * 0.34, cy - s * 0.16, s * 0.62, s * 0.3); // 胴
+      ctx.fillRect(cx + s * 0.18, cy - s * 0.42, s * 0.16, s * 0.3); // 首
+      ctx.fillStyle = "#5e3a20"; ctx.fillRect(cx - s * 0.28, cy + s * 0.12, s * 0.1, s * 0.26); ctx.fillRect(cx + s * 0.1, cy + s * 0.12, s * 0.1, s * 0.26); // 脚
+    } else if (t === 6) { // 香辛料: 色鮮やかな実・葉
+      ctx.fillStyle = "#3f8f3a"; ctx.fillRect(cx - s * 0.4, cy + s * 0.1, s * 0.8, s * 0.16); // 葉床
+      ctx.fillStyle = "#d8542a"; ctx.fillRect(cx - s * 0.28, cy - s * 0.2, s * 0.22, s * 0.22);
+      ctx.fillStyle = "#e8a23a"; ctx.fillRect(cx + s * 0.02, cy - s * 0.26, s * 0.2, s * 0.2);
+      ctx.fillStyle = "#c23030"; ctx.fillRect(cx + s * 0.16, cy + s * 0.0, s * 0.16, s * 0.16);
+    } else if (t === 7) { // 塩: 白い結晶の山
+      ctx.fillStyle = "#eef2f6";
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.42); ctx.lineTo(cx + s * 0.42, cy + s * 0.34); ctx.lineTo(cx - s * 0.42, cy + s * 0.34); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(cx - s * 0.08, cy - s * 0.1, s * 0.16, s * 0.16);
+      ctx.fillStyle = "#c7d2dc"; ctx.fillRect(cx - s * 0.3, cy + s * 0.22, s * 0.6, s * 0.1);
+    } else if (t === 8) { // 良材: 積まれた丸太
+      ctx.fillStyle = "#6b4a2a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.84, s * 0.22);
+      ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.2);
+      ctx.fillStyle = "#caa06a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.14, s * 0.22); ctx.fillRect(cx + s * 0.28, cy - s * 0.06, s * 0.14, s * 0.22); // 木口
+      ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.12, s * 0.2);
+    } else { // 宝石: きらめく結晶
+      ctx.fillStyle = "#46d6c8";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - s * 0.5); ctx.lineTo(cx + s * 0.4, cy);
+      ctx.lineTo(cx, cy + s * 0.5); ctx.lineTo(cx - s * 0.4, cy); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fillRect(cx - s * 0.08, cy - s * 0.25, s * 0.16, s * 0.22);
+    }
+  }
+
   Renderer.prototype.drawResources = function (camera) {
     if (Game.config.settings && Game.config.settings.resources === false) return;
     const world = this.world;
@@ -910,52 +984,45 @@
     if (scale < 3) return; // 小さすぎる時は省略
     const range = camera.visibleTileRange();
     const ctx = this.ctx;
-    const s = Math.max(3, scale * 0.5);
+    // アイコンは種類×大きさごとに小キャンバスへ一度だけ描き、以降は1回の転写で済ませる
+    //   （従来は資源1つごとに3〜4回の塗りと色指定をしており、引きの視点で重かった）。
+    const s = Math.max(3, Math.round(scale * 0.5));
+    if (!this._resIcon || this._resIconS !== s) { this._resIcon = {}; this._resIconS = s; }
+    const cache = this._resIcon;
+    const pad = Math.ceil(s * 0.6), dim = pad * 2;
+    // 画面の資源層: カメラと資源が変わらない間は前回描いた層を1回転写するだけで済ませる
+    //   （観察中は視点が止まっていることが多い。動かした時だけ描き直す）。
+    const cw = this.canvas.width, ch = this.canvas.height, dpr = this.dpr || 1;
+    let L = this._resLayer;
+    if (!L || L.width !== cw || L.height !== ch) {
+      L = this._resLayer = document.createElement("canvas");
+      L.width = cw; L.height = ch; this._resLayerCtx = L.getContext("2d"); this._resKey = "";
+    }
+    const key = camera.x + "," + camera.y + "," + camera.zoom + "," + list.length + "," + (world.resVersion || 0);
+    if (key === this._resKey) {
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(L, 0, 0); ctx.restore();
+      return;
+    }
+    this._resKey = key;
+    const out = ctx;
+    const lctx = this._resLayerCtx;
+    lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lctx.clearRect(0, 0, this.cssW, this.cssH);
     for (let k = 0; k < list.length; k++) {
       const r = list[k];
       if (r.x < range.x0 || r.x > range.x1 || r.y < range.y0 || r.y > range.y1) continue;
+      let img = cache[r.t];
+      if (!img) {
+        img = document.createElement("canvas");
+        img.width = dim; img.height = dim;
+        paintResourceIcon(img.getContext("2d"), r.t, pad, pad, s);
+        cache[r.t] = img;
+      }
       const cx = camera.worldToScreenX((r.x + 0.5) * tile);
       const cy = camera.worldToScreenY((r.y + 0.5) * tile);
-      if (r.t === 1) { // 鉱石: 岩塊＋鉱脈の粒
-        ctx.fillStyle = "#574f47"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
-        ctx.fillStyle = "#c9a24a"; ctx.fillRect(cx - s * 0.22, cy - s * 0.12, s * 0.26, s * 0.26);
-        ctx.fillStyle = "#e7decb"; ctx.fillRect(cx + s * 0.05, cy + s * 0.04, s * 0.2, s * 0.2);
-      } else if (r.t === 2) { // 漁場: 波と魚影
-        ctx.fillStyle = "rgba(190,230,248,0.85)"; ctx.fillRect(cx - s * 0.5, cy + s * 0.15, s, s * 0.18);
-        ctx.fillStyle = "#34637e"; ctx.fillRect(cx - s * 0.28, cy - s * 0.22, s * 0.5, s * 0.22);
-        ctx.fillStyle = "#34637e"; ctx.fillRect(cx + s * 0.22, cy - s * 0.16, s * 0.14, s * 0.1);
-      } else if (r.t === 4) { // 金鉱石: 岩塊に輝く金塊
-        ctx.fillStyle = "#5a4a36"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
-        ctx.fillStyle = "#f3c433"; ctx.fillRect(cx - s * 0.2, cy - s * 0.16, s * 0.32, s * 0.3);
-        ctx.fillStyle = "#ffe98a"; ctx.fillRect(cx - s * 0.1, cy - s * 0.08, s * 0.14, s * 0.14);
-        ctx.fillStyle = "#fff6cf"; ctx.fillRect(cx + s * 0.12, cy + s * 0.06, s * 0.12, s * 0.12);
-      } else if (r.t === 5) { // 馬: 草地の駿馬（胴＋脚＋首）
-        ctx.fillStyle = "#7a4a28"; ctx.fillRect(cx - s * 0.34, cy - s * 0.16, s * 0.62, s * 0.3); // 胴
-        ctx.fillRect(cx + s * 0.18, cy - s * 0.42, s * 0.16, s * 0.3); // 首
-        ctx.fillStyle = "#5e3a20"; ctx.fillRect(cx - s * 0.28, cy + s * 0.12, s * 0.1, s * 0.26); ctx.fillRect(cx + s * 0.1, cy + s * 0.12, s * 0.1, s * 0.26); // 脚
-      } else if (r.t === 6) { // 香辛料: 色鮮やかな実・葉
-        ctx.fillStyle = "#3f8f3a"; ctx.fillRect(cx - s * 0.4, cy + s * 0.1, s * 0.8, s * 0.16); // 葉床
-        ctx.fillStyle = "#d8542a"; ctx.fillRect(cx - s * 0.28, cy - s * 0.2, s * 0.22, s * 0.22);
-        ctx.fillStyle = "#e8a23a"; ctx.fillRect(cx + s * 0.02, cy - s * 0.26, s * 0.2, s * 0.2);
-        ctx.fillStyle = "#c23030"; ctx.fillRect(cx + s * 0.16, cy + s * 0.0, s * 0.16, s * 0.16);
-      } else if (r.t === 7) { // 塩: 白い結晶の山
-        ctx.fillStyle = "#eef2f6";
-        ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.42); ctx.lineTo(cx + s * 0.42, cy + s * 0.34); ctx.lineTo(cx - s * 0.42, cy + s * 0.34); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#ffffff"; ctx.fillRect(cx - s * 0.08, cy - s * 0.1, s * 0.16, s * 0.16);
-        ctx.fillStyle = "#c7d2dc"; ctx.fillRect(cx - s * 0.3, cy + s * 0.22, s * 0.6, s * 0.1);
-      } else if (r.t === 8) { // 良材: 積まれた丸太
-        ctx.fillStyle = "#6b4a2a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.84, s * 0.22);
-        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.2);
-        ctx.fillStyle = "#caa06a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.14, s * 0.22); ctx.fillRect(cx + s * 0.28, cy - s * 0.06, s * 0.14, s * 0.22); // 木口
-        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.12, s * 0.2);
-      } else { // 宝石: きらめく結晶
-        ctx.fillStyle = "#46d6c8";
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - s * 0.5); ctx.lineTo(cx + s * 0.4, cy);
-        ctx.lineTo(cx, cy + s * 0.5); ctx.lineTo(cx - s * 0.4, cy); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fillRect(cx - s * 0.08, cy - s * 0.25, s * 0.16, s * 0.22);
-      }
+      lctx.drawImage(img, (cx - pad) | 0, (cy - pad) | 0);
     }
+    out.save(); out.setTransform(1, 0, 0, 1, 0, 0); out.drawImage(L, 0, 0); out.restore();
   };
 
   // 街道・交易路を行き交う荷馬車。経済の流れを可視化する（一定以上ズーム時）。
@@ -973,11 +1040,24 @@
     const world = this.world, isWater = Game.tile.isWater;
     // cargo: 積荷の色（交易される財を表す）。trade: 交易路の隊商か（街道の荷車と区別）。
     function wagon(ax, ay, bx, by, frac, cargo, trade) {
-      const x = ax + (bx - ax) * frac, y = ay + (by - ay) * frac;
+      wagonAt(ax + (bx - ax) * frac, ay + (by - ay) * frac, bx - ax, cargo, trade);
+    }
+    // 経路（タイル index の列）上の位置 frac(0..1) に隊商を置く。往路と復路で向きが変わる。
+    const WW = world ? world.width : 1;
+    function wagonOnPath(path, frac, back, cargo, trade) {
+      const L = path.length - 1;
+      if (L < 1) return;
+      const f = (back ? 1 - frac : frac) * L;
+      const n0 = Math.min(L - 1, f | 0), r = f - n0;
+      const i0 = path[n0], i1 = path[n0 + 1];
+      const x0 = i0 % WW, y0 = (i0 / WW) | 0, x1 = i1 % WW, y1 = (i1 / WW) | 0;
+      wagonAt(x0 + (x1 - x0) * r, y0 + (y1 - y0) * r, back ? x0 - x1 : x1 - x0, cargo, trade);
+    }
+    function wagonAt(x, y, dir, cargo, trade) {
       if (x < range.x0 - 1 || x > range.x1 + 1 || y < range.y0 - 1 || y > range.y1 + 1) return;
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
-      const dir = bx - ax; const faceL = dir < 0; const fs = faceL ? -1 : 1; // 進行方向
+      const faceL = dir < 0; const fs = faceL ? -1 : 1; // 進行方向
       cargo = cargo || "#c9a86a";
       // 海上の区間では帆船で、陸上では荷馬車で描く（海路・陸路が見て分かる）。
       const onSea = world && isWater(world.terrain[(y | 0) * world.width + (x | 0)]);
@@ -1033,36 +1113,55 @@
       if (!pool.length) pool.push("#c9a86a"); // 一般の荷
       return pool;
     }
+    // 街道の荷車: 街どうしを結ぶ実際の街道（A*の経路）に沿って、自国の産物を運んで往復する。
+    //   往来の多い区間（大きな街どうし）ほど荷車が多い。
+    const edges = civ.roadEdges || [];
+    const pools = {};
+    for (let e = 0; e < edges.length; e++) {
+      const ed = edges[e], k = ks[ed.kid];
+      if (!k || !k.alive) continue;
+      const pool = pools[ed.kid] || (pools[ed.kid] = cargoPool(k, null));
+      const n = ed.w >= 6 ? 2 : 1;
+      const speed = 0.9 / Math.max(6, ed.path.length); // 長い道ほどゆっくり一巡する（実際の移動速度）
+      for (let m = 0; m < n; m++) {
+        const ph = (t * speed * 6 + e * 0.37 + m / n) % 2;   // 0..1 往路 / 1..2 復路
+        wagonOnPath(ed.path, ph < 1 ? ph : ph - 1, ph >= 1, pool[(e + m) % pool.length], false);
+      }
+    }
+    // 交易の隊商: 交易のある首都どうしを結ぶ交易路に沿って往来する（活発な路ほど多い）。
+    //   積荷は両国の産物を表す色で、何が運ばれているか（穀物・鉄・香辛料・宝石…）が分かる。
+    //   遠い相手（陸の交易路の無い海路）は従来どおり首都間を直線で結ぶ航路を船が行く。
+    const trades = civ.tradePaths || [];
+    const pathed = {};
+    for (let q = 0; q < trades.length; q++) {
+      const tr = trades[q], ka = ks[tr.a], kb = ks[tr.b];
+      if (!ka || !kb || !ka.alive || !kb.alive) continue;
+      pathed[tr.a + ":" + tr.b] = 1;
+      const pool = cargoPool(ka, kb), vol = tr.vol;
+      const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
+      const speed = 0.9 / Math.max(8, tr.path.length);
+      for (let wagi = 0; wagi < wagons; wagi++) {
+        const ph = (t * speed * 6 + tr.a * 0.7 + tr.b * 0.37 + (2 * wagi) / wagons) % 2;
+        wagonOnPath(tr.path, ph < 1 ? ph : ph - 1, ph >= 1, pool[(tr.a + tr.b + wagi) % pool.length], true);
+      }
+    }
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
-      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      if (!k || !k.alive || !k.partners || !k.cities || !k.cities.length) continue;
       const cap = k.cities[0];
-      // 街道: 首都⇄各都市をゆっくり往復（自国の産物を運ぶ）。
-      const localPool = cargoPool(k, null);
-      for (let c = 1; c < k.cities.length; c++) {
-        const city = k.cities[c];
-        const frac = Math.sin(t * 0.35 + id * 1.3 + c * 2.1) * 0.5 + 0.5;
-        wagon(cap.x, cap.y, city.x, city.y, frac, localPool[(id + c) % localPool.length], false);
-      }
-      // 交易路: 実際に交易のある首都間を隊商が往来（活発な路ほど多くの隊商）。積荷は両国の
-      //   産物を表す色で、何が運ばれているか（穀物・鉄・香辛料・宝石・奢侈品…）が見て分かる。
-      if (k.partners) {
-        for (const bStr in k.partners) {
-          const b = +bStr;
-          if (b <= id) continue;
-          const kb = ks[b];
-          if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
-          const vol = k.partners[b] || 0;
-          if (vol < 0.5) continue;
-          const cap2 = kb.cities[0];
-          const pool = cargoPool(k, kb);
-          // 交易量に応じて1〜5の隊商／船を時間差で走らせる（活発な路ほど賑わう）。
-          const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
-          for (let wagi = 0; wagi < wagons; wagi++) {
-            const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
-            // 隊商ごとに違う財を積む（路に多彩な物流が行き交って見える）。
-            wagon(cap.x, cap.y, cap2.x, cap2.y, frac, pool[(id + b + wagi) % pool.length], true);
-          }
+      for (const bStr in k.partners) {
+        const b = +bStr;
+        if (b <= id || pathed[id + ":" + b]) continue;
+        const kb = ks[b];
+        if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+        const vol = k.partners[b] || 0;
+        if (vol < 0.5) continue;
+        const cap2 = kb.cities[0];
+        const pool = cargoPool(k, kb);
+        const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
+        for (let wagi = 0; wagi < wagons; wagi++) {
+          const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
+          wagon(cap.x, cap.y, cap2.x, cap2.y, frac, pool[(id + b + wagi) % pool.length], true);
         }
       }
     }
@@ -1111,15 +1210,20 @@
     // 2層: まず暗い路肩（太）、次に明るい路面（細）。タイル中心を8方向の線分（丸端）で結んで
     //   描く＝斜めの区間は斜めの線になり、従来の「四角の階段」のカクカクが消える。
     ctx.lineCap = "round"; ctx.lineJoin = "round";
+    // 道の格（交通量で決まる: 1=小道 2=街道 3=幹線）で幅を変える。往来の多い幹線は太く、
+    //   村へ続く小道は細い＝道路網の階層が一目で分かる。
+    const GW = [1, 0.62, 1, 1.45];
     for (let pass = 0; pass < 2; pass++) {
       const wdt = pass === 0 ? ew : cw;
-      ctx.lineWidth = wdt;
+      let lastW = -1;
       for (let n = 0; n < list.length; n++) {
         const i = list[n];
         const tx = i % W, ty = (i / W) | 0;
         if (tx < x0 - 1 || tx > x1 + 1 || ty < y0 - 1 || ty > y1 + 1) continue;
         const stone = isStone(i);
         ctx.strokeStyle = pass === 0 ? (stone ? edgeStone : edgeDirt) : (stone ? surfStone : surfDirt);
+        const lw = Math.max(1, wdt * (GW[road[i]] || 1));
+        if (lw !== lastW) { ctx.lineWidth = lw; lastW = lw; }
         const cx = camera.worldToScreenX((tx + 0.5) * tile);
         const cy = camera.worldToScreenY((ty + 0.5) * tile);
         // 東・南・南東・南西の4方向だけ描けば、全タイルの走査で全結線が一度ずつ引かれる。
@@ -1139,7 +1243,7 @@
             !hasRoad(tx - 1, ty - 1) && !hasRoad(tx + 1, ty - 1)) {
           // 孤立タイル（端点）: 丸い結節点を打つ。
           ctx.fillStyle = ctx.strokeStyle;
-          ctx.beginPath(); ctx.arc(cx, cy, wdt * 0.5, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(cx, cy, lastW * 0.5, 0, Math.PI * 2); ctx.fill();
         }
         // 木橋: 道が川・水路で途切れる所（1〜2タイルの水の切れ目の先に道が続く）には橋を渡す。
         //   街道が川を「渡っている」ことが見え、水辺が交通の要衝になる。
@@ -1290,40 +1394,83 @@
     const world = this.world;
     const tile = Game.config.tilePx, scale = tile * camera.zoom;
     if (scale < 4) return; // 近景のみ（負荷と見栄えの両立。引きの海はベタ塗りで十分）
-    const ctx = this.ctx, W = world.width, terr = world.terrain, isWater = Game.tile.isWater;
-    const range = camera.visibleTileRange();
-    // visibleTileRange の x1/y1 は W/H まで（排他上限）に丸められるため、末端でのタイル参照は W-1/H-1 に留める。
-    const xb = Math.min(range.x1, W - 1), yb = Math.min(range.y1, world.height - 1);
     const t = this._t;
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    let drawn = 0; const CAP = 8000;
-    for (let ty = range.y0; ty <= yb && drawn < CAP; ty++) {
-      const sy0 = camera.worldToScreenY(ty * tile);
-      for (let tx = range.x0; tx <= xb; tx++) {
-        if (!isWater(terr[ty * W + tx])) continue;
-        const sx = camera.worldToScreenX(tx * tile);
-        // タイルごとに位相をずらした2筋のさざ波（寄せては返す）。
-        const ph = t * 1.2 + tx * 0.6 + ty * 0.45;
-        const a = 0.04 + 0.06 * (Math.sin(ph) * 0.5 + 0.5);
-        const yo = (Math.sin(ph) * 0.5 + 0.5) * scale * 0.55;
-        ctx.fillStyle = "rgba(150,205,238," + a.toFixed(3) + ")";
-        ctx.fillRect(sx, sy0 + yo, scale, Math.max(1, scale * 0.1));
-        const yo2 = (Math.sin(ph + 2.1) * 0.5 + 0.5) * scale * 0.7;
-        ctx.fillStyle = "rgba(190,225,245," + (a * 0.7).toFixed(3) + ")";
-        ctx.fillRect(sx + scale * 0.3, sy0 + yo2, scale * 0.5, Math.max(1, scale * 0.08));
-        // 陽光のきらめき: 水面のあちこちで反射がまたたく（点在してチカチカと輝く）。
+    // 1) さざ波のパターン（P×P タイル分）を毎フレーム小さく描く。位相は周期内で整数周回させ、
+    //    パターンの継ぎ目でも波が途切れない。タイルごとに位相をずらした2筋のさざ波と、
+    //    点在してまたたく陽光の反射。
+    const P = 16, si = Math.max(4, Math.round(scale));
+    const pw = P * si;
+    let pc = this._wPat;
+    if (!pc || pc.width !== pw) {
+      pc = this._wPat = document.createElement("canvas");
+      pc.width = pw; pc.height = pw;
+      this._wPatCtx = pc.getContext("2d");
+    }
+    const g = this._wPatCtx;
+    g.clearRect(0, 0, pw, pw);
+    const NB = 8;
+    if (!this._wStyles) {
+      const st = { r1: [], r2: [], sp: [] };
+      for (let b = 0; b < NB; b++) {
+        const a = 0.04 + 0.06 * (b / (NB - 1));
+        st.r1.push("rgba(150,205,238," + a.toFixed(3) + ")");
+        st.r2.push("rgba(190,225,245," + (a * 0.7).toFixed(3) + ")");
+        st.sp.push("rgba(245,252,255," + (0.6 * (b + 1) / NB).toFixed(2) + ")");
+      }
+      this._wStyles = st;
+    }
+    const ST = this._wStyles;
+    const SX = (Math.PI * 2 * 2) / P, SY = (Math.PI * 2) / P; // 周期内で 2周/1周（継ぎ目なし）
+    const h1 = Math.max(1, si * 0.1), h2 = Math.max(1, si * 0.08), w2 = si * 0.5, gs = Math.max(1, si * 0.16) | 0;
+    for (let ty = 0; ty < P; ty++) {
+      for (let tx = 0; tx < P; tx++) {
+        const sx = tx * si, sy0 = ty * si;
+        const ph = t * 1.2 + tx * SX + ty * SY;
+        const s1 = Math.sin(ph) * 0.5 + 0.5;
+        const b = (s1 * (NB - 1) + 0.5) | 0;
+        g.fillStyle = ST.r1[b]; g.fillRect(sx, sy0 + s1 * si * 0.55, si, h1);
+        g.fillStyle = ST.r2[b]; g.fillRect(sx + si * 0.3, sy0 + (Math.sin(ph + 2.1) * 0.5 + 0.5) * si * 0.7, w2, h2);
         const spk = Math.sin(t * 2.6 + tx * 1.7 + ty * 2.3);
         if (spk > 0.9) {
-          const gs = Math.max(1, scale * 0.16) | 0;
-          const gx = (sx + scale * (0.3 + 0.4 * ((tx * 7 + ty * 3) % 5) / 5)) | 0;
-          const gy = (sy0 + scale * (0.2 + 0.5 * ((tx * 3 + ty * 5) % 5) / 5)) | 0;
-          ctx.fillStyle = "rgba(245,252,255," + ((spk - 0.9) * 6).toFixed(2) + ")";
-          ctx.fillRect(gx, gy, gs, gs);
+          g.fillStyle = ST.sp[Math.min(NB - 1, ((spk - 0.9) * 10 * NB) | 0)];
+          g.fillRect((sx + si * (0.3 + 0.4 * ((tx * 7 + ty * 3) % 5) / 5)) | 0, (sy0 + si * (0.2 + 0.5 * ((tx * 3 + ty * 5) % 5) / 5)) | 0, gs, gs);
         }
-        if (++drawn >= CAP) break;
       }
     }
+    // 2) 画面大の作業層をパターンで一度に塗り、水域マスクで水の上だけを残す。
+    const cw = this.canvas.width, ch = this.canvas.height, dpr = this.dpr || 1;
+    let L = this._wLayer;
+    if (!L || L.width !== cw || L.height !== ch) {
+      L = this._wLayer = document.createElement("canvas");
+      L.width = cw; L.height = ch;
+      this._wLayerCtx = L.getContext("2d");
+    }
+    const lc = this._wLayerCtx;
+    const ox = -camera.x * camera.zoom, oy = -camera.y * camera.zoom; // 世界原点の画面位置
+    lc.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lc.globalCompositeOperation = "source-over";
+    lc.clearRect(0, 0, this.cssW, this.cssH);
+    const pat = lc.createPattern(pc, "repeat");
+    const k = scale / si; // 整数化した分の伸縮（タイル格子に合わせる）
+    if (pat.setTransform && typeof DOMMatrix !== "undefined") {
+      pat.setTransform(new DOMMatrix([k, 0, 0, k, ox, oy]));
+      lc.fillStyle = pat;
+      lc.fillRect(0, 0, this.cssW, this.cssH);
+    } else {
+      lc.save(); lc.translate(ox, oy); lc.scale(k, k);
+      lc.fillStyle = pat; lc.fillRect(-ox / k, -oy / k, this.cssW / k, this.cssH / k);
+      lc.restore();
+    }
+    lc.globalCompositeOperation = "destination-in";
+    lc.imageSmoothingEnabled = false;
+    lc.drawImage(this._waterMask(), ox, oy, world.width * scale, world.height * scale);
+    lc.globalCompositeOperation = "source-over";
+    // 3) 加算合成で地図に重ねる（光の照り返し）。
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(L, 0, 0);
     ctx.restore();
   };
 
@@ -1547,7 +1694,13 @@
     const t = this._t;
     ctx.save();
     ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.setLineDash([Math.max(3, scale), Math.max(2, scale * 0.7)]);
+    // 陸の交易路は実際の経路（街道）に沿って描く。経路の無い遠い相手は海路の直線。
+    const paths = {};
+    const tps = civ.tradePaths || [];
+    for (let q = 0; q < tps.length; q++) paths[tps[q].a + ":" + tps[q].b] = tps[q].path;
+    const W = this.world.width;
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive || !k.partners || !k.cities || !k.cities.length) continue;
@@ -1567,8 +1720,22 @@
         // 破線を c0→c1 の向きへ流す（財が実際に流れているように見える。活発な路ほど速い）。
         ctx.lineDashOffset = -t * (0.7 + Math.min(3, vol * 0.09)) * scale;
         ctx.beginPath();
-        ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
-        ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));
+        const pth = paths[id + ":" + b];
+        if (pth && pth.length > 1) {
+          // 経路を数タイルおきに間引いて折れ線にする（滑らかで軽い）。
+          const stp = Math.max(1, (pth.length / 60) | 0);
+          for (let n = 0; n < pth.length; n += stp) {
+            const i = pth[n];
+            const px = camera.worldToScreenX((i % W + 0.5) * tile);
+            const py = camera.worldToScreenY((((i / W) | 0) + 0.5) * tile);
+            if (n === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          const iL = pth[pth.length - 1];
+          ctx.lineTo(camera.worldToScreenX((iL % W + 0.5) * tile), camera.worldToScreenY((((iL / W) | 0) + 0.5) * tile));
+        } else {
+          ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
+          ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));
+        }
         ctx.stroke();
       }
     }
@@ -1784,11 +1951,16 @@
               }
               continue;
             }
-            // 接地影（建物の足元に落として街に立体感を出す）。
+            // 接地影（建物の足元に落として街に立体感を出す）。引きの視点では楕円の輪郭は
+            //   見分けられないので、安価な矩形で代える（建物数千棟でパス描画が重かった）。
             ctx.fillStyle = "rgba(0,0,0,0.26)";
-            ctx.beginPath();
-            ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
-            ctx.fill();
+            if (scale >= 10) {
+              ctx.beginPath();
+              ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
+              ctx.fill();
+            } else {
+              ctx.fillRect((bx - bw * 0.42) | 0, (by - bh * 0.06 - bw * 0.12) | 0, (bw * 0.84) | 0, Math.max(1, bw * 0.24) | 0);
+            }
             ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
             // 竈の煙: 鍛冶場(6)・酒場(14)・住居(0..2)の炉から煙が立ちのぼり、街に営みの気配を添える。
             //   損なわれた建物（cond低）は火が消え煙も細る。近景のみ・各棟2筋で軽量。
@@ -1800,7 +1972,7 @@
                 const ry = by - bh - ph * bh * (strong ? 1.0 : 0.7);
                 const drift = Math.sin(t * 1.1 + bi + s * 2) * bw * 0.12;
                 const rr = Math.max(1, bw * (0.1 + ph * 0.16));
-                ctx.fillStyle = "rgba(150,148,150," + ((strong ? 0.32 : 0.2) * (1 - ph) * cond).toFixed(3) + ")";
+                ctx.fillStyle = SMOKE_STYLES[Math.min(15, ((strong ? 0.32 : 0.2) * (1 - ph) * cond * 46.9) | 0)];
                 ctx.fillRect((cx0 + drift - rr) | 0, (ry - rr) | 0, (rr * 2) | 0 || 1, (rr * 2) | 0 || 1);
               }
             }

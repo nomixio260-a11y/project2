@@ -49,18 +49,34 @@
     const systems = this.systems;
 
     // 固定タイムステップでシミュレーションを進める（一時停止中は止まる）。
+    //   1フレームに使うシミュレーション時間に予算(simBudgetMs)を設け、超えたらそのフレームは
+    //   打ち切って描画へ回す。重い世界の20倍速で「毎フレーム最大tick数を回し切る→フレームが
+    //   重くなる→dtが伸びて更にtickが溜まる」悪循環（FPSが十数まで落ちる）を断つ。
+    //   遅れは持ち越さず捨てる＝実効速度が下がるだけで、画面は滑らかに保たれる。
+    let steps = 0;
     if (sim.running) {
       this.accumulator += dt * sim.speed;
-      let steps = 0;
+      const t0 = performance.now();
+      // 予算は描画にかかった時間に応じて自動調整し、1フレーム≈targetFrameMs を保つ
+      //   （描画の重い端末ではシムを譲って滑らかさを優先、軽い端末では満額をシムに回す）。
+      const target = sim.targetFrameMs || 36;
+      const budget = Math.max(12, Math.min(sim.simBudgetMs || 30, target - (this._renderMs || 0)));
+      let overBudget = false;
       while (this.accumulator >= sim.tickMs && steps < sim.maxSteps) {
         for (let i = 0; i < systems.length; i++) {
           if (systems[i].tick) systems[i].tick(world);
         }
         this.accumulator -= sim.tickMs;
         steps++;
+        if (performance.now() - t0 > budget) { overBudget = true; break; }
       }
-      // 取りこぼし防止: catch-up 上限に達したら端数を捨てる。
-      if (steps === sim.maxSteps) this.accumulator = 0;
+      // 予算切れ・catch-up 上限に達したら溜まった遅れを捨てる（次フレームへ雪だるま式に持ち越さない）。
+      if (overBudget || steps === sim.maxSteps) this.accumulator = Math.min(this.accumulator, sim.tickMs);
+    }
+    // 実効速度（実際に進んだシム時間／実時間）の移動平均。選んだ倍速に届いていない時に表示する。
+    if (dt > 0) {
+      const eff = sim.running ? (steps * sim.tickMs) / dt : 0;
+      Game.state.effSpeed = Game.state.effSpeed == null ? eff : Game.state.effSpeed * 0.95 + eff * 0.05;
     }
 
     // 毎フレームの update（アニメーション等。一時停止中も動く）。
@@ -68,8 +84,11 @@
       if (systems[i].update) systems[i].update(dt, world);
     }
 
-    // 描画。
+    // 描画（所要時間の移動平均をシム予算の自動調整に使う）。
+    const r0 = performance.now();
     this.renderer.draw(this.camera);
+    const rms = performance.now() - r0;
+    this._renderMs = this._renderMs == null ? rms : this._renderMs * 0.9 + rms * 0.1;
 
     // 座標 HUD 更新。
     this._updateCoords();

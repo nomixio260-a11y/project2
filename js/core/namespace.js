@@ -39,6 +39,8 @@ window.Game = window.Game || {};
       speed: 1, // 速度倍率（0.5/1/2/4）
       tickMs: 100, // 1ティック=シム内100ms（速度1で10tick/秒）
       maxSteps: 12, // 1フレームあたりの最大catch-upティック（高速(20倍)でも進むよう拡大）
+      simBudgetMs: 30, // 1フレームにシミュレーションへ使ってよい時間の上限（超えたら描画を優先）
+      targetFrameMs: 36, // 目標フレーム時間（≈28FPS）。描画が重い端末ではシム予算を譲る
       maxEntities: 18000, // 生物の上限
       maxFires: 16000, // 同時延焼タイルの上限
       maxKingdoms: 180, // 王国数の上限
@@ -141,6 +143,13 @@ window.Game = window.Game || {};
       isDesktop: type === "desktop",
     };
   })();
+
+  // スマホ向けUI（下部ナビ＋シート）を使う画面か。CSS の同じメディアクエリと一致させる
+  //   （縦長スマホに加え、高さの低い横長スマホもスマホUIにする）。
+  Game.MOBILE_UI_QUERY = "(max-width: 680px), (max-height: 500px) and (max-width: 1000px)";
+  Game.isMobileUI = function () {
+    return !!(window.matchMedia && window.matchMedia(Game.MOBILE_UI_QUERY).matches);
+  };
 
   // 端末プロファイル: 地図サイズ・エージェント上限・初期ズーム(表示タイル数)。
   // 端末プロファイル: 地図サイズ・エージェント上限・初期ズーム(表示タイル数)。
