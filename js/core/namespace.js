@@ -142,6 +142,13 @@ window.Game = window.Game || {};
     };
   })();
 
+  // スマホ向けUI（下部ナビ＋シート）を使う画面か。CSS の同じメディアクエリと一致させる
+  //   （縦長スマホに加え、高さの低い横長スマホもスマホUIにする）。
+  Game.MOBILE_UI_QUERY = "(max-width: 680px), (max-height: 500px) and (max-width: 1000px)";
+  Game.isMobileUI = function () {
+    return !!(window.matchMedia && window.matchMedia(Game.MOBILE_UI_QUERY).matches);
+  };
+
   // 端末プロファイル: 地図サイズ・エージェント上限・初期ズーム(表示タイル数)。
   // 端末プロファイル: 地図サイズ・エージェント上限・初期ズーム(表示タイル数)。
   // 生物処理の最適化(時分割＋軽量化)で得た余力を、より大規模な世界に振り向けている。

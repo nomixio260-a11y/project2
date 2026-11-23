@@ -131,8 +131,12 @@
       // モバイル: 狭い画面では既定で畳んでおき、地図を覆い隠さないようにする。
       // 開閉は下部ナビ（mobilenav.js の「道具」シート）が担う。
       const toolbarEl = document.getElementById("toolbar");
-      if (toolbarEl && window.matchMedia && window.matchMedia("(max-width: 680px)").matches) {
+      if (toolbarEl && Game.isMobileUI()) {
+        // 起動時は遷移アニメーションを切って畳む（開いた状態から滑り落ちる一瞬のちらつきを防ぐ）。
+        toolbarEl.style.transition = "none";
         toolbarEl.classList.add("collapsed");
+        void toolbarEl.offsetHeight; // 畳んだ位置を確定させてから遷移を戻す
+        toolbarEl.style.transition = "";
       }
 
       this.setActive(Game.state.activeToolId);

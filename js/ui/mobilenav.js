@@ -48,7 +48,7 @@
   };
 
   Nav._isPhone = function () {
-    return window.matchMedia && window.matchMedia("(max-width: 680px)").matches;
+    return Game.isMobileUI();
   };
 
   // key: "tools" | "info" | "overview" | "settings"
