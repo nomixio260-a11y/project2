@@ -538,6 +538,12 @@
     siteTimberCut: 0.8,    // 木材資源を持つ国の工期係数（材が揃えば早く建つ）
     siteCostMargin: 1.5,   // 着工に要する国庫の余裕（費用×この倍率が無ければ着工しない）
     // 戦時の応急普請: 富める国は国庫で職人を雇い、戦の傷を直し続ける（貧しい国の街は荒れる）
+    // 交易インフラ（交易路・道の格・関税）
+    tradeRoadMax: 140,     // 交易路を陸の道として敷く最大距離（これより遠い相手は海路扱い）
+    tradeTrafficW: 0.6,    // 交易量1あたりが道に加える交通量
+    roadGrade2: 12,        // この交通量以上で「街道」（幅広・速い。世界の分位とのより大きい方）
+    roadGrade3: 45,        // この交通量以上で「幹線」（最も太く速い。同上）
+    tollRate: 0.25,        // 交易量1・通過割合1あたりの関税（交易する両国が折半して払う）
     warRepairMin: 30,      // この額を超える国庫があれば戦時も修繕を保てる
     warRepairCost: 0.6,    // 応急普請の費用／評価（国庫から）
     warRepairBoost: 0.05,  // 応急普請による修繕の上乗せ（荒廃の平衡点を引き上げる）
@@ -1030,6 +1036,8 @@
     this.events = [];  // 年代記（世界の主要な出来事のログ）
     this.marks = [];   // 戦場の痕跡（戦死地点。時間で薄れて消える）
     this.ghostTowns = []; // 廃都（滅んだ国の都市。建物は立ったまま残り、朽ちてゆき、再入植で甦る）
+    this.roadEdges = [];  // 街道の区間（都市どうしの経路。隊商の描画が辿る）
+    this.tradePaths = []; // 交易路（交易する首都どうしの経路。隊商・交易路の描画と関税）
     this.statsHist = []; // 世界統計の履歴（人口・国数・領土の推移。概観パネル用）
     // 近傍探索グリッド。
     this._cap = Game.config.sim.maxPeople;
@@ -1124,6 +1132,7 @@
     this.events.length = 0;
     this.marks.length = 0;
     if (this.ghostTowns) this.ghostTowns.length = 0;
+    this.roadEdges = []; this.tradePaths = [];
     if (this.world) this.world.owner.fill(0);
   };
 
@@ -1309,7 +1318,7 @@
       trait: null, ethos: null, wealth: 0, food: 30, soil: 1, famine: false,
       unrest: 0, plague: 0, res: null,
       tradeVol: 0, tradeIncome: 0, foodTrade: 0, partners: null,
-      taxIncome: 0, armyCost: 0,
+      taxIncome: 0, armyCost: 0, tollIncome: 0,
       // 政治（国策・開発・国是の進化）
       doctrine: null, doctrineKey: null, doctrineName: null, doctrineEmoji: "",
       dev: null, warWeary: 0, goldenAge: false, darkAge: false, fortune: -1, // fortune<0 = 未計測（初回に実測値へスナップ）
@@ -2397,7 +2406,7 @@
       }
       path.reverse();
     }
-    if (this._roadCacheN > 400) { this._roadCache = {}; this._roadCacheN = 0; cache = this._roadCache; }
+    if (this._roadCacheN > 1500) { this._roadCache = {}; this._roadCacheN = 0; cache = this._roadCache; }
     cache[key] = path; this._roadCacheN++;
     return path;
   };
@@ -2405,20 +2414,29 @@
   // 集落網に街道を敷く。各国の都市は「既に道の通じた最寄りの都市」へ繋がる（最小全域木）
   //   ＝首都から全都市へ放射する不自然な星形でなく、幹線から支線が伸びる現実の道路網になる。
   //   経路は地形コスト最小（A*）: 平地を選び、峠を越え、狭い水路にだけ橋を架ける。
+  //   さらに交易のある国どうしの首都を交易路で結び（国境を越える通商路）、
+  //   道ごとの交通量（街の往来＋交易量）で道に格が付く: 小道(1)→街道(2)→幹線(3)。
+  //   他国の交易路が自国領を通過すれば、その国は関税を得る（通商が通過国を潤す）。
   CivSystem.prototype._rebuildRoads = function (world) {
     if (!world.road) return;
-    const W = world.width, road = world.road;
+    const W = world.width, H = world.height, road = world.road;
     road.fill(0);
+    let traffic = this._traffic;
+    if (!traffic || traffic.length !== W * H) traffic = this._traffic = new Float32Array(W * H);
+    else traffic.fill(0);
     const list = [];
     const ks = this.kingdoms;
     const self = this;
-    function lay(path) {
+    const edges = [];   // 街道の区間（都市どうし）: { kid, path, w }
+    const trades = [];  // 交易路（首都どうし）: { a, b, path, vol }
+    function lay(path, w) {
       for (let n = 0; n < path.length; n++) {
         const i = path[n];
-        if (tile.isLand(world.terrain[i]) && road[i] === 0 && list.length < 24000) { road[i] = 1; list.push(i); }
+        if (!tile.isLand(world.terrain[i])) continue; // 水上は渡し（道は敷かない）
+        if (road[i] === 0 && list.length < 24000) { road[i] = 1; list.push(i); }
+        traffic[i] += w;
       }
     }
-    function connect(x0, y0, x1, y1) { lay(self._roadPath(world, x0, y0, x1, y1)); }
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive || !k.cities || !k.cities.length) continue;
@@ -2437,19 +2455,85 @@
           }
         }
         const ci = left.splice(bi, 1)[0];
-        connect(cs[ci].x, cs[ci].y, cs[bj].x, cs[bj].y);
+        const path = self._roadPath(world, cs[ci].x, cs[ci].y, cs[bj].x, cs[bj].y);
+        // 街の往来: 両端の街が大きいほど人と荷が行き交う。
+        const w = (cs[ci].level || 1) + (cs[bj].level || 1);
+        lay(path, w);
+        if (path.length > 1) edges.push({ kid: id, path: path, w: w });
         connected.push(ci);
       }
-      // 同盟の首都間（通商の幹線）。
-      if (k.allies) {
-        for (const b in k.allies) {
-          const bIdx = +b; if (bIdx <= id) continue;
-          const kb = ks[bIdx];
-          if (kb && kb.alive && kb.cities && kb.cities.length) connect(cs[0].x, cs[0].y, kb.cities[0].x, kb.cities[0].y);
-        }
+    }
+    // 交易路: 交易のある国どうしの首都を結ぶ（同盟国も通商の幹線で結ぶ）。遠すぎる相手は
+    //   海路の扱い（道は敷かず、描画は従来どおり海を渡る直線の航路）。
+    for (let id = 1; id < ks.length; id++) {
+      const k = ks[id];
+      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      const partners = k.partners || k._partnersPrev;
+      const seen = {};
+      const pairs = [];
+      if (partners) for (const b in partners) pairs.push([+b, partners[b] || 0]);
+      if (k.allies) for (const b in k.allies) pairs.push([+b, 1]);
+      for (let q = 0; q < pairs.length; q++) {
+        const bIdx = pairs[q][0];
+        if (bIdx <= id || seen[bIdx]) continue;
+        seen[bIdx] = 1;
+        const kb = ks[bIdx];
+        if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+        const ca = k.cities[0], cb = kb.cities[0];
+        if (Math.max(Math.abs(ca.x - cb.x), Math.abs(ca.y - cb.y)) > CP.tradeRoadMax) continue;
+        let vol = 0;
+        for (let r = 0; r < pairs.length; r++) if (pairs[r][0] === bIdx) vol += pairs[r][1];
+        const path = self._roadPath(world, ca.x, ca.y, cb.x, cb.y);
+        if (path.length < 2) continue;
+        lay(path, 2 + vol * CP.tradeTrafficW);
+        trades.push({ a: id, b: bIdx, path: path, vol: vol });
+      }
+    }
+    // 道の格: 交通量で小道→街道→幹線（太く速い道ほど物と人を多く運ぶ）。閾値は絶対的な下限と
+    //   この世界の交通量の分位（上位15%が幹線・続く30%が街道）の大きい方＝交易の乏しい世界に
+    //   幹線は生まれず、交易の盛んな世界でも全部が幹線にはならない。
+    let t2 = CP.roadGrade2, t3 = CP.roadGrade3;
+    if (list.length >= 20) {
+      const vals = new Float32Array(list.length);
+      for (let n = 0; n < list.length; n++) vals[n] = traffic[list[n]];
+      vals.sort();
+      t2 = Math.max(t2, vals[(vals.length * 0.55) | 0]);
+      t3 = Math.max(t3, vals[(vals.length * 0.85) | 0]);
+    }
+    for (let n = 0; n < list.length; n++) {
+      const i = list[n], tr = traffic[i];
+      road[i] = tr >= t3 ? 3 : tr >= t2 ? 2 : 1;
+    }
+    // 関税: 他国の交易路が自国領を通過する区間の割合に応じて、交易の一部を関税として得る。
+    //   支払うのは交易する両国（通過料は交易の取り分から出る＝富が湧いて出るのではない）。
+    const owner = world.owner;
+    for (let id = 1; id < ks.length; id++) { const k = ks[id]; if (k) k.tollIncome = 0; }
+    for (let n = 0; n < trades.length; n++) {
+      const tr = trades[n];
+      if (tr.vol <= 0) continue;
+      const cnt = {};
+      let land = 0;
+      for (let q = 0; q < tr.path.length; q++) {
+        const i = tr.path[q];
+        if (!tile.isLand(world.terrain[i])) continue;
+        land++;
+        const o = owner[i];
+        if (o > 0 && o !== tr.a && o !== tr.b) cnt[o] = (cnt[o] || 0) + 1;
+      }
+      if (!land) continue;
+      const ka = ks[tr.a], kb = ks[tr.b];
+      for (const os in cnt) {
+        const ko = ks[+os];
+        if (!ko || !ko.alive || this._atWar(+os, tr.a) || this._atWar(+os, tr.b)) continue; // 敵国は通さない
+        const toll = tr.vol * CP.tollRate * (cnt[os] / land);
+        const pa = Math.min(toll * 0.5, (ka.wealth || 0)), pb = Math.min(toll * 0.5, (kb.wealth || 0));
+        ka.wealth -= pa; kb.wealth -= pb;
+        ko.wealth += pa + pb; ko.tollIncome += pa + pb;
       }
     }
     world.roadList = list;
+    this.roadEdges = edges;
+    this.tradePaths = trades;
   };
 
   // ===== 外交（国システム）=====
@@ -6076,7 +6160,8 @@
     const dist = Math.sqrt(dux * dux + duy * duy);
     let speed = CP.speed;
     // 街道の上では速く移動できる（交通インフラの効果）。
-    if (world.road && world.road[(h.y | 0) * W + (h.x | 0)]) speed *= 1.5;
+    // 道の格が上がるほど速い（小道1.3倍・街道1.5倍・幹線1.75倍）。
+    if (world.road) { const rg = world.road[(h.y | 0) * W + (h.x | 0)]; if (rg) speed *= rg === 3 ? 1.75 : rg === 2 ? 1.5 : 1.3; }
     if (dist < 0.6) {
       // 目標到達 → 減速してその場に立ち止まる。従来は前の向きに歩き続けて目標の周りを
       //   回り続けており（慣性との合成で円軌道になる）、これが「同じ所をぐるぐる回る」

@@ -2693,6 +2693,47 @@ test("CivSystem: 現実的な街道 — 山脈は峠へ迂回し、水路は狭�
   assert.ok(waterN <= 3, "広い海峡を突っ切っている（狭い渡し場に橋を架けない）: water=" + waterN);
 });
 
+test("CivSystem: 交易インフラ — 交易路が街道として敷かれ、交通量で格が付き、通過国が関税を得る", () => {
+  const Game = loadCore({ mapWidth: 90, mapHeight: 30, seed: 16 });
+  const w = new Game.World(90, 30); w.terrain.fill(Game.TERRAIN.GRASS);
+  const civ = new Game.CivSystem(w, { markTerritoryDirty() {} });
+  Game.state = Game.state || {}; Game.state.civ = civ;
+  // 西の A・東の B が交易し、その間を中央の C が治める。
+  const A = civ.foundAt(8, 15), C = civ.foundAt(45, 15), B = civ.foundAt(82, 15);
+  const ka = civ.kingdoms[A], kc = civ.kingdoms[C], kb = civ.kingdoms[B];
+  for (let y = 0; y < 30; y++) for (let x = 0; x < 90; x++) {
+    const i = y * 90 + x;
+    w.owner[i] = x < 25 ? A : x < 65 ? C : B;
+  }
+  // A は国内に2つ目の街を持つ（国内の街道＝小道も作る）。
+  const village = Game.CivSystem.blankCity(8, 3, false, "北村");
+  village.buildings = [];
+  ka.cities.push(village);
+  ka.partners = {}; ka.partners[B] = 40; ka.wealth = 100; kb.wealth = 100; kc.wealth = 0;
+  civ._rebuildRoads(w);
+
+  const tp = civ.tradePaths.find((t) => (t.a === A && t.b === B) || (t.a === B && t.b === A));
+  assert.ok(tp && tp.path.length > 50, "A–B の交易路が敷かれない");
+  // 交易路は C の領内を通る道として実在する。
+  let inC = 0;
+  for (const i of tp.path) if (w.owner[i] === C && w.road[i]) inC++;
+  assert.ok(inC > 20, "交易路が通過国の領内に道として敷かれない: " + inC);
+  // 交通量の多い交易路は国内の小道より格が高い。
+  const midTrade = tp.path[(tp.path.length / 2) | 0];
+  const villageEdge = civ.roadEdges.find((e) => e.kid === A);
+  assert.ok(villageEdge, "国内の街道の区間が記録されない");
+  const villageTile = villageEdge.path[(villageEdge.path.length / 2) | 0];
+  assert.ok(w.road[midTrade] > w.road[villageTile], "交易路が村道より格上にならない: " + w.road[midTrade] + " vs " + w.road[villageTile]);
+  // 関税: 通過国 C が受け取り、交易する A・B が折半で払う。
+  assert.ok(kc.tollIncome > 0 && kc.wealth > 0, "通過国が関税を得ない");
+  assert.ok(ka.wealth < 100 && kb.wealth < 100, "交易する国が関税を払っていない");
+  // 戦時: 敵国の隊商は通さない（関税も無い）。
+  kc.wars = {}; kc.wars[A] = 1; ka.wars[C] = 1;
+  kc.wealth = 0;
+  civ._rebuildRoads(w);
+  assert.equal(kc.tollIncome, 0, "交戦中の国が関税を取っている");
+});
+
 test("CivSystem: 戦争の再編 — 前線の都市が奪われ、戦利品と占領地の再編・国境割譲が起きる", () => {
   const Game = loadCore({ mapWidth: 80, mapHeight: 40, seed: 13 });
   const w = new Game.World(80, 40); w.terrain.fill(Game.TERRAIN.GRASS);

@@ -1040,11 +1040,24 @@
     const world = this.world, isWater = Game.tile.isWater;
     // cargo: 積荷の色（交易される財を表す）。trade: 交易路の隊商か（街道の荷車と区別）。
     function wagon(ax, ay, bx, by, frac, cargo, trade) {
-      const x = ax + (bx - ax) * frac, y = ay + (by - ay) * frac;
+      wagonAt(ax + (bx - ax) * frac, ay + (by - ay) * frac, bx - ax, cargo, trade);
+    }
+    // 経路（タイル index の列）上の位置 frac(0..1) に隊商を置く。往路と復路で向きが変わる。
+    const WW = world ? world.width : 1;
+    function wagonOnPath(path, frac, back, cargo, trade) {
+      const L = path.length - 1;
+      if (L < 1) return;
+      const f = (back ? 1 - frac : frac) * L;
+      const n0 = Math.min(L - 1, f | 0), r = f - n0;
+      const i0 = path[n0], i1 = path[n0 + 1];
+      const x0 = i0 % WW, y0 = (i0 / WW) | 0, x1 = i1 % WW, y1 = (i1 / WW) | 0;
+      wagonAt(x0 + (x1 - x0) * r, y0 + (y1 - y0) * r, back ? x0 - x1 : x1 - x0, cargo, trade);
+    }
+    function wagonAt(x, y, dir, cargo, trade) {
       if (x < range.x0 - 1 || x > range.x1 + 1 || y < range.y0 - 1 || y > range.y1 + 1) return;
       const sx = camera.worldToScreenX((x + 0.5) * tile);
       const sy = camera.worldToScreenY((y + 0.5) * tile);
-      const dir = bx - ax; const faceL = dir < 0; const fs = faceL ? -1 : 1; // 進行方向
+      const faceL = dir < 0; const fs = faceL ? -1 : 1; // 進行方向
       cargo = cargo || "#c9a86a";
       // 海上の区間では帆船で、陸上では荷馬車で描く（海路・陸路が見て分かる）。
       const onSea = world && isWater(world.terrain[(y | 0) * world.width + (x | 0)]);
@@ -1100,36 +1113,55 @@
       if (!pool.length) pool.push("#c9a86a"); // 一般の荷
       return pool;
     }
+    // 街道の荷車: 街どうしを結ぶ実際の街道（A*の経路）に沿って、自国の産物を運んで往復する。
+    //   往来の多い区間（大きな街どうし）ほど荷車が多い。
+    const edges = civ.roadEdges || [];
+    const pools = {};
+    for (let e = 0; e < edges.length; e++) {
+      const ed = edges[e], k = ks[ed.kid];
+      if (!k || !k.alive) continue;
+      const pool = pools[ed.kid] || (pools[ed.kid] = cargoPool(k, null));
+      const n = ed.w >= 6 ? 2 : 1;
+      const speed = 0.9 / Math.max(6, ed.path.length); // 長い道ほどゆっくり一巡する（実際の移動速度）
+      for (let m = 0; m < n; m++) {
+        const ph = (t * speed * 6 + e * 0.37 + m / n) % 2;   // 0..1 往路 / 1..2 復路
+        wagonOnPath(ed.path, ph < 1 ? ph : ph - 1, ph >= 1, pool[(e + m) % pool.length], false);
+      }
+    }
+    // 交易の隊商: 交易のある首都どうしを結ぶ交易路に沿って往来する（活発な路ほど多い）。
+    //   積荷は両国の産物を表す色で、何が運ばれているか（穀物・鉄・香辛料・宝石…）が分かる。
+    //   遠い相手（陸の交易路の無い海路）は従来どおり首都間を直線で結ぶ航路を船が行く。
+    const trades = civ.tradePaths || [];
+    const pathed = {};
+    for (let q = 0; q < trades.length; q++) {
+      const tr = trades[q], ka = ks[tr.a], kb = ks[tr.b];
+      if (!ka || !kb || !ka.alive || !kb.alive) continue;
+      pathed[tr.a + ":" + tr.b] = 1;
+      const pool = cargoPool(ka, kb), vol = tr.vol;
+      const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
+      const speed = 0.9 / Math.max(8, tr.path.length);
+      for (let wagi = 0; wagi < wagons; wagi++) {
+        const ph = (t * speed * 6 + tr.a * 0.7 + tr.b * 0.37 + (2 * wagi) / wagons) % 2;
+        wagonOnPath(tr.path, ph < 1 ? ph : ph - 1, ph >= 1, pool[(tr.a + tr.b + wagi) % pool.length], true);
+      }
+    }
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
-      if (!k || !k.alive || !k.cities || !k.cities.length) continue;
+      if (!k || !k.alive || !k.partners || !k.cities || !k.cities.length) continue;
       const cap = k.cities[0];
-      // 街道: 首都⇄各都市をゆっくり往復（自国の産物を運ぶ）。
-      const localPool = cargoPool(k, null);
-      for (let c = 1; c < k.cities.length; c++) {
-        const city = k.cities[c];
-        const frac = Math.sin(t * 0.35 + id * 1.3 + c * 2.1) * 0.5 + 0.5;
-        wagon(cap.x, cap.y, city.x, city.y, frac, localPool[(id + c) % localPool.length], false);
-      }
-      // 交易路: 実際に交易のある首都間を隊商が往来（活発な路ほど多くの隊商）。積荷は両国の
-      //   産物を表す色で、何が運ばれているか（穀物・鉄・香辛料・宝石・奢侈品…）が見て分かる。
-      if (k.partners) {
-        for (const bStr in k.partners) {
-          const b = +bStr;
-          if (b <= id) continue;
-          const kb = ks[b];
-          if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
-          const vol = k.partners[b] || 0;
-          if (vol < 0.5) continue;
-          const cap2 = kb.cities[0];
-          const pool = cargoPool(k, kb);
-          // 交易量に応じて1〜5の隊商／船を時間差で走らせる（活発な路ほど賑わう）。
-          const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
-          for (let wagi = 0; wagi < wagons; wagi++) {
-            const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
-            // 隊商ごとに違う財を積む（路に多彩な物流が行き交って見える）。
-            wagon(cap.x, cap.y, cap2.x, cap2.y, frac, pool[(id + b + wagi) % pool.length], true);
-          }
+      for (const bStr in k.partners) {
+        const b = +bStr;
+        if (b <= id || pathed[id + ":" + b]) continue;
+        const kb = ks[b];
+        if (!kb || !kb.alive || !kb.cities || !kb.cities.length) continue;
+        const vol = k.partners[b] || 0;
+        if (vol < 0.5) continue;
+        const cap2 = kb.cities[0];
+        const pool = cargoPool(k, kb);
+        const wagons = vol > 30 ? 5 : vol > 16 ? 4 : vol > 8 ? 3 : vol > 3 ? 2 : 1;
+        for (let wagi = 0; wagi < wagons; wagi++) {
+          const frac = (t * 0.06 + id * 0.7 + b * 0.37 + wagi / wagons) % 1;
+          wagon(cap.x, cap.y, cap2.x, cap2.y, frac, pool[(id + b + wagi) % pool.length], true);
         }
       }
     }
@@ -1178,15 +1210,20 @@
     // 2層: まず暗い路肩（太）、次に明るい路面（細）。タイル中心を8方向の線分（丸端）で結んで
     //   描く＝斜めの区間は斜めの線になり、従来の「四角の階段」のカクカクが消える。
     ctx.lineCap = "round"; ctx.lineJoin = "round";
+    // 道の格（交通量で決まる: 1=小道 2=街道 3=幹線）で幅を変える。往来の多い幹線は太く、
+    //   村へ続く小道は細い＝道路網の階層が一目で分かる。
+    const GW = [1, 0.62, 1, 1.45];
     for (let pass = 0; pass < 2; pass++) {
       const wdt = pass === 0 ? ew : cw;
-      ctx.lineWidth = wdt;
+      let lastW = -1;
       for (let n = 0; n < list.length; n++) {
         const i = list[n];
         const tx = i % W, ty = (i / W) | 0;
         if (tx < x0 - 1 || tx > x1 + 1 || ty < y0 - 1 || ty > y1 + 1) continue;
         const stone = isStone(i);
         ctx.strokeStyle = pass === 0 ? (stone ? edgeStone : edgeDirt) : (stone ? surfStone : surfDirt);
+        const lw = Math.max(1, wdt * (GW[road[i]] || 1));
+        if (lw !== lastW) { ctx.lineWidth = lw; lastW = lw; }
         const cx = camera.worldToScreenX((tx + 0.5) * tile);
         const cy = camera.worldToScreenY((ty + 0.5) * tile);
         // 東・南・南東・南西の4方向だけ描けば、全タイルの走査で全結線が一度ずつ引かれる。
@@ -1206,7 +1243,7 @@
             !hasRoad(tx - 1, ty - 1) && !hasRoad(tx + 1, ty - 1)) {
           // 孤立タイル（端点）: 丸い結節点を打つ。
           ctx.fillStyle = ctx.strokeStyle;
-          ctx.beginPath(); ctx.arc(cx, cy, wdt * 0.5, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(cx, cy, lastW * 0.5, 0, Math.PI * 2); ctx.fill();
         }
         // 木橋: 道が川・水路で途切れる所（1〜2タイルの水の切れ目の先に道が続く）には橋を渡す。
         //   街道が川を「渡っている」ことが見え、水辺が交通の要衝になる。
@@ -1657,7 +1694,13 @@
     const t = this._t;
     ctx.save();
     ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.setLineDash([Math.max(3, scale), Math.max(2, scale * 0.7)]);
+    // 陸の交易路は実際の経路（街道）に沿って描く。経路の無い遠い相手は海路の直線。
+    const paths = {};
+    const tps = civ.tradePaths || [];
+    for (let q = 0; q < tps.length; q++) paths[tps[q].a + ":" + tps[q].b] = tps[q].path;
+    const W = this.world.width;
     for (let id = 1; id < ks.length; id++) {
       const k = ks[id];
       if (!k || !k.alive || !k.partners || !k.cities || !k.cities.length) continue;
@@ -1677,8 +1720,22 @@
         // 破線を c0→c1 の向きへ流す（財が実際に流れているように見える。活発な路ほど速い）。
         ctx.lineDashOffset = -t * (0.7 + Math.min(3, vol * 0.09)) * scale;
         ctx.beginPath();
-        ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
-        ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));
+        const pth = paths[id + ":" + b];
+        if (pth && pth.length > 1) {
+          // 経路を数タイルおきに間引いて折れ線にする（滑らかで軽い）。
+          const stp = Math.max(1, (pth.length / 60) | 0);
+          for (let n = 0; n < pth.length; n += stp) {
+            const i = pth[n];
+            const px = camera.worldToScreenX((i % W + 0.5) * tile);
+            const py = camera.worldToScreenY((((i / W) | 0) + 0.5) * tile);
+            if (n === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          const iL = pth[pth.length - 1];
+          ctx.lineTo(camera.worldToScreenX((iL % W + 0.5) * tile), camera.worldToScreenY((((iL / W) | 0) + 0.5) * tile));
+        } else {
+          ctx.moveTo(camera.worldToScreenX((c0.x + 0.5) * tile), camera.worldToScreenY((c0.y + 0.5) * tile));
+          ctx.lineTo(camera.worldToScreenX((c1.x + 0.5) * tile), camera.worldToScreenY((c1.y + 0.5) * tile));
+        }
         ctx.stroke();
       }
     }
