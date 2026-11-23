@@ -60,6 +60,22 @@
       _occ: 0, _occDay: -1,        // 夜の収容（住居のみ使用）
     };
   }
+  // 都市（集落・州）を生成する。建国・開拓・入植・独立の4経路と、後から付く州の政治
+  //   （忠誠・総督・方針・政策・自治・攻囲）のフィールドを全てここで宣言し、隠れクラスを
+  //   一本化する。領土の維持は全タイルで都市の x/y を読むため、形状の分裂が tick 全体を
+  //   メガモルフィックにしていた（建物・国・人物と同じ最適化）。
+  function blankCity(x, y, capital, name) {
+    return {
+      x: x, y: y, capital: !!capital, name: name || null, level: 1, buildings: null,
+      // 州の政治（_updateProvinces が設定。首都では使わない）
+      loyalty: null, governor: null, autonomous: 0,
+      stance: null, stanceName: null, stanceEmoji: "",
+      edict: null, _edT: 0, _edInit: 0,
+      // 戦争
+      siege: 0,
+    };
+  }
+
   // 建設の費用（国庫から）と工期（工事量。建築家の腕と村人の助勢で進む）。index は BUILDING enum。
   //   住居・耕地・木造の生業施設（工房・市・倉・兵舎・鉱山・港・酒場）は民が自力で建てるため無料
   //   （富の乏しい建国期でも街は育つ＝貧困の罠を作らない）。石造の公共建築（神殿・学院・城壁・
@@ -1338,7 +1354,9 @@
     k.gov = GOV_TYPES[govIdx];
     k.govMod = GOV_MODS[govIdx];   // 政体の振る舞い補正
     k.color = makeColor(this.rand);
-    k.cities = [{ x: x, y: y, capital: true, name: null, level: 1, buildings: [mkBuilding(x, y, BUILDING.KEEP)] }];
+    const c0 = blankCity(x, y, true, null);
+    c0.buildings = [mkBuilding(x, y, BUILDING.KEEP)];
+    k.cities = [c0];
     k.tileCount = 1;
     k.roleCount = [0, 0, 0, 0, 0, 0, 0];
     k.facilities = newFacilities(); // 機能建築の総数
@@ -1866,7 +1884,7 @@
       else k.res.gems++;
     }
     // 掘り尽くされた鉱脈を一覧から除く（描画・集計から消える）。
-    for (let i = list.length - 1; i >= 0; i--) if (list[i]._dead) list.splice(i, 1);
+    for (let i = list.length - 1; i >= 0; i--) if (list[i]._dead) { list.splice(i, 1); world.resVersion = (world.resVersion || 0) + 1; }
   };
 
   // (x,y) に最も近い k の都市座標 {x,y} を返す。
@@ -2236,12 +2254,13 @@
   // 未開の陸地 (x,y) が単一国に囲まれていればその国IDを返す（飛び地の穴埋め用）。
   CivSystem.prototype._enclaveOwner = function (world, x, y) {
     const W = world.width, H = world.height, owner = world.owner, terr = world.terrain;
+    // 地図の縁は飛び地にならない（4近傍の一部が外）。以降は境界チェック不要。
+    if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return 0;
     let p = -1, landN = 0;
-    const nb = [x - 1, y, x + 1, y, x, y - 1, x, y + 1];
-    for (let n = 0; n < 8; n += 2) {
-      const nx = nb[n], ny = nb[n + 1];
-      if (nx < 0 || ny < 0 || nx >= W || ny >= H) return 0;
-      const ni = ny * W + nx;
+    const c = y * W + x;
+    // 4近傍を配列を作らずに辿る（全陸タイルで呼ばれるため、毎回の配列確保が GC を圧迫していた）。
+    for (let n = 0; n < 4; n++) {
+      const ni = n === 0 ? c - 1 : n === 1 ? c + 1 : n === 2 ? c - W : c + W;
       if (!tile.isLand(terr[ni])) continue;
       landN++;
       const o = owner[ni];
@@ -4062,7 +4081,9 @@
     nk.gov = GOV_TYPES[govIdx];
     nk.govMod = GOV_MODS[govIdx];
     nk.color = makeColor(this.rand);
-    nk.cities = [{ x: city.x, y: city.y, capital: true, name: city.name, level: city.level || 1, buildings: (city.buildings || []) }];
+    const nc = blankCity(city.x, city.y, true, city.name);
+    nc.level = city.level || 1; nc.buildings = city.buildings || [];
+    nk.cities = [nc];
     nk.roleCount = [0, 0, 0, 0, 0, 0, 0];
     nk.facilities = newFacilities();
     nk.tools = parent.tools * 0.3;
@@ -6418,7 +6439,9 @@
     // 水運と飲み水: 川辺・海辺は町が興りやすい（現実の都市の立地）。
     const waterMul = this._coastal(world, h.x | 0, h.y | 0) ? 1.7 : 1;
     if (world.owner[i] === k.id && fertile && this.rand() < CP.foundRate * waterMul * this._eff(k, "expand")) {
-      k.cities.push({ x: h.x | 0, y: h.y | 0, capital: false, level: 1, buildings: [] });
+      const tc = blankCity(h.x | 0, h.y | 0, false, null);
+      tc.buildings = [];
+      k.cities.push(tc);
     }
   };
 
@@ -6466,7 +6489,9 @@
     }
     if (best) {
       const name = makeName(this.rand); // 町は名を持って生まれる（勅許の開拓地）
-      cs.push({ x: best.x, y: best.y, capital: false, level: 1, buildings: [], name: name });
+      const nc = blankCity(best.x, best.y, false, name);
+      nc.buildings = [];
+      cs.push(nc);
       this._logEvent("🏘 " + ka.name + " が辺境に開拓地 " + name + " を築いた");
     }
   };
@@ -6481,6 +6506,7 @@
   // 形状の統一ファクトリ（persistence がロード時の隠れクラス正規化に使う）。
   CivSystem.blankPerson = blankPerson;
   CivSystem.blankKingdom = blankKingdom;
+  CivSystem.blankCity = blankCity;
   Game.ROLE_NAMES = ["開拓者", "農民", "建築家", "兵士", "鍛冶", "商人", "神官"];
   Game.WONDER_KINDS = WONDER_KINDS;
   Game.eraOf = eraOf; // 技術→時代名（ホバー説明・UI用）

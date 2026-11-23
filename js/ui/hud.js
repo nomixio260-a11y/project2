@@ -138,9 +138,17 @@
     const dayInSeason = ((clk.day % Game.config.sim.daysPerSeason) | 0) + 1;
     // 平常時以外の長期気候（豊穣・旱魃・寒冷など）を併記する。
     const clim = clk.climate && clk.climate !== "穏やか" ? "  · " + clk.climate : "";
+    // 実効速度: 世界が重く選んだ倍速に届いていない時だけ、実際の速さを添える
+    //   （FPSを守るため速度を落としていることが分かる。届いていれば何も出さない）。
+    const sim = Game.config.sim, eff = Game.state.effSpeed;
+    let spd = "";
+    if (sim.running && sim.speed >= 2 && eff != null && eff < sim.speed * 0.85) {
+      spd = "  · 実効" + (eff >= 10 ? Math.round(eff) : eff.toFixed(1)) + "×";
+    }
     this.clockEl.textContent =
       clk.season.emoji + " " + clk.season.name +
-      "  " + clk.year + "年 " + dayInSeason + "日" + clim;
+      "  " + clk.year + "年 " + dayInSeason + "日" + clim + spd;
+    this.clockEl.title = spd ? "世界が重いため、描画を滑らかに保つよう実際の進行速度を落としています" : "";
   };
 
   Hud.sample = function () {

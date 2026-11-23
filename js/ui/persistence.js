@@ -139,7 +139,14 @@
     const civ = st.civ;
     const BK = Game.CivSystem && Game.CivSystem.blankKingdom;
     const BP = Game.CivSystem && Game.CivSystem.blankPerson;
-    civ.kingdoms = snap.civ.kingdoms.map(function (k) { return (k && BK) ? Object.assign(BK(), k) : k; });
+    const BC = Game.CivSystem && Game.CivSystem.blankCity;
+    civ.kingdoms = snap.civ.kingdoms.map(function (k) {
+      if (!k || !BK) return k;
+      const nk = Object.assign(BK(), k);
+      // 都市も雛形へ流し込む（旧セーブの都市は形状がまちまち＝ロード後に重くなるのを防ぐ）。
+      if (BC && nk.cities) nk.cities = nk.cities.map(function (c) { return Object.assign(BC(c.x, c.y, c.capital, c.name), c); });
+      return nk;
+    });
     civ.people = BP ? snap.civ.people.map(function (p) { return Object.assign(BP(), p); }) : snap.civ.people;
     civ._tickN = snap.civ.tickN || 0;
     civ._pidSeq = snap.civ.pidSeq || 0;

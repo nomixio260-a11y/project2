@@ -22,6 +22,10 @@
     [2.2, 0.3], [-2.1, 0.4], [0.6, 2.1], [-0.7, 2.0],
   ];
 
+  // 竈の煙の色（透明度 0〜0.32 を16段階）。毎フレーム建物ごとに色文字列を作らずに済ませる。
+  const SMOKE_STYLES = [];
+  for (let i = 0; i < 16; i++) SMOKE_STYLES.push("rgba(150,148,150," + (i / 46.9).toFixed(3) + ")");
+
   function Renderer(canvas, world) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
@@ -74,6 +78,7 @@
   // 別の world に差し替え（再生成時）。
   Renderer.prototype.setWorld = function (world) {
     this.world = world;
+    this._wmAll = true;
     if (this.terrainCanvas.width !== world.width || this.terrainCanvas.height !== world.height) {
       this.terrainCanvas.width = world.width;
       this.terrainCanvas.height = world.height;
@@ -220,6 +225,27 @@
       }
     }
     this.terrainCtx.putImageData(this.imageData, 0, 0);
+    this._wmAll = true; // 水域マスクも全面作り直す（次の水面描画で）
+  };
+
+  // 水域マスク（1px/タイル。水なら不透明）。水面のさざ波を「画面全体をパターンで塗って
+  //   マスクで切り抜く」数回の描画命令で描くために使う（タイル数に依存しない）。
+  Renderer.prototype._waterMask = function () {
+    const world = this.world, W = world.width, H = world.height;
+    let m = this._wm;
+    if (!m || m.width !== W || m.height !== H) {
+      m = this._wm = document.createElement("canvas");
+      m.width = W; m.height = H;
+      this._wmCtx = m.getContext("2d");
+      this._wmAll = true;
+    }
+    if (this._wmAll) {
+      const img = this._wmCtx.createImageData(W, H), d = img.data, terr = world.terrain, isWater = Game.tile.isWater;
+      for (let i = 0, n = W * H; i < n; i++) if (isWater(terr[i])) d[i * 4 + 3] = 255;
+      this._wmCtx.putImageData(img, 0, 0);
+      this._wmAll = false;
+    }
+    return m;
   };
 
   // 1タイルを dirty キューに積む（input から呼ばれる）。
@@ -251,6 +277,11 @@
       //   その2タイルも塗り直さないと縁に古い陰影が残る（改変後の照明のズレ）。
       if (x + 1 < W) this._paintTile(world, rgb, tctx, x + 1, y);
       if (y + 1 < H) this._paintTile(world, rgb, tctx, x, y + 1);
+      // 水域マスクも追従（掘って湖ができた・埋め立てた等）。
+      if (this._wm && !this._wmAll) {
+        if (Game.tile.isWater(world.terrain[y * W + x])) { this._wmCtx.fillStyle = "#000"; this._wmCtx.fillRect(x, y, 1, 1); }
+        else this._wmCtx.clearRect(x, y, 1, 1);
+      }
     }
     this.dirty.length = 0;
   };
@@ -900,6 +931,49 @@
   };
 
   // 戦略資源を地図上に小さなアイコンで描く（一定以上ズーム時）。
+  // 資源アイコン1つを (cx,cy) 中心・大きさ s で描く（キャッシュ用のキャンバスへ一度だけ描く）。
+  function paintResourceIcon(ctx, t, cx, cy, s) {
+    if (t === 1) { // 鉱石: 岩塊＋鉱脈の粒
+      ctx.fillStyle = "#574f47"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+      ctx.fillStyle = "#c9a24a"; ctx.fillRect(cx - s * 0.22, cy - s * 0.12, s * 0.26, s * 0.26);
+      ctx.fillStyle = "#e7decb"; ctx.fillRect(cx + s * 0.05, cy + s * 0.04, s * 0.2, s * 0.2);
+    } else if (t === 2) { // 漁場: 波と魚影
+      ctx.fillStyle = "rgba(190,230,248,0.85)"; ctx.fillRect(cx - s * 0.5, cy + s * 0.15, s, s * 0.18);
+      ctx.fillStyle = "#34637e"; ctx.fillRect(cx - s * 0.28, cy - s * 0.22, s * 0.5, s * 0.22);
+      ctx.fillStyle = "#34637e"; ctx.fillRect(cx + s * 0.22, cy - s * 0.16, s * 0.14, s * 0.1);
+    } else if (t === 4) { // 金鉱石: 岩塊に輝く金塊
+      ctx.fillStyle = "#5a4a36"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
+      ctx.fillStyle = "#f3c433"; ctx.fillRect(cx - s * 0.2, cy - s * 0.16, s * 0.32, s * 0.3);
+      ctx.fillStyle = "#ffe98a"; ctx.fillRect(cx - s * 0.1, cy - s * 0.08, s * 0.14, s * 0.14);
+      ctx.fillStyle = "#fff6cf"; ctx.fillRect(cx + s * 0.12, cy + s * 0.06, s * 0.12, s * 0.12);
+    } else if (t === 5) { // 馬: 草地の駿馬（胴＋脚＋首）
+      ctx.fillStyle = "#7a4a28"; ctx.fillRect(cx - s * 0.34, cy - s * 0.16, s * 0.62, s * 0.3); // 胴
+      ctx.fillRect(cx + s * 0.18, cy - s * 0.42, s * 0.16, s * 0.3); // 首
+      ctx.fillStyle = "#5e3a20"; ctx.fillRect(cx - s * 0.28, cy + s * 0.12, s * 0.1, s * 0.26); ctx.fillRect(cx + s * 0.1, cy + s * 0.12, s * 0.1, s * 0.26); // 脚
+    } else if (t === 6) { // 香辛料: 色鮮やかな実・葉
+      ctx.fillStyle = "#3f8f3a"; ctx.fillRect(cx - s * 0.4, cy + s * 0.1, s * 0.8, s * 0.16); // 葉床
+      ctx.fillStyle = "#d8542a"; ctx.fillRect(cx - s * 0.28, cy - s * 0.2, s * 0.22, s * 0.22);
+      ctx.fillStyle = "#e8a23a"; ctx.fillRect(cx + s * 0.02, cy - s * 0.26, s * 0.2, s * 0.2);
+      ctx.fillStyle = "#c23030"; ctx.fillRect(cx + s * 0.16, cy + s * 0.0, s * 0.16, s * 0.16);
+    } else if (t === 7) { // 塩: 白い結晶の山
+      ctx.fillStyle = "#eef2f6";
+      ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.42); ctx.lineTo(cx + s * 0.42, cy + s * 0.34); ctx.lineTo(cx - s * 0.42, cy + s * 0.34); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(cx - s * 0.08, cy - s * 0.1, s * 0.16, s * 0.16);
+      ctx.fillStyle = "#c7d2dc"; ctx.fillRect(cx - s * 0.3, cy + s * 0.22, s * 0.6, s * 0.1);
+    } else if (t === 8) { // 良材: 積まれた丸太
+      ctx.fillStyle = "#6b4a2a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.84, s * 0.22);
+      ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.2);
+      ctx.fillStyle = "#caa06a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.14, s * 0.22); ctx.fillRect(cx + s * 0.28, cy - s * 0.06, s * 0.14, s * 0.22); // 木口
+      ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.12, s * 0.2);
+    } else { // 宝石: きらめく結晶
+      ctx.fillStyle = "#46d6c8";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - s * 0.5); ctx.lineTo(cx + s * 0.4, cy);
+      ctx.lineTo(cx, cy + s * 0.5); ctx.lineTo(cx - s * 0.4, cy); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fillRect(cx - s * 0.08, cy - s * 0.25, s * 0.16, s * 0.22);
+    }
+  }
+
   Renderer.prototype.drawResources = function (camera) {
     if (Game.config.settings && Game.config.settings.resources === false) return;
     const world = this.world;
@@ -910,52 +984,45 @@
     if (scale < 3) return; // 小さすぎる時は省略
     const range = camera.visibleTileRange();
     const ctx = this.ctx;
-    const s = Math.max(3, scale * 0.5);
+    // アイコンは種類×大きさごとに小キャンバスへ一度だけ描き、以降は1回の転写で済ませる
+    //   （従来は資源1つごとに3〜4回の塗りと色指定をしており、引きの視点で重かった）。
+    const s = Math.max(3, Math.round(scale * 0.5));
+    if (!this._resIcon || this._resIconS !== s) { this._resIcon = {}; this._resIconS = s; }
+    const cache = this._resIcon;
+    const pad = Math.ceil(s * 0.6), dim = pad * 2;
+    // 画面の資源層: カメラと資源が変わらない間は前回描いた層を1回転写するだけで済ませる
+    //   （観察中は視点が止まっていることが多い。動かした時だけ描き直す）。
+    const cw = this.canvas.width, ch = this.canvas.height, dpr = this.dpr || 1;
+    let L = this._resLayer;
+    if (!L || L.width !== cw || L.height !== ch) {
+      L = this._resLayer = document.createElement("canvas");
+      L.width = cw; L.height = ch; this._resLayerCtx = L.getContext("2d"); this._resKey = "";
+    }
+    const key = camera.x + "," + camera.y + "," + camera.zoom + "," + list.length + "," + (world.resVersion || 0);
+    if (key === this._resKey) {
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(L, 0, 0); ctx.restore();
+      return;
+    }
+    this._resKey = key;
+    const out = ctx;
+    const lctx = this._resLayerCtx;
+    lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lctx.clearRect(0, 0, this.cssW, this.cssH);
     for (let k = 0; k < list.length; k++) {
       const r = list[k];
       if (r.x < range.x0 || r.x > range.x1 || r.y < range.y0 || r.y > range.y1) continue;
+      let img = cache[r.t];
+      if (!img) {
+        img = document.createElement("canvas");
+        img.width = dim; img.height = dim;
+        paintResourceIcon(img.getContext("2d"), r.t, pad, pad, s);
+        cache[r.t] = img;
+      }
       const cx = camera.worldToScreenX((r.x + 0.5) * tile);
       const cy = camera.worldToScreenY((r.y + 0.5) * tile);
-      if (r.t === 1) { // 鉱石: 岩塊＋鉱脈の粒
-        ctx.fillStyle = "#574f47"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
-        ctx.fillStyle = "#c9a24a"; ctx.fillRect(cx - s * 0.22, cy - s * 0.12, s * 0.26, s * 0.26);
-        ctx.fillStyle = "#e7decb"; ctx.fillRect(cx + s * 0.05, cy + s * 0.04, s * 0.2, s * 0.2);
-      } else if (r.t === 2) { // 漁場: 波と魚影
-        ctx.fillStyle = "rgba(190,230,248,0.85)"; ctx.fillRect(cx - s * 0.5, cy + s * 0.15, s, s * 0.18);
-        ctx.fillStyle = "#34637e"; ctx.fillRect(cx - s * 0.28, cy - s * 0.22, s * 0.5, s * 0.22);
-        ctx.fillStyle = "#34637e"; ctx.fillRect(cx + s * 0.22, cy - s * 0.16, s * 0.14, s * 0.1);
-      } else if (r.t === 4) { // 金鉱石: 岩塊に輝く金塊
-        ctx.fillStyle = "#5a4a36"; ctx.fillRect(cx - s * 0.5, cy - s * 0.4, s, s * 0.8);
-        ctx.fillStyle = "#f3c433"; ctx.fillRect(cx - s * 0.2, cy - s * 0.16, s * 0.32, s * 0.3);
-        ctx.fillStyle = "#ffe98a"; ctx.fillRect(cx - s * 0.1, cy - s * 0.08, s * 0.14, s * 0.14);
-        ctx.fillStyle = "#fff6cf"; ctx.fillRect(cx + s * 0.12, cy + s * 0.06, s * 0.12, s * 0.12);
-      } else if (r.t === 5) { // 馬: 草地の駿馬（胴＋脚＋首）
-        ctx.fillStyle = "#7a4a28"; ctx.fillRect(cx - s * 0.34, cy - s * 0.16, s * 0.62, s * 0.3); // 胴
-        ctx.fillRect(cx + s * 0.18, cy - s * 0.42, s * 0.16, s * 0.3); // 首
-        ctx.fillStyle = "#5e3a20"; ctx.fillRect(cx - s * 0.28, cy + s * 0.12, s * 0.1, s * 0.26); ctx.fillRect(cx + s * 0.1, cy + s * 0.12, s * 0.1, s * 0.26); // 脚
-      } else if (r.t === 6) { // 香辛料: 色鮮やかな実・葉
-        ctx.fillStyle = "#3f8f3a"; ctx.fillRect(cx - s * 0.4, cy + s * 0.1, s * 0.8, s * 0.16); // 葉床
-        ctx.fillStyle = "#d8542a"; ctx.fillRect(cx - s * 0.28, cy - s * 0.2, s * 0.22, s * 0.22);
-        ctx.fillStyle = "#e8a23a"; ctx.fillRect(cx + s * 0.02, cy - s * 0.26, s * 0.2, s * 0.2);
-        ctx.fillStyle = "#c23030"; ctx.fillRect(cx + s * 0.16, cy + s * 0.0, s * 0.16, s * 0.16);
-      } else if (r.t === 7) { // 塩: 白い結晶の山
-        ctx.fillStyle = "#eef2f6";
-        ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.42); ctx.lineTo(cx + s * 0.42, cy + s * 0.34); ctx.lineTo(cx - s * 0.42, cy + s * 0.34); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#ffffff"; ctx.fillRect(cx - s * 0.08, cy - s * 0.1, s * 0.16, s * 0.16);
-        ctx.fillStyle = "#c7d2dc"; ctx.fillRect(cx - s * 0.3, cy + s * 0.22, s * 0.6, s * 0.1);
-      } else if (r.t === 8) { // 良材: 積まれた丸太
-        ctx.fillStyle = "#6b4a2a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.84, s * 0.22);
-        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.2);
-        ctx.fillStyle = "#caa06a"; ctx.fillRect(cx - s * 0.42, cy - s * 0.06, s * 0.14, s * 0.22); ctx.fillRect(cx + s * 0.28, cy - s * 0.06, s * 0.14, s * 0.22); // 木口
-        ctx.fillRect(cx - s * 0.3, cy - s * 0.3, s * 0.12, s * 0.2);
-      } else { // 宝石: きらめく結晶
-        ctx.fillStyle = "#46d6c8";
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - s * 0.5); ctx.lineTo(cx + s * 0.4, cy);
-        ctx.lineTo(cx, cy + s * 0.5); ctx.lineTo(cx - s * 0.4, cy); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fillRect(cx - s * 0.08, cy - s * 0.25, s * 0.16, s * 0.22);
-      }
+      lctx.drawImage(img, (cx - pad) | 0, (cy - pad) | 0);
     }
+    out.save(); out.setTransform(1, 0, 0, 1, 0, 0); out.drawImage(L, 0, 0); out.restore();
   };
 
   // 街道・交易路を行き交う荷馬車。経済の流れを可視化する（一定以上ズーム時）。
@@ -1290,40 +1357,83 @@
     const world = this.world;
     const tile = Game.config.tilePx, scale = tile * camera.zoom;
     if (scale < 4) return; // 近景のみ（負荷と見栄えの両立。引きの海はベタ塗りで十分）
-    const ctx = this.ctx, W = world.width, terr = world.terrain, isWater = Game.tile.isWater;
-    const range = camera.visibleTileRange();
-    // visibleTileRange の x1/y1 は W/H まで（排他上限）に丸められるため、末端でのタイル参照は W-1/H-1 に留める。
-    const xb = Math.min(range.x1, W - 1), yb = Math.min(range.y1, world.height - 1);
     const t = this._t;
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    let drawn = 0; const CAP = 8000;
-    for (let ty = range.y0; ty <= yb && drawn < CAP; ty++) {
-      const sy0 = camera.worldToScreenY(ty * tile);
-      for (let tx = range.x0; tx <= xb; tx++) {
-        if (!isWater(terr[ty * W + tx])) continue;
-        const sx = camera.worldToScreenX(tx * tile);
-        // タイルごとに位相をずらした2筋のさざ波（寄せては返す）。
-        const ph = t * 1.2 + tx * 0.6 + ty * 0.45;
-        const a = 0.04 + 0.06 * (Math.sin(ph) * 0.5 + 0.5);
-        const yo = (Math.sin(ph) * 0.5 + 0.5) * scale * 0.55;
-        ctx.fillStyle = "rgba(150,205,238," + a.toFixed(3) + ")";
-        ctx.fillRect(sx, sy0 + yo, scale, Math.max(1, scale * 0.1));
-        const yo2 = (Math.sin(ph + 2.1) * 0.5 + 0.5) * scale * 0.7;
-        ctx.fillStyle = "rgba(190,225,245," + (a * 0.7).toFixed(3) + ")";
-        ctx.fillRect(sx + scale * 0.3, sy0 + yo2, scale * 0.5, Math.max(1, scale * 0.08));
-        // 陽光のきらめき: 水面のあちこちで反射がまたたく（点在してチカチカと輝く）。
+    // 1) さざ波のパターン（P×P タイル分）を毎フレーム小さく描く。位相は周期内で整数周回させ、
+    //    パターンの継ぎ目でも波が途切れない。タイルごとに位相をずらした2筋のさざ波と、
+    //    点在してまたたく陽光の反射。
+    const P = 16, si = Math.max(4, Math.round(scale));
+    const pw = P * si;
+    let pc = this._wPat;
+    if (!pc || pc.width !== pw) {
+      pc = this._wPat = document.createElement("canvas");
+      pc.width = pw; pc.height = pw;
+      this._wPatCtx = pc.getContext("2d");
+    }
+    const g = this._wPatCtx;
+    g.clearRect(0, 0, pw, pw);
+    const NB = 8;
+    if (!this._wStyles) {
+      const st = { r1: [], r2: [], sp: [] };
+      for (let b = 0; b < NB; b++) {
+        const a = 0.04 + 0.06 * (b / (NB - 1));
+        st.r1.push("rgba(150,205,238," + a.toFixed(3) + ")");
+        st.r2.push("rgba(190,225,245," + (a * 0.7).toFixed(3) + ")");
+        st.sp.push("rgba(245,252,255," + (0.6 * (b + 1) / NB).toFixed(2) + ")");
+      }
+      this._wStyles = st;
+    }
+    const ST = this._wStyles;
+    const SX = (Math.PI * 2 * 2) / P, SY = (Math.PI * 2) / P; // 周期内で 2周/1周（継ぎ目なし）
+    const h1 = Math.max(1, si * 0.1), h2 = Math.max(1, si * 0.08), w2 = si * 0.5, gs = Math.max(1, si * 0.16) | 0;
+    for (let ty = 0; ty < P; ty++) {
+      for (let tx = 0; tx < P; tx++) {
+        const sx = tx * si, sy0 = ty * si;
+        const ph = t * 1.2 + tx * SX + ty * SY;
+        const s1 = Math.sin(ph) * 0.5 + 0.5;
+        const b = (s1 * (NB - 1) + 0.5) | 0;
+        g.fillStyle = ST.r1[b]; g.fillRect(sx, sy0 + s1 * si * 0.55, si, h1);
+        g.fillStyle = ST.r2[b]; g.fillRect(sx + si * 0.3, sy0 + (Math.sin(ph + 2.1) * 0.5 + 0.5) * si * 0.7, w2, h2);
         const spk = Math.sin(t * 2.6 + tx * 1.7 + ty * 2.3);
         if (spk > 0.9) {
-          const gs = Math.max(1, scale * 0.16) | 0;
-          const gx = (sx + scale * (0.3 + 0.4 * ((tx * 7 + ty * 3) % 5) / 5)) | 0;
-          const gy = (sy0 + scale * (0.2 + 0.5 * ((tx * 3 + ty * 5) % 5) / 5)) | 0;
-          ctx.fillStyle = "rgba(245,252,255," + ((spk - 0.9) * 6).toFixed(2) + ")";
-          ctx.fillRect(gx, gy, gs, gs);
+          g.fillStyle = ST.sp[Math.min(NB - 1, ((spk - 0.9) * 10 * NB) | 0)];
+          g.fillRect((sx + si * (0.3 + 0.4 * ((tx * 7 + ty * 3) % 5) / 5)) | 0, (sy0 + si * (0.2 + 0.5 * ((tx * 3 + ty * 5) % 5) / 5)) | 0, gs, gs);
         }
-        if (++drawn >= CAP) break;
       }
     }
+    // 2) 画面大の作業層をパターンで一度に塗り、水域マスクで水の上だけを残す。
+    const cw = this.canvas.width, ch = this.canvas.height, dpr = this.dpr || 1;
+    let L = this._wLayer;
+    if (!L || L.width !== cw || L.height !== ch) {
+      L = this._wLayer = document.createElement("canvas");
+      L.width = cw; L.height = ch;
+      this._wLayerCtx = L.getContext("2d");
+    }
+    const lc = this._wLayerCtx;
+    const ox = -camera.x * camera.zoom, oy = -camera.y * camera.zoom; // 世界原点の画面位置
+    lc.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lc.globalCompositeOperation = "source-over";
+    lc.clearRect(0, 0, this.cssW, this.cssH);
+    const pat = lc.createPattern(pc, "repeat");
+    const k = scale / si; // 整数化した分の伸縮（タイル格子に合わせる）
+    if (pat.setTransform && typeof DOMMatrix !== "undefined") {
+      pat.setTransform(new DOMMatrix([k, 0, 0, k, ox, oy]));
+      lc.fillStyle = pat;
+      lc.fillRect(0, 0, this.cssW, this.cssH);
+    } else {
+      lc.save(); lc.translate(ox, oy); lc.scale(k, k);
+      lc.fillStyle = pat; lc.fillRect(-ox / k, -oy / k, this.cssW / k, this.cssH / k);
+      lc.restore();
+    }
+    lc.globalCompositeOperation = "destination-in";
+    lc.imageSmoothingEnabled = false;
+    lc.drawImage(this._waterMask(), ox, oy, world.width * scale, world.height * scale);
+    lc.globalCompositeOperation = "source-over";
+    // 3) 加算合成で地図に重ねる（光の照り返し）。
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(L, 0, 0);
     ctx.restore();
   };
 
@@ -1784,11 +1894,16 @@
               }
               continue;
             }
-            // 接地影（建物の足元に落として街に立体感を出す）。
+            // 接地影（建物の足元に落として街に立体感を出す）。引きの視点では楕円の輪郭は
+            //   見分けられないので、安価な矩形で代える（建物数千棟でパス描画が重かった）。
             ctx.fillStyle = "rgba(0,0,0,0.26)";
-            ctx.beginPath();
-            ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
-            ctx.fill();
+            if (scale >= 10) {
+              ctx.beginPath();
+              ctx.ellipse(bx, by - bh * 0.06, bw * 0.44, bw * 0.16, 0, 0, Math.PI * 2);
+              ctx.fill();
+            } else {
+              ctx.fillRect((bx - bw * 0.42) | 0, (by - bh * 0.06 - bw * 0.12) | 0, (bw * 0.84) | 0, Math.max(1, bw * 0.24) | 0);
+            }
             ctx.drawImage(img, (bx - bw * 0.5) | 0, (by - bh) | 0, bw | 0, bh | 0);
             // 竈の煙: 鍛冶場(6)・酒場(14)・住居(0..2)の炉から煙が立ちのぼり、街に営みの気配を添える。
             //   損なわれた建物（cond低）は火が消え煙も細る。近景のみ・各棟2筋で軽量。
@@ -1800,7 +1915,7 @@
                 const ry = by - bh - ph * bh * (strong ? 1.0 : 0.7);
                 const drift = Math.sin(t * 1.1 + bi + s * 2) * bw * 0.12;
                 const rr = Math.max(1, bw * (0.1 + ph * 0.16));
-                ctx.fillStyle = "rgba(150,148,150," + ((strong ? 0.32 : 0.2) * (1 - ph) * cond).toFixed(3) + ")";
+                ctx.fillStyle = SMOKE_STYLES[Math.min(15, ((strong ? 0.32 : 0.2) * (1 - ph) * cond * 46.9) | 0)];
                 ctx.fillRect((cx0 + drift - rr) | 0, (ry - rr) | 0, (rr * 2) | 0 || 1, (rr * 2) | 0 || 1);
               }
             }
